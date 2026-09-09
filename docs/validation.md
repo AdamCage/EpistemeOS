@@ -6,7 +6,7 @@
 
 `uv run python -m unittest discover -s tests -v`: **186 тестов, 185 успешно, 1 skipped**, 30.543 секунды. Пропущен тест создания symlink: среда Windows не предоставляет это право. Обход reparse points реализован, но настоящий symlink case на этом хосте не проверен.
 
-Предыдущий commit `46c783b` опубликован в публичном [GitHub repository](https://github.com/AdamCage/EpistemeOS) и прошёл [CI run 34277599425](https://github.com/AdamCage/EpistemeOS/actions/runs/34277599425): Windows/Linux, Python 3.11/3.13. Это доказательство для первого commit; новый M1 increment требует собственного CI run после push.
+Первый commit `46c783b` опубликован в публичном [GitHub repository](https://github.com/AdamCage/EpistemeOS) и прошёл [CI run 34277599425](https://github.com/AdamCage/EpistemeOS/actions/runs/34277599425). M1 increment [`91192d4`](https://github.com/AdamCage/EpistemeOS/commit/91192d4) отдельно прошёл [CI run 34385764051](https://github.com/AdamCage/EpistemeOS/actions/runs/34385764051): все четыре jobs успешны — Windows/Linux, Python 3.11/3.13.
 
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
 
@@ -22,6 +22,10 @@
 | Graph | Типы/порядок/closure ссылок, ancestors/descendants, exact scope, исторические revisions, corruption, afterlife snapshot без accepted claims. |
 | Import | Идемпотентность, неизменность исходника, ограничение чтения/копирования, missing/corrupt/unsafe outputs, dirty/failed/superseded states, отсутствие ретроактивной preregistration. |
 | CLI/workflow | Реальные CPU subprocesses, повторное вычисление по raw CSV, durable failure, reopen/export, search selection до run и сохранение невыбранной альтернативы. |
+
+## Сохранённый пример command delivery
+
+Один example из публичной command schema дважды отправлен реальным CLI в `.research/command-example-20260909`. Оба процесса вернули `hypothesis-570a0cac8e85485e`; после read-only reopen в Store ровно одно событие и одна receipt. Event hash: `dfe8e18f8adc106904662a7278b14916846f7ee396b34372088c74dcf64c0ad5`. [Локальная проверка](../.research/command-example-20260909/verification.json) и request находятся в ignored каталоге. Это доставка fixture hypothesis, без эксперимента или scientific approval.
 
 ## Сохранённый demo
 
