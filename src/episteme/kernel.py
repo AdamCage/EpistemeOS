@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from .protocols import DesignError, StatisticalDesign
 from .store import IntegrityError, Store, canonical, digest
 
 
@@ -35,6 +36,76 @@ def finite(value: Any) -> bool:
         return type(value) in (int, float) and math.isfinite(value)
     except OverflowError:
         return False
+
+
+def protocol_exposures(history: list[dict[str, Any]], plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Declared and conservatively inferred exposures for a typed review basis.
+
+    Kept shared with the read-only graph so historical review hashes use exactly
+    the same subset and ordering. Foreign attempts on the same bytes and newly
+    declared seen_data matter; an unrelated plan merely inheriting the global
+    seen_data snapshot does not. None of these records attests actual access.
+    """
+    p = plan["payload"]
+    if "statistical_design" not in p:
+        return []
+    data = {p["data"], *p["seen_data"], *(split["digest"] for split in p["statistical_design"]["data_splits"])}
+    run_ids = {event["id"] for event in history if event["kind"] == "run"
+               and event["payload"]["protocol"] == plan["id"]}
+    for event in history:
+        if event["kind"] == "result" and event["payload"]["run"] in run_ids:
+            raw = event["payload"]["outputs"].get("raw_data")
+            if raw is not None:
+                data.add(raw)
+    plans = {event["id"]: event for event in history if event["kind"] == "protocol"}
+    runs = {event["id"]: event for event in history if event["kind"] == "run"}
+    selected: set[str] = set()
+    known: set[str] = set()
+    for event in history:
+        e = event["payload"]
+        if event["kind"] == "data_exposure":
+            if e["data"] in data or e["protocol"] == plan["id"]:
+                selected.add(event["id"])
+            known.add(e["data"])
+        elif event["kind"] == "protocol":
+            declared = set(e.get("seen_data", []))
+            if event["id"] != plan["id"] and (declared - known) & data:
+                selected.add(event["id"])
+            known.update(declared)
+        elif event["kind"] == "run":
+            source = plans[e["protocol"]]
+            inputs = protocol_data(source["payload"])
+            if source["id"] != plan["id"] and inputs & data:
+                selected.update((source["id"], event["id"]))
+            known.update(inputs)
+        elif event["kind"] == "result":
+            raw = e["outputs"].get("raw_data")
+            source_run = runs[e["run"]]
+            if source_run["payload"]["protocol"] != plan["id"] and (
+                    raw in data or source_run["id"] in selected):
+                selected.update((source_run["payload"]["protocol"], source_run["id"], event["id"]))
+            if raw is not None:
+                known.add(raw)
+    return [event for event in history if event["id"] in selected]
+
+
+def protocol_data(payload: dict[str, Any]) -> set[str]:
+    return {payload["data"], *(split["digest"] for split in
+                              payload.get("statistical_design", {}).get("data_splits", []))}
+
+
+def exposure_artifacts(event: dict[str, Any]) -> set[str]:
+    """Artifact closure of the extra events used to evaluate exposure context."""
+    p = event["payload"]
+    if event["kind"] == "data_exposure":
+        return {p["data"]}
+    if event["kind"] == "protocol":
+        return protocol_data(p) | set(p.get("seen_data", [])) | {p["implementation"], p["environment"]}
+    if event["kind"] == "run":
+        return {p["implementation"], p["environment"]}
+    if event["kind"] == "result":
+        return set(p["outputs"].values())
+    raise GateError("unsupported exposure evidence kind")
 
 
 class Kernel:
@@ -78,7 +149,9 @@ class Kernel:
     def preregister(self, *, hypotheses: list[str], scope: dict[str, str], design: str,
                     metric: str, analysis_plan: str, stopping_rule: str, seeds: list[int],
                     run_limit: int, implementation: str, environment: str, data: str,
-                    replication_tolerance: float, parent: str | None = None) -> str:
+                    replication_tolerance: float, parent: str | None = None,
+                    statistical_design: dict[str, Any] | None = None,
+                    amendment_reason: str | None = None, seen_data: list[str] | None = None) -> str:
         history = self._history()
         self._scope(scope)
         require(len(set(hypotheses)) >= 2 and len(set(hypotheses)) == len(hypotheses),
@@ -97,20 +170,108 @@ class Kernel:
         for key in (implementation, environment, data):
             self.store.read(key)
         if parent:
-            self._get(history, parent, "protocol")
+            previous = self._get(history, parent, "protocol")["payload"]
+            require("statistical_design" not in previous or statistical_design is not None,
+                    "typed protocol amendment requires a statistical design")
         # Each amendment is a NEW protocol ID. The parent remains immutable.
         payload = dict(hypotheses=hypotheses, scope=scope, design=design, metric=metric,
                        analysis_plan=analysis_plan, stopping_rule=stopping_rule,
                        seeds=seeds, run_limit=run_limit, implementation=implementation,
                        environment=environment, data=data,
                        replication_tolerance=replication_tolerance, parent=parent)
+        if statistical_design is not None:
+            try:
+                typed = StatisticalDesign.from_dict(statistical_design)
+            except DesignError as exc:
+                raise GateError(str(exc)) from exc
+            supplied = [] if seen_data is None else seen_data
+            require(isinstance(supplied, list) and all(isinstance(key, str) for key in supplied)
+                    and len(set(supplied)) == len(supplied), "seen_data must be unique artifact digests")
+            payload.update(statistical_design=typed.to_dict(), protocol_mode=typed.mode,
+                           amendment_reason=amendment_reason,
+                           seen_data=sorted(set(supplied) | self._known_seen_data(history, parent)))
+            self._validate_typed_protocol(history, payload)
+        else:
+            require(amendment_reason is None and seen_data is None,
+                    "amendment/exposure declarations require a statistical design")
         return self._write(history, "protocol", payload, {"planner"})
+
+    @staticmethod
+    def _known_seen_data(history: list[dict[str, Any]], parent: str | None = None) -> set[str]:
+        """Conservative local-store policy: declared reads and attempted inputs.
+
+        An amendment treats all parent inputs/splits as exposed, even without a
+        declared read. There is no authenticated access service to prove that an
+        old parent holdout remained concealed. This deliberately requires new
+        confirmatory bytes and applies to sequential designs as well.
+        """
+        seen = {event["payload"]["data"] for event in history if event["kind"] == "data_exposure"}
+        # A failed attempt can also expose observations that inform a new plan.
+        seen.update(event["payload"]["outputs"]["raw_data"] for event in history
+                    if event["kind"] == "result" and "raw_data" in event["payload"]["outputs"])
+        attempted = {event["payload"]["protocol"] for event in history if event["kind"] == "run"}
+        for event in history:
+            if event["kind"] != "protocol":
+                continue
+            previous = event["payload"]
+            seen.update(previous.get("seen_data", []))
+            if event["id"] in attempted:
+                # Omitting a parent link must not relabel an attempted discovery
+                # input as a fresh confirmatory holdout in a new root protocol.
+                seen.add(previous["data"])
+                seen.update(split["digest"] for split in previous.get("statistical_design", {}).get("data_splits", []))
+        if parent is not None:
+            previous = Kernel._get(history, parent, "protocol")["payload"]
+            seen.add(previous["data"])
+            seen.update(previous.get("seen_data", []))
+            seen.update(split["digest"] for split in previous.get("statistical_design", {}).get("data_splits", []))
+        return seen
+
+    def _validate_typed_protocol(self, preceding_history: list[dict[str, Any]], p: dict[str, Any]) -> None:
+        if "statistical_design" not in p:
+            return
+        try:
+            typed = StatisticalDesign.from_dict(p["statistical_design"])
+            typed.validate_metric(p["metric"])
+        except DesignError as exc:
+            raise GateError(str(exc)) from exc
+        require(p["statistical_design"] == typed.to_dict(), "statistical design is not normalized")
+        require(p["protocol_mode"] == typed.mode, "protocol mode differs from statistical design")
+        require(p["stopping_rule"] == typed.stopping_rule.rule, "stopping rule differs from statistical design")
+        seen = p["seen_data"]
+        require(isinstance(seen, list) and all(isinstance(key, str) for key in seen)
+                and len(set(seen)) == len(seen), "seen_data must be unique artifact digests")
+        required = self._known_seen_data(preceding_history, p["parent"])
+        require(required <= set(seen), "seen_data omits known exposure or parent inputs")
+        if p["parent"] is not None:
+            require(isinstance(p["amendment_reason"], str) and bool(p["amendment_reason"].strip()),
+                    "typed protocol amendment requires a reason")
+        else:
+            require(p["amendment_reason"] is None, "amendment reason requires a parent protocol")
+        for key in {*seen, *(split.digest for split in typed.data_splits)}:
+            self.store.read(key)
+        if typed.mode == "confirmatory":
+            for split in typed.data_splits:
+                if split.role == "confirmatory":
+                    require(split.digest not in seen,
+                            f"confirmatory split was already exposed: {split.id}")
+
+    def expose_data(self, *, data: str, purpose: str, protocol: str | None = None) -> str:
+        """Record a caller-declared exposure, not an authenticated access log."""
+        history = self._history()
+        self.store.read(data)
+        require(isinstance(purpose, str) and bool(purpose.strip()), "data exposure needs a purpose")
+        if protocol is not None:
+            self._get(history, protocol, "protocol")
+        return self._write(history, "data_exposure", dict(data=data, purpose=purpose, protocol=protocol),
+                           {"planner", "executor", "replicator", "analyst", "reviewer"})
 
     def start_run(self, protocol: str, *, seed: int, implementation: str,
                   environment: str, command: list[str], replicate_of: str | None = None) -> str:
         history = self._history()
         plan = self._get(history, protocol, "protocol")
         p = plan["payload"]
+        self._validate_typed_protocol([event for event in history if event["seq"] < plan["seq"]], p)
         require(type(seed) is int and seed in p["seeds"], "seed not preregistered")
         require(isinstance(command, list) and bool(command) and all(
             isinstance(s, str) and s.strip() for s in command), "command must be argv")
@@ -174,7 +335,8 @@ class Kernel:
         return float(metrics[metric])
 
     def claim(self, *, protocol: str, statement: str, scope: dict[str, str],
-              evidence: list[str], limitations: list[str], outcome: str) -> str:
+              evidence: list[str], limitations: list[str], outcome: str,
+              inference_mode: str | None = None) -> str:
         history = self._history()
         plan = self._get(history, protocol, "protocol")["payload"]
         require(scope == plan["scope"], "claim scope exceeds/differs from protocol scope")
@@ -188,9 +350,22 @@ class Kernel:
             result = self._result(history, id)
             require(result is not None and result["payload"]["status"] == "completed",
                     "claim evidence must refer to completed runs")
-        return self._write(history, "claim", dict(protocol=protocol, statement=statement,
-                           scope=scope, evidence=evidence, limitations=limitations,
-                           outcome=outcome), {"analyst", "executor"})
+        mode = self._inference_mode(plan, inference_mode)
+        payload = dict(protocol=protocol, statement=statement, scope=scope,
+                       evidence=evidence, limitations=limitations, outcome=outcome)
+        if "statistical_design" in plan or inference_mode is not None:
+            payload["inference_mode"] = mode
+        return self._write(history, "claim", payload, {"analyst", "executor"})
+
+    @staticmethod
+    def _inference_mode(plan: dict[str, Any], requested: str | None) -> str:
+        mode = plan.get("protocol_mode", "unclassified") if requested is None else requested
+        require(isinstance(mode, str) and mode in {"unclassified", "descriptive", "exploratory", "confirmatory"},
+                "invalid claim inference mode")
+        require(mode != "confirmatory" or ("statistical_design" in plan
+                and plan.get("protocol_mode") == "confirmatory"),
+                "confirmatory inference requires a confirmatory statistical protocol")
+        return mode
 
     def _basis(self, history: list[dict[str, Any]], claim: str) -> tuple[str, list[dict[str, Any]]]:
         c = self._get(history, claim, "claim")
@@ -199,7 +374,7 @@ class Kernel:
         runs = [e for e in history if e["kind"] == "run" and e["payload"]["protocol"] == protocol]
         ids = {e["id"] for e in runs}
         results = [e for e in history if e["kind"] == "result" and e["payload"]["run"] in ids]
-        basis = [plan, c, *runs, *results]
+        basis = [plan, c, *runs, *results, *protocol_exposures(history, plan)]
         return digest(canonical(basis)), runs
 
     def gate(self, claim: str) -> dict[str, Any]:
@@ -215,6 +390,14 @@ class Kernel:
         primary: list[dict[str, Any]] = []
         completed: set[str] = set()
         successful_replicas: set[str] = set()
+        try:
+            self._validate_typed_protocol([event for event in history if event["seq"] < plan["seq"]], p)
+            self._inference_mode(p, c.get("inference_mode"))
+            for exposure in protocol_exposures(history, plan):
+                for key in exposure_artifacts(exposure):
+                    self.store.read(key)
+        except (GateError, IntegrityError, KeyError) as exc:
+            failures.append(str(exc))
         for key in (p["implementation"], p["environment"], p["data"]):
             try:
                 self.store.read(key)
@@ -275,6 +458,14 @@ class Kernel:
         hypotheses = [self._get(history, id, "hypothesis") for id in plan["payload"]["hypotheses"]]
         contributors = {c["actor"], plan["actor"], *(r["actor"] for r in runs),
                         *(h["actor"] for h in hypotheses)}
+        for context in protocol_exposures(history, plan):
+            # Reading an evidence bundle as reviewer is expected; authoring a
+            # related protocol/attempt included in that bundle is a contribution.
+            if context["kind"] != "data_exposure":
+                contributors.add(context["actor"])
+                if context["kind"] == "protocol":
+                    contributors.update(self._get(history, id, "hypothesis")["actor"]
+                                        for id in context["payload"]["hypotheses"])
         require(self.actor.id not in contributors, "reviewer must be independent of contributors")
         require(isinstance(verdict, str) and verdict in {"approve", "request_changes", "reject"},
                 "invalid review verdict")

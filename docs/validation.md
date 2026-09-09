@@ -1,10 +1,12 @@
 # Проверка текущего прототипа
 
-Дата: 8 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа, не оценка качества научных открытий.
+Дата: 9 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа и инкремента M1, не оценка качества научных открытий.
 
 ## Выполненные проверки
 
-`uv run python -m unittest discover -s tests -v`: **122 теста, 121 успешно, 1 skipped**, 36.837 секунды. Пропущен тест создания symlink: среда Windows не предоставляет это право. Обход reparse points реализован, но настоящий symlink case на этом хосте не проверен. Linux/другие версии Python добавлены в CI matrix; удалённый CI ещё не запускался.
+`uv run python -m unittest discover -s tests -v`: **186 тестов, 185 успешно, 1 skipped**, 30.543 секунды. Пропущен тест создания symlink: среда Windows не предоставляет это право. Обход reparse points реализован, но настоящий symlink case на этом хосте не проверен.
+
+Предыдущий commit `46c783b` опубликован в публичном [GitHub repository](https://github.com/AdamCage/EpistemeOS) и прошёл [CI run 34277599425](https://github.com/AdamCage/EpistemeOS/actions/runs/34277599425): Windows/Linux, Python 3.11/3.13. Это доказательство для первого commit; новый M1 increment требует собственного CI run после push.
 
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
 
@@ -12,6 +14,9 @@
 |---|---|
 | Kernel | Preregistration до run, frozen source/environment, scope, полнота seeds, отрицательные результаты и failed logs, self-review включая автора гипотезы, stale basis, review veto. |
 | Store | Corruption, missing artifacts, append-only triggers, conflicting writers, reopen, read-only inspection. |
+| Command delivery | Два concurrent writers с одинаковым ID/body и с разными IDs; два события + receipt атомарно; lost response после `os._exit`; rollback-only после подавленной ошибки append; receipt corruption/range/overlap; readonly legacy schema и additive migration с неизменным JSONL. |
+| Versioned service | Role/type/argument admission до handler; omitted/explicit defaults; replay terminal run, search reservation, review/paper после смены evidence; strict JSON; real CLI reopen и receipts. |
+| Statistical workflow | Null-result остаётся inconclusive/not_assessed; metric/stopping/unit mismatch; protected split до просмотра; started/failed inputs без parent не становятся новым holdout; typed amendments сохраняют reason/seen_data; foreign attempt и declared exposure требуют fresh review; unrelated inherited snapshot не инвалидирует basis. |
 | Search | A/B ballots, ties/abstentions, priority≠truth, persistent frontier, актуальность протокола перед selection, общий repair-lineage limit, reservations, overrun, точная арифметика больших и subnormal decimal costs. |
 | Reporting | Один snapshot при concurrent append, generic primary metric, запрет premature paper, отрицательное review, concurrent evidence mutation перед commit, CAS manuscript. |
 | Graph | Типы/порядок/closure ссылок, ancestors/descendants, exact scope, исторические revisions, corruption, afterlife snapshot без accepted claims. |

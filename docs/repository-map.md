@@ -15,6 +15,8 @@ EpistemeOS/
 │   ├── architecture.md           система состояний, роли и границы доверия
 │   ├── mvp-plan.md               этапы, зависимости, критерии приёмки
 │   ├── repository-map.md         эта карта
+│   ├── command-api.md            versioned local command interface
+│   ├── decisions/                command admission и statistical design ADRs
 │   └── research/
 │       ├── afterlife-audit.md
 │       ├── ai-scientist-coscientist.md
@@ -23,14 +25,17 @@ EpistemeOS/
 ├── src/episteme/
 │   ├── __init__.py
 │   ├── __main__.py               python -m episteme
-│   ├── cli.py                    demo / inspect / gate / export / review / paper / graph / afterlife
-│   ├── store.py                  SQLite events и content-addressed blobs
+│   ├── cli.py                    demo / inspect / gate / export / review / paper / graph / afterlife / command / receipts
+│   ├── store.py                  SQLite events/receipts и content-addressed blobs
+│   ├── commands.py               versioned allowlist, type/role admission, normalization
+│   ├── protocols.py              immutable statistical declarations и validation
 │   ├── kernel.py                 валидируемые научные команды и gates
 │   ├── search.py                 persistent tournament и bounded tree policy
 │   ├── reporting.py              snapshot export и внутренний paper scaffold
 │   ├── graph.py                  типизированная read-only проекция и queries
 │   ├── domains/afterlife.py      bounded historical inspection/import
 │   └── demo.py                   два фиксированных CPU-приложения
+├── schemas/                      command envelope / statistical design JSON schema v1
 └── tests/
     ├── test_kernel.py            инварианты ядра и исторические failure cases
     ├── test_cli.py               реальные CLI/subprocess интеграции
@@ -38,6 +43,10 @@ EpistemeOS/
     ├── test_reporting.py         snapshots, review input и paper eligibility
     ├── test_graph.py             typed refs, graph traversal и corruption
     ├── test_afterlife.py         historical import, limits и idempotency
+    ├── test_commands_store.py    receipt integrity, atomicity, competing writers и crash
+    ├── test_commands_service.py  versioned dispatch, historical replay и real CLI
+    ├── test_protocols.py         typed statistical declarations
+    ├── test_scientific_workflow.py exposure timing, mode, amendments и review invalidation
     └── test_workflow.py          фактический search → execution → evidence demo
 ```
 
@@ -45,7 +54,9 @@ EpistemeOS/
 
 | Файл | Реальная ответственность | Граница |
 |---|---|---|
-| `store.py` | Canonical JSON, SHA-256, атомарная запись blob, проверка chain, append с optimistic revision под SQLite transaction, export. | Нет аутентификации, внешнего checkpoint, миграций или распределённого storage. |
+| `store.py` | Canonical JSON, CAS, verified chain/receipts, atomic command transaction/replay, additive receipt migration и export. | Нет аутентификации, внешнего checkpoint, общего migration/restore или distributed storage. |
+| `commands.py` | Явный action/role allowlist, strict JSON, аргументы и defaults v1, допуск до handler, historical acknowledgement. | Доверенный local caller; нет внешнего execution или меж-study access boundary. |
+| `protocols.py` | Frozen design dataclasses, units/estimand/metrics/splits, mode и structural statistical validation. | Не проверяет actual data, мощность, реальную независимость или uncertainty computation. |
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
 | `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; общий runner и metric recomputation не перенесены. |
 | `kernel.py` | Hypothesis/protocol/run/result/claim/review commands, правила ролей, binding digests/scope, seeds и run limit, review basis и `next_action`. | Python caller доверенный. Проверка finite metric не пересчитывает науку. `next_action` возвращает решение, не job. |

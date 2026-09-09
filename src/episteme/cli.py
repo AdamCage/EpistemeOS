@@ -10,6 +10,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Sequence
 
+from .commands import CommandService, parse_command
 from .demo import run_demo
 from .domains.afterlife import import_snapshot, inspect as inspect_afterlife
 from .graph import ResearchGraph
@@ -27,6 +28,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                             ("export", "Export a review bundle and report from existing state"),
                             ("review", "Record an externally prepared scientific review JSON"),
                             ("paper", "Build an internal draft from currently reviewed claims"),
+                            ("command", "Admit or replay a versioned local command JSON"),
+                            ("receipts", "Verify and read historical command acknowledgements"),
                             ("graph", "Verify recorded dependencies and export the research graph")):
         command = subcommands.add_parser(name, help=help_text)
         if name == "demo":
@@ -36,6 +39,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             command.add_argument("claim", help="Recorded claim ID")
         if name == "review":
             command.add_argument("--input", type=Path, required=True, help="Review JSON file")
+        if name == "command":
+            command.add_argument("--input", type=Path, required=True, help="Versioned command envelope JSON")
         if name == "paper":
             command.add_argument("claims", nargs="+", help="Reviewed claim IDs")
             command.add_argument("--title", required=True)
@@ -68,12 +73,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "demo":
             result = run_demo(args.root, with_search=args.with_search)
             status = 0
+        elif args.command == "command":
+            envelope = parse_command(args.input.read_text(encoding="utf-8"))
+            with Store(args.root) as store:
+                acknowledgement = CommandService(store).execute(envelope)
+                result = dict(command_id=envelope["context"]["command_id"], result=acknowledgement,
+                              meaning="historical_command_commit")
+            status = 0
         else:
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing state.sqlite3 is required; inspect/export/gate never initialize a project")
             with Store(args.root, read_only=args.command not in {"review", "paper"}) as store:
                 if args.command == "inspect":
                     result, status = inspect_store(store), 0
+                elif args.command == "receipts":
+                    result, status = dict(receipts=store.receipts(),
+                                          meaning="historical_command_commits"), 0
                 elif args.command == "export":
                     result, status = export_store(store), 0
                 elif args.command == "graph":

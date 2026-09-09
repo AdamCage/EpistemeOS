@@ -11,7 +11,8 @@ review verdict, search score, or mechanically intact artifact cannot change the
 IDs and implementation digests do not establish independent reasoning or OS
 isolation. Graph traversal does not perform claim promotion or paper eligibility.
 
-Construction verifies one event snapshot and every referenced artifact. It is
+Construction verifies one event snapshot and every referenced artifact, plus
+typed statistical declarations and recorded exposure timing. It is
 not a lock against later appends or filesystem mutation; reconstruct to observe
 current state. Unknown event kinds fail closed until their reference schema is
 implemented. No additional database, cache, files, or events are written.
@@ -25,6 +26,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from .kernel import Actor, GateError, Kernel, protocol_exposures
+from .protocols import DesignError, StatisticalDesign
 from .store import IntegrityError, Store, canonical, digest
 
 
@@ -48,6 +51,7 @@ class NodeKind(str, Enum):
     TERMINAL = "search_terminal"
     ARTIFACT = "artifact"
     AFTERLIFE_SNAPSHOT = "afterlife_snapshot"
+    DATA_EXPOSURE = "data_exposure"
 
 
 class Relation(str, Enum):
@@ -87,6 +91,9 @@ class Relation(str, Enum):
     SELECTION_RUN = "selection_run_reference"
     HISTORICAL_SNAPSHOT = "historical_snapshot"
     HISTORICAL_ARTIFACT = "historical_artifact"
+    EXPOSED_DATA = "exposed_data"
+    EXPOSURE_PROTOCOL = "exposure_protocol"
+    REVIEW_EXPOSURE = "review_exposure_basis"
 
 
 def _freeze(value: Any) -> Any:
@@ -276,7 +283,8 @@ class _Projection:
         ids = {e["id"] for e in runs}
         results = [e for e in self.history if e["seq"] < before and e["kind"] == "result"
                    and e["payload"]["run"] in ids]
-        return digest(canonical([protocol, claim, *runs, *results]))
+        preceding = [event for event in self.history if event["seq"] < before]
+        return digest(canonical([protocol, claim, *runs, *results, *protocol_exposures(preceding, protocol)]))
 
     def project(self) -> None:
         e, p = self.event, self.event["payload"]
@@ -305,9 +313,32 @@ class _Projection:
         if kind == "protocol":
             self.refs(p["hypotheses"], "hypothesis", Relation.REGISTERED_HYPOTHESIS, "hypotheses")
             if p["parent"] is not None:
-                self.ref(p["parent"], "protocol", Relation.PROTOCOL_PARENT, "parent")
+                parent = self.ref(p["parent"], "protocol", Relation.PROTOCOL_PARENT, "parent")
+                if "statistical_design" in parent["payload"] and "statistical_design" not in p:
+                    self.fail("typed protocol amendment cannot drop statistical design")
             for field in ("implementation", "environment", "data"):
                 self.blob(p[field], Relation.ARTIFACT_INPUT, field)
+            if "statistical_design" in p:
+                try:
+                    Kernel(self.store, Actor("graph-validation", "reader"))._validate_typed_protocol(
+                        [event for event in self.history if event["seq"] < e["seq"]], p)
+                    design = StatisticalDesign.from_dict(p["statistical_design"])
+                except (DesignError, GateError) as exc:
+                    self.fail(str(exc))
+                for index, split in enumerate(design.data_splits):
+                    self.blob(split.digest, Relation.ARTIFACT_INPUT, f"statistical_design.data_splits[{index}].digest")
+                seen = p["seen_data"]
+                if (not isinstance(seen, list) or not all(isinstance(key, str) for key in seen)
+                        or len(set(seen)) != len(seen)):
+                    self.fail("seen_data must be unique artifact digests")
+                for index, key in enumerate(seen):
+                    self.blob(key, Relation.EXPOSED_DATA, f"seen_data[{index}]")
+        elif kind == "data_exposure":
+            self.blob(p["data"], Relation.EXPOSED_DATA, "data")
+            if not isinstance(p["purpose"], str) or not p["purpose"].strip():
+                self.fail("data exposure lacks a purpose")
+            if p["protocol"] is not None:
+                self.ref(p["protocol"], "protocol", Relation.EXPOSURE_PROTOCOL, "protocol")
         elif kind == "run":
             plan = self.ref(p["protocol"], "protocol", Relation.RUN_PROTOCOL, "protocol")
             self.hash_ref(plan, p["protocol_hash"], "protocol_hash")
@@ -326,6 +357,12 @@ class _Projection:
             plan = self.ref(p["protocol"], "protocol", Relation.CLAIM_PROTOCOL, "protocol")
             if p["scope"] != plan["payload"]["scope"]:
                 self.fail("claim scope differs from protocol scope")
+            mode = p.get("inference_mode", plan["payload"].get("protocol_mode", "unclassified"))
+            if mode not in {"unclassified", "descriptive", "exploratory", "confirmatory"}:
+                self.fail("invalid claim inference mode")
+            if mode == "confirmatory" and ("statistical_design" not in plan["payload"]
+                                            or plan["payload"].get("protocol_mode") != "confirmatory"):
+                self.fail("confirmatory inference requires a confirmatory statistical protocol")
             self.refs(p["evidence"], "run", Relation.EVIDENCE_RUN, "evidence")
             for index, run in enumerate(p["evidence"]):
                 result = self.results.get(run)
@@ -343,6 +380,11 @@ class _Projection:
             claim = self.ref(p["claim"], "claim", Relation.REVIEW_TARGET, "claim")
             if self.basis(claim, e["seq"]) != p["basis_hash"]:
                 self.fail("review basis does not match the recorded evidence revision")
+            plan = self.events[claim["payload"]["protocol"]]
+            preceding = [event for event in self.history if event["seq"] < e["seq"]]
+            for exposure in protocol_exposures(preceding, plan):
+                self.ref(exposure["id"], None, Relation.REVIEW_EXPOSURE, "basis_hash",
+                         derivation="resolved_exposure_basis")
         elif kind == "paper":
             self.refs(p["claims"], "claim", Relation.PAPER_CLAIM, "claims")
             if set(p["reviewed_bases"]) != set(p["claims"]):

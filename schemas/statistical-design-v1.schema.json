@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:epistemeos:statistical-design:v1",
+  "title": "EpistemeOS statistical design v1",
+  "description": "A statistical declaration, not certification of scientific validity or unseen data. sample_size counts experimental units. An empty exclusions array explicitly declares no planned exclusions.",
+  "$comment": "StatisticalDesign additionally checks equality of resampling_unit and experimental_unit, uniqueness of metric names, uniqueness of split IDs and digests, and binding of the primary metric to the protocol. Standard JSON Schema cannot express those cross-field checks. Access history, timing, actual unit independence and correctness of the declared methods require separate policies and review.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "mode", "experimental_unit", "estimand", "primary_metric",
+    "secondary_metrics", "sample_size", "sample_size_rationale", "uncertainty",
+    "exclusions", "stopping_rule", "multiple_testing", "data_splits"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "mode": {"enum": ["descriptive", "exploratory", "confirmatory"]},
+    "experimental_unit": {"$ref": "#/$defs/text"},
+    "estimand": {"$ref": "#/$defs/text"},
+    "primary_metric": {"$ref": "#/$defs/metric"},
+    "secondary_metrics": {"type": "array", "items": {"$ref": "#/$defs/metric"}, "uniqueItems": true},
+    "sample_size": {"type": "integer", "minimum": 1},
+    "sample_size_rationale": {"$ref": "#/$defs/text"},
+    "uncertainty": {"$ref": "#/$defs/uncertainty"},
+    "exclusions": {"type": "array", "items": {"$ref": "#/$defs/text"}, "uniqueItems": true},
+    "stopping_rule": {"$ref": "#/$defs/stoppingRule"},
+    "multiple_testing": {"$ref": "#/$defs/multipleTesting"},
+    "data_splits": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/dataSplit"}, "uniqueItems": true}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"data_splits": {"contains": {"properties": {"exposure_policy": {"const": "sequential"}}, "required": ["exposure_policy"]}}}},
+      "then": {"properties": {"stopping_rule": {"properties": {"kind": {"const": "sequential"}}}}}
+    },
+    {
+      "if": {"properties": {"mode": {"const": "confirmatory"}}},
+      "then": {
+        "properties": {
+          "data_splits": {
+            "contains": {
+              "properties": {
+                "role": {"const": "confirmatory"},
+                "exposure_policy": {"enum": ["holdout", "new_data", "sequential"]}
+              },
+              "required": ["role", "exposure_policy"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "unit"],
+      "properties": {"name": {"$ref": "#/$defs/text"}, "unit": {"$ref": "#/$defs/text"}}
+    },
+    "uncertainty": {
+      "type": "object", "additionalProperties": false,
+      "required": ["method", "resampling_unit", "rationale"],
+      "properties": {
+        "method": {"$ref": "#/$defs/text"},
+        "resampling_unit": {"anyOf": [{"$ref": "#/$defs/text"}, {"type": "null"}]},
+        "rationale": {"$ref": "#/$defs/text"}
+      },
+      "if": {"properties": {"method": {"const": "not_applicable"}}},
+      "then": {"properties": {"resampling_unit": {"type": "null"}}},
+      "else": {"properties": {"resampling_unit": {"$ref": "#/$defs/text"}}}
+    },
+    "stoppingRule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "rule"],
+      "properties": {
+        "kind": {"enum": ["fixed_sample", "sequential"]},
+        "rule": {"$ref": "#/$defs/text"},
+        "error_control": {"$ref": "#/$defs/text"}
+      },
+      "if": {"properties": {"kind": {"const": "sequential"}}},
+      "then": {"required": ["error_control"]},
+      "else": {"not": {"required": ["error_control"]}}
+    },
+    "multipleTesting": {
+      "type": "object", "additionalProperties": false,
+      "required": ["family", "correction", "rationale"],
+      "properties": {
+        "family": {"type": "array", "items": {"$ref": "#/$defs/text"}, "uniqueItems": true},
+        "correction": {"$ref": "#/$defs/text"},
+        "rationale": {"$ref": "#/$defs/text"}
+      },
+      "if": {"properties": {"correction": {"const": "not_applicable"}}},
+      "else": {"properties": {"family": {"minItems": 1}}}
+    },
+    "dataSplit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "digest", "role", "exposure_policy"],
+      "properties": {
+        "id": {"$ref": "#/$defs/text"},
+        "digest": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
+        "role": {"enum": ["discovery", "validation", "confirmatory"]},
+        "exposure_policy": {"enum": ["open", "holdout", "new_data", "sequential"]}
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": 1,
+      "mode": "descriptive",
+      "experimental_unit": "task",
+      "estimand": "Mean score over the complete registered fixture task set",
+      "primary_metric": {"name": "mean_score", "unit": "score"},
+      "secondary_metrics": [],
+      "sample_size": 8,
+      "sample_size_rationale": "Complete eight-task fixture census; no population inference or power claim",
+      "uncertainty": {"method": "not_applicable", "resampling_unit": null, "rationale": "Report the complete fixture census descriptively"},
+      "exclusions": [],
+      "stopping_rule": {"kind": "fixed_sample", "rule": "Stop after all eight registered tasks, retaining failures"},
+      "multiple_testing": {"family": [], "correction": "not_applicable", "rationale": "No significance tests or inferential claim"},
+      "data_splits": [{"id": "fixture", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "role": "discovery", "exposure_policy": "open"}]
+    }
+  ]
+}

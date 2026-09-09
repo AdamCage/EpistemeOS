@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:episteme:command:v1",
+  "title": "EpistemeOS local command envelope v1",
+  "$comment": "Transport schema only. CommandService additionally binds each action signature, normalizes defaults, validates payload types and roles. Kernel/Search enforce persisted scientific and budget transitions. IDs are caller-declared, not authenticated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["context", "request"],
+  "properties": {
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id", "expected_revision", "actor", "role", "study_id", "correlation_id", "causation_id"],
+      "properties": {
+        "command_id": {"$ref": "#/$defs/text"},
+        "expected_revision": {"type": "integer", "minimum": 0},
+        "actor": {"$ref": "#/$defs/text"},
+        "role": {"$ref": "#/$defs/text"},
+        "study_id": {"$ref": "#/$defs/text"},
+        "correlation_id": {"$ref": "#/$defs/text"},
+        "causation_id": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]}
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "action", "payload"],
+      "properties": {
+        "version": {"const": 1},
+        "action": {"enum": [
+          "kernel.hypothesis", "kernel.preregister", "kernel.start_run", "kernel.finish_run",
+          "kernel.claim", "kernel.review", "kernel.expose_data", "search.register_tournament",
+          "search.ballot", "search.register_tree", "search.add_node", "search.select_next",
+          "search.finish_selection", "paper.build"
+        ]},
+        "payload": {"type": "object"}
+      }
+    }
+  },
+  "$defs": {"text": {"type": "string", "minLength": 1, "pattern": "\\S"}},
+  "examples": [{
+    "context": {
+      "command_id": "first-hypothesis-v1",
+      "expected_revision": 0,
+      "actor": "planner-1",
+      "role": "planner",
+      "study_id": "example-study",
+      "correlation_id": "cycle-1",
+      "causation_id": null
+    },
+    "request": {
+      "version": 1,
+      "action": "kernel.hypothesis",
+      "payload": {
+        "statement": "The proposed method improves the task-level mean score.",
+        "prediction": "The paired task-level mean difference is positive.",
+        "falsifier": "The paired mean difference is nonpositive in the registered scope.",
+        "scope": {"population": "synthetic contract example"}
+      }
+    }
+  }]
+}

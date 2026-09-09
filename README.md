@@ -12,6 +12,7 @@ Research harness для вычислительных научных исслед
 - [AI Scientist / AI Co-Scientist](docs/research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](docs/research/kosmos-virtual-lab-robin.md).
 - [План оценки научной результативности](docs/research/evaluation-plan.md) и [инженерное review](docs/implementation-review.md).
 - [Текущая проверка, runs и оставшиеся ограничения](docs/validation.md).
+- [Идемпотентные команды v1](docs/command-api.md) и [статистический протокол / exposure](docs/decisions/0002-statistical-design.md).
 
 ## Локальный запуск
 
@@ -81,7 +82,9 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 ## Что уже обеспечивается
 
 - SHA-256 artifacts, проверяемый event hash chain и атомарная запись с expected revision.
+- Versioned `command` API: атомарные events/receipts, replay после потери ответа, conflict при изменении body, проверки конкурирующих writers.
 - Protocol до RunStarted, immutable amendments, фиксированные inputs/code/environment и seed schedule.
+- Typed statistical design, exploratory/confirmatory режим, declarative exposure ledger и запрет повторного объявления просмотренных bytes свежим holdout.
 - Сохранение failed/cancelled attempts, лимит числа runs и gates на полноту всех результатов.
 - Claim scope и run references, проверка повторного анализа, отклонение self-review/self-replication по ID.
 - Snapshot-consistent export, актуальность evidence для review, veto отрицательного review и блокировка premature paper.
@@ -100,6 +103,6 @@ uv run episteme afterlife import C:\Projects\llm-semantic-afterlife --root .rese
 
 Afterlife importer сохраняет immutable исторический снимок, статусы и ограничения проверки. Повторный импорт того же снимка идемпотентен. По умолчанию копируются metadata, а большие outputs только проверяются по hashes в пределах лимита; непроверенные ссылки остаются явными. Импорт не создаёт preregistered protocols, reviews или accepted claims и не меняет исходный checkout. Это начало domain adapter; перенос исполнения/анализа afterlife остаётся в плане.
 
-Actor IDs пока назначает доверенный вызывающий процесс. Разные ID и source hashes не доказывают независимость рассуждения или clean-room реализацию. SQLite/hash chain не защищает от владельца файлов. Generic kernel проверяет наличие и согласованность метрик; научную корректность вычисления должен проверять domain adapter и независимая реализация. Полноценные агенты, sandbox, durable execution/replanning и статистические policies перечислены в MVP-плане.
+Actor IDs пока назначает доверенный вызывающий процесс. Разные ID и source hashes не доказывают независимость рассуждения или clean-room реализацию. SQLite/hash chain не защищает от владельца файлов. Generic kernel проверяет наличие и согласованность метрик и статистических деклараций; соответствие фактических данных, вычисление uncertainty и научную корректность метода должен проверять domain adapter и независимая реализация. Полноценные агенты, sandbox и durable execution/replanning перечислены в MVP-плане.
 
 Сохранённый исходный [objective.md](objective.md) остаётся контекстом проекта. Прямое сравнительное утверждение «лучше существующих AI Scientist систем» будет допустимо только после контролируемой оценки.

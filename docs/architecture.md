@@ -1,6 +1,6 @@
 # EpistemeOS: архитектура исследовательского harness
 
-Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 8 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
+Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 9 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
 
 ## 1. Решение
 
@@ -50,7 +50,7 @@ flowchart TD
 
 ## 4. Данные и ссылки
 
-Все идентификаторы принадлежат study. Записи версионируются; изменения создают новые версии с `supersedes` и основанием. Публичные JSON schemas появятся в M1, текущий Python API — прототип командной границы.
+Целевая модель связывает все идентификаторы со study. Записи версионируются; изменения создают новые версии с `supersedes` и основанием. Сейчас опубликованы JSON schemas command envelope и statistical design v1; прочие сущности и общие supersession/contradiction links остаются в M1. `study_id` в текущей command receipt — metadata, не граница доступа.
 
 | Сущность | Основные поля и инварианты |
 |---|---|
@@ -72,7 +72,7 @@ Scopes должны включать научно значимые режимы:
 
 ## 5. Event log, storage и восстановление
 
-Authoritative state — append-only события. Ключевые поля: schema version, monotonic sequence, actor/role, timestamp, payload, previous hash, event hash. Планируются study/correlation/causation IDs, command idempotency key и expected revision. SQLite-транзакция одновременно резервирует ресурсы и допускает переход; JSONL и Markdown являются экспортами, не параллельными источниками истины.
+Authoritative scientific state — append-only события. Ключевые поля: schema version, monotonic sequence, actor/role, timestamp, payload, previous hash, event hash. CommandService связывает study/correlation/causation IDs, command ID и expected revision с immutable receipt; events и receipt фиксируются одной SQLite-транзакцией. Receipt хранит историю доставки, не scientific approval; прежние event hashes сохраняются. Резерв фактического исполнения и outbox добавляются в M2. JSONL и Markdown — экспорты; events-only JSONL не восстанавливает квитанции доставки.
 
 В v0.1 события хранятся в одной SQLite-таблице, граф восстанавливается из ссылок на ID в payload. SHA-256 blobs сохраняются до события, которое на них ссылается. Авария между сохранением blob и commit может оставить orphan artifact, но не dangling event. Каждое чтение blob сверяет digest. Запись проверяет expected revision под `BEGIN IMMEDIATE`; конкурентный устаревший writer получает conflict. DB triggers предотвращают UPDATE/DELETE через обычные операции.
 
@@ -145,8 +145,10 @@ TMLR и ICLR получают разные review profiles. TMLR акценти�
 
 Реализовано: immutable event history, content-addressed artifacts, frozen protocols, competing-hypothesis references, parent protocol links, run/result/claim references, run-count budget, seed coverage, reanalysis agreement, role checks, scoped claims, актуальность review basis, veto незакрытого отрицательного review и вычисление next action. `Search` сохраняет tournament ballots/ranking, bounded best-first frontier, выбор/резерв и terminal records; выбор повторно проверяет актуальность протокола, retries считаются по всей технической lineage. `PaperBuilder` создаёт внутренний evidence-linked Markdown/JSON scaffold из claims с актуальным approval и перепроверяет basis перед сохранением.
 
-Не реализовано: LLM providers/agents, authenticated assignments, schema migrations, leases/outbox/idempotency команд ядра, sandbox, полное environment reconstruction, generic metric recomputation, statistics policies, литературный retrieval, полный manuscript/venue pipeline и автоматическое исполнение replanning. Они имеют отдельные milestones в [MVP-плане](mvp-plan.md). Начальный CLI demo подтверждает работу контрактов на синтетическом случае, не научную эффективность framework.
+Не реализовано: LLM providers/agents, authenticated assignments, общий migration/restore framework, leases/outbox, sandbox, полное environment reconstruction, generic metric recomputation, сопоставление statistical design с фактическими данными, литературный retrieval, полный manuscript/venue pipeline и автоматическое исполнение replanning. Они имеют отдельные milestones в [MVP-плане](mvp-plan.md). Начальный CLI demo подтверждает работу контрактов на синтетическом случае, не научную эффективность framework.
 
 `episteme demo --with-search` исполняет выбранный из двух зафиксированных вариантов, сохраняет альтернативу и бюджетную остановку. Баллы и ballots в нём заданы fixture-кодом. Реальные агенты не оценивают гипотезы, а scientific review остаётся открытым; это интеграционная проверка search → execution → evidence, не доказательство качества научного выбора.
 
 Добавлены read-only `ResearchGraph` с типизированными рёбрами, проверкой ссылок/bytes и запросами ancestors/descendants/exact-scope claims; historical Afterlife adapter с ограниченным hash scan и идемпотентным импортом metadata. Historical snapshot остаётся отдельным узлом, не preregistered protocol или accepted evidence. Полноценные schemas/migrations/contradiction events и исполнение afterlife через общий DomainPack ещё не реализованы.
+
+Инкремент M1 от 9 сентября: [command admission](decisions/0001-command-admission.md), [CLI/API](command-api.md), [typed statistical design и exposure](decisions/0002-statistical-design.md). Проверены duplicate delivery, crash после commit, competing writers, атомарный rollback и аддитивная receipt migration. Typed review basis учитывает просмотр данных и связанные попытки других ветвей; заявленный exploratory finding нельзя повысить до confirmatory без нового допустимого protocol. Это не аутентификация доступа и не проверка фактической статистики.

@@ -16,9 +16,9 @@
 
 | Возможность | Текущее состояние | Что ещё требуется |
 |---|---|---|
-| Persistent state | `Store`: SQLite WAL, append-only events, проверка hash chain, SHA-256 blobs, JSONL export. `ResearchGraph`: typed refs, ancestor/descendant queries и exact scope filter. | Study IDs, публичные схемы, миграции, связи supersession/contradiction, внешний checkpoint. |
+| Persistent state | SQLite WAL, append-only events/receipts, SHA-256 blobs, idempotent command admission, study/correlation/causation metadata, аддитивная receipt migration; typed graph. | Study access boundaries, остальные публичные entity schemas, общий migration/restore, supersession/contradiction, внешний checkpoint. |
 | Конкурирующие объяснения | `Kernel.hypothesis` требует prediction/falsifier/scope; протокол ссылается минимум на две гипотезы. | Генерация разнообразного pool, проверка различимости предсказаний, literature support, версионирование explanation sets. |
-| Preregistration | Immutable protocol event, source/environment/data digests, seeds, run limit; новый protocol может ссылаться на parent. | Типизированный estimand, split/holdout registry, анализ multiplicity, data-exposure ledger, amendments с обязательным основанием. |
+| Preregistration | Immutable protocol; typed estimand/unit/metrics/sample-size/uncertainty/stopping/multiplicity/splits, mode и exposure snapshot; typed amendments требуют основание. | Сопоставление деклараций с фактическими outputs, расчёт статистики, authenticated data access, сложные sequential designs. |
 | Runs и provenance | Контракты start/finish; demo реально запускает два фиксированных Python-приложения, сохраняет raw CSV, metrics, argv, runtime и логи. | Общий runner, восстановление процесса, полное source/environment closure, execution attestation, sandbox и измерение ресурсов. |
 | Mechanical gates | Проверка completeness, hashes, seed coverage, finite primary metric, scope и agreement повторного анализа. | Domain recomputation метрики и статистические проверки; schema/units, planned-versus-observed accounting, объяснимые exemptions. |
 | Replication / review | Проверяются заявленные actor IDs, разные implementation digests, basis review, self-review и незакрытый отрицательный verdict. | Аутентифицированные назначения, отдельные контексты и права чтения; реальное независимое выполнение и научная оценка. |
@@ -63,6 +63,10 @@ Paper scaffold сохраняет source snapshot и review bases, а build пр
 Критический путь: `M1 → M2 → (исполнение M3) → M4 → M5`. Рубрики, задачи evaluation и read-only afterlife importer можно готовить параллельно, но их результаты нельзя выдавать за прошедшие gates до подключения к готовым контрактам. MCTS, graph database, web UI и распределённые GPU backends не блокируют первый полный MVP; расширение инфраструктуры не заменяет закрытие научных требований.
 
 ## M1 — состояние, причинность событий и научный дизайн
+
+**Инкремент 9 сентября реализован и локально проверен:** command envelope v1 и atomic receipts; study/correlation/causation metadata; additive migration без изменения v1 event hashes; statistical design v1; declarative exposure и typed claim modes; новый связанный exposure/foreign attempt требует fresh review. Прямые legacy API остаются без idempotency; прошлые protocols не получают statistical classification задним числом. [Command API](command-api.md), [design ADR](decisions/0002-statistical-design.md), [проверки](validation.md).
+
+M1 в целом ещё открыт: публичные schemas всех entity types, ResearchQuestion/ExplanationSet revisions, общие supersession/contradiction relations и descendant invalidation, полноценный migration/restore и planned-versus-observed domain validation не реализованы. Ниже сохранены полные критерии этапа.
 
 1. Ввести versioned schemas для ResearchQuestion, HypothesisVersion, ExplanationSet, Protocol, RunAttempt, Artifact, Observation, Claim, EvidenceLink, Review, Decision и PaperBundle. Разделить техническое состояние запуска и научный исход; у каждого claim есть тип, scope, assumptions и limitations.
 2. Добавить study/correlation/causation IDs, command idempotency key, expected revision и schema migrations. Проекции объяснений, дерева поиска и claim–evidence DAG строятся из events и могут пересоздаваться; они не становятся отдельной истиной.

@@ -66,6 +66,11 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
         p = event["payload"]
         if event["kind"] == "protocol":
             keys.update(p[key] for key in ("implementation", "environment", "data"))
+            if p.get("statistical_design") is not None:
+                keys.update(split["digest"] for split in p["statistical_design"]["data_splits"])
+                keys.update(p["seen_data"])
+        elif event["kind"] == "data_exposure":
+            keys.add(p["data"])
         elif event["kind"] == "run":
             keys.update(p[key] for key in ("implementation", "environment"))
         elif event["kind"] == "result":
@@ -89,6 +94,7 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     summary = _summary(store, history)
     return dict(bundle_version=1, summary=summary, events=history,
                 artifacts=artifact_inventory(store, history),
+                delivery_restore="events_only; command receipts require a separate database backup",
                 scientific_review="not performed by export", snapshot_hash=summary["last_event_hash"])
 
 
