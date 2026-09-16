@@ -1,14 +1,16 @@
 # Проверка текущего прототипа
 
-Дата: 9 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа и инкремента M1, не оценка качества научных открытий.
+Дата: 11 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа и инкрементов M1, не оценка качества научных открытий.
 
 ## Выполненные проверки
 
-`uv run python -m unittest discover -s tests -v`: **186 тестов, 185 успешно, 1 skipped**, 30.543 секунды. Пропущен тест создания symlink: среда Windows не предоставляет это право. Обход reparse points реализован, но настоящий symlink case на этом хосте не проверен.
+`uv run python -m unittest discover -s tests -v`: **226 тестов, 225 успешно, 1 skipped**, 39.656 секунды. Локальный transcript: `.research/claim-tests-20260910.log` (git-ignored; окончательный прогон 11 сентября). Пропущен тест создания symlink: среда Windows не предоставляет это право. Обход reparse points реализован, но настоящий symlink case на этом хосте не проверен. Предыдущий инкремент 9 сентября: 186 тестов, 185 успешно, 1 skipped.
 
 Первый commit `46c783b` опубликован в публичном [GitHub repository](https://github.com/AdamCage/EpistemeOS) и прошёл [CI run 34277599425](https://github.com/AdamCage/EpistemeOS/actions/runs/34277599425). M1 increment [`91192d4`](https://github.com/AdamCage/EpistemeOS/commit/91192d4) отдельно прошёл [CI run 34385764051](https://github.com/AdamCage/EpistemeOS/actions/runs/34385764051): все четыре jobs успешны — Windows/Linux, Python 3.11/3.13.
 
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
+
+Четыре публичные JSON schemas и содержащиеся в них examples проверены `jsonschema.Draft202012Validator` в отдельном установленном окружении. `jsonschema` не добавлен в runtime. Schema validation проверяет форму; исторические ссылки, bases и условия переходов проверяются Kernel и workflow tests.
 
 | Проверяемая область | Сценарии |
 |---|---|
@@ -17,6 +19,7 @@
 | Command delivery | Два concurrent writers с одинаковым ID/body и с разными IDs; два события + receipt атомарно; lost response после `os._exit`; rollback-only после подавленной ошибки append; receipt corruption/range/overlap; readonly legacy schema и additive migration с неизменным JSONL. |
 | Versioned service | Role/type/argument admission до handler; omitted/explicit defaults; replay terminal run, search reservation, review/paper после смены evidence; strict JSON; real CLI reopen и receipts. |
 | Statistical workflow | Null-result остаётся inconclusive/not_assessed; metric/stopping/unit mismatch; protected split до просмотра; started/failed inputs без parent не становятся новым holdout; typed amendments сохраняют reason/seen_data; foreign attempt и declared exposure требуют fresh review; unrelated inherited snapshot не инвалидирует basis. |
+| Claim relations | 40 новых тестов: typed links, exact scope, направление context, cycles/duplicates, stale/concurrent admission, transitive basis и artifacts, contributor/veto guards, explicit assessments, историческая/текущая readiness, supersession, historical graph bindings, paper context, command replay и реальный CLI. Многоступенчатая lineage A → B → C проверяет current readiness последней принятой версии и historical readiness внутренних звеньев. Open foreign findings требуют acknowledgement; оно не закрывает исходное veto; симметричные closures сходятся без взаимного бесконечного сброса approvals. |
 | Search | A/B ballots, ties/abstentions, priority≠truth, persistent frontier, актуальность протокола перед selection, общий repair-lineage limit, reservations, overrun, точная арифметика больших и subnormal decimal costs. |
 | Reporting | Один snapshot при concurrent append, generic primary metric, запрет premature paper, отрицательное review, concurrent evidence mutation перед commit, CAS manuscript. |
 | Graph | Типы/порядок/closure ссылок, ancestors/descendants, exact scope, исторические revisions, corruption, afterlife snapshot без accepted claims. |
@@ -24,6 +27,8 @@
 | CLI/workflow | Реальные CPU subprocesses, повторное вычисление по raw CSV, durable failure, reopen/export, search selection до run и сохранение невыбранной альтернативы. |
 
 ## Сохранённый пример command delivery
+
+Новые `kernel.link_claims` и `kernel.review_with_links` дополнительно проверены через отдельные CLI subprocesses в `test_cli_link_and_unresolved_review_persist_replay_and_export_graph`: два повторно доставленных requests создают ровно одну связь и одно review с `request_changes`, две receipts; последующий CLI graph читает эти события. Все outputs и мнения этого теста явно synthetic fixtures; научный эксперимент и научное approval не выполняются.
 
 Один example из публичной command schema дважды отправлен реальным CLI в `.research/command-example-20260909`. Оба процесса вернули `hypothesis-570a0cac8e85485e`; после read-only reopen в Store ровно одно событие и одна receipt. Event hash: `dfe8e18f8adc106904662a7278b14916846f7ee396b34372088c74dcf64c0ad5`. [Локальная проверка](../.research/command-example-20260909/verification.json) и request находятся в ignored каталоге. Это доставка fixture hypothesis, без эксперимента или scientific approval.
 

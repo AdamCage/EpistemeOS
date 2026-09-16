@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from .claim_context import resolve_context, validate_link
+from .claims import ClaimLink
 from .protocols import DesignError, StatisticalDesign
 from .store import IntegrityError, Store, canonical, digest
 
@@ -367,7 +369,8 @@ class Kernel:
                 "confirmatory inference requires a confirmatory statistical protocol")
         return mode
 
-    def _basis(self, history: list[dict[str, Any]], claim: str) -> tuple[str, list[dict[str, Any]]]:
+    def _local_evidence(self, history: list[dict[str, Any]], claim: str
+                        ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         c = self._get(history, claim, "claim")
         protocol = c["payload"]["protocol"]
         plan = self._get(history, protocol, "protocol")
@@ -375,17 +378,122 @@ class Kernel:
         ids = {e["id"] for e in runs}
         results = [e for e in history if e["kind"] == "result" and e["payload"]["run"] in ids]
         basis = [plan, c, *runs, *results, *protocol_exposures(history, plan)]
+        return basis, runs
+
+    def _basis(self, history: list[dict[str, Any]], claim: str) -> tuple[str, list[dict[str, Any]]]:
+        local, runs = self._local_evidence(history, claim)
+        context = resolve_context(history, claim)
+        if not context.link_ids:
+            return digest(canonical(local)), runs  # Preserve the published v1 recipe exactly.
+        basis = dict(basis_version=2, claim=claim,
+                     claims=[dict(claim=id, evidence=self._local_evidence(history, id)[0])
+                             for id in context.claim_ids],
+                     links=[self._get(history, id, "claim_link") for id in context.link_ids],
+                     context_findings=self._context_findings(history, claim)[0])
         return digest(canonical(basis)), runs
+
+    @staticmethod
+    def _context_findings(history: list[dict[str, Any]], claim: str
+                          ) -> tuple[list[dict[str, Any]], set[str]]:
+        """Keep foreign negative findings and their first same-owner closure.
+
+        Own reviews never enter their own evidence basis. Ordinary positive
+        reviews also stay out: repeated mutual approvals must not stale each
+        other forever. Retaining closed episodes prevents revival of an older
+        approval after a finding is raised and subsequently withdrawn.
+        """
+        others = set(resolve_context(history, claim).claim_ids) - {claim}
+        records: list[dict[str, Any]] = []
+        pending: dict[tuple[str, str], str] = {}
+        for event in history:
+            p = event["payload"]
+            if event["kind"] != "review" or p["claim"] not in others:
+                continue
+            key = p["claim"], event["actor"]
+            if p["verdict"] != "approve":
+                records.append(event)
+                pending[key] = event["id"]
+            elif key in pending:
+                records.append(event)
+                del pending[key]
+        return records, set(pending.values())
+
+    def link_claims(self, *, source: str, target: str, relation: str, rationale: str,
+                    expected_bases: dict[str, str]) -> str:
+        """Record a relation proposal at two immutable evidence revisions."""
+        require(self.actor.role in {"planner", "analyst"}, "only planner/analyst may propose claim links")
+        history = self._history()
+        require(isinstance(expected_bases, dict) and set(expected_bases) == {source, target},
+                "expected bases must cover exactly both claim endpoints")
+        a, b = self._get(history, source, "claim"), self._get(history, target, "claim")
+        source_basis, _ = self._basis(history, source)
+        target_basis, _ = self._basis(history, target)
+        require(expected_bases == {source: source_basis, target: target_basis}, "stale claim link evidence")
+        link = ClaimLink(schema_version=1, source=source, target=target, relation=relation,
+                         rationale=rationale, source_hash=a["hash"], target_hash=b["hash"],
+                         source_basis=source_basis, target_basis=target_basis)
+        validate_link(history, link)
+        # An author of a new relation cannot subsequently provide its independent
+        # review. Avoid stranding a prior veto whose owner must explicitly revise it.
+        candidate = dict(id="candidate-" + uuid4().hex, seq=len(history) + 1, kind="claim_link",
+                         payload=link.to_dict(), hash=digest(canonical(link.to_dict())), actor=self.actor.id)
+        latest = {(e["payload"]["claim"], e["actor"]): e for e in history if e["kind"] == "review"}
+        for (id, owner), review in latest.items():
+            if review["payload"]["verdict"] != "approve":
+                context, contributors, _ = self._review_members([*history, candidate], id)
+                require(candidate["id"] not in context.link_ids or owner not in contributors,
+                        "claim link would prevent an open review veto owner from independently reviewing its context")
+        return self._write(history, "claim_link", link.to_dict(), {"planner", "analyst"})
 
     def gate(self, claim: str) -> dict[str, Any]:
         """Fail closed on absent/changed evidence; never certifies scientific truth."""
         return self._gate(self._history(), claim)
 
     def _gate(self, history: list[dict[str, Any]], claim: str) -> dict[str, Any]:
+        self._get(history, claim, "claim")
+        context = resolve_context(history, claim)
+        result = self._gate_local(history, claim)
+        if context.link_ids:
+            related = []
+            for id in context.claim_ids:
+                if id != claim:
+                    record = self._get(history, id, "claim")
+                    original = [e for e in history if e["seq"] <= record["seq"]]
+                    related.append(dict(claim=id, historical_gate=self._gate_local(original, id),
+                                        current_gate=self._gate_local(history, id)))
+                    # A historical claim can be superseded because newer runs
+                    # exceed its immutable citations. Verify all current bytes
+                    # without mislabelling that old claim as mechanically valid.
+                    for event in self._local_evidence(history, id)[0]:
+                        if event["kind"] == "claim":
+                            continue
+                        for key in exposure_artifacts(event):
+                            try:
+                                self.store.read(key)
+                            except IntegrityError as exc:
+                                result["failures"].append(f"linked claim {id}: {exc}")
+            for id in context.link_ids:
+                link = self._get(history, id, "claim_link")
+                before = [e for e in history if e["seq"] < link["seq"]]
+                p = link["payload"]
+                if (self._basis(before, p["source"])[0] != p["source_basis"]
+                        or self._basis(before, p["target"])[0] != p["target_basis"]):
+                    result["failures"].append(f"claim link basis mismatch: {id}")
+            result["basis_hash"] = self._basis(history, claim)[0]
+            result["passed"] = not result["failures"]
+            result["checks_version"] = "0.2.0"
+            result["context_claims"] = list(context.claim_ids)
+            result["claim_links"] = list(context.link_ids)
+            result["related_claims"] = related
+            result["open_context_reviews"] = sorted(self._context_findings(history, claim)[1])
+        return result
+
+    def _gate_local(self, history: list[dict[str, Any]], claim: str) -> dict[str, Any]:
         c = self._get(history, claim, "claim")["payload"]
         plan = self._get(history, c["protocol"], "protocol")
         p = plan["payload"]
-        basis, runs = self._basis(history, claim)
+        evidence, runs = self._local_evidence(history, claim)
+        basis = digest(canonical(evidence))
         failures: list[str] = []
         primary: list[dict[str, Any]] = []
         completed: set[str] = set()
@@ -447,25 +555,29 @@ class Kernel:
 
     def review(self, claim: str, *, verdict: str, rationale: str,
                actions: list[str], expected_basis: str) -> str:
+        return self._record_review(claim, verdict=verdict, rationale=rationale, actions=actions,
+                                   expected_basis=expected_basis, link_assessments=None)
+
+    def review_with_links(self, claim: str, *, verdict: str, rationale: str,
+                          actions: list[str], expected_basis: str,
+                          link_assessments: dict[str, dict[str, Any]]) -> str:
+        """Review every declared relation explicitly; no automatic truth inference."""
+        require(isinstance(link_assessments, dict), "link assessments must be a mapping")
+        return self._record_review(claim, verdict=verdict, rationale=rationale, actions=actions,
+                                   expected_basis=expected_basis, link_assessments=link_assessments)
+
+    def _record_review(self, claim: str, *, verdict: str, rationale: str,
+                       actions: list[str], expected_basis: str,
+                       link_assessments: dict[str, dict[str, Any]] | None) -> str:
         history = self._history()
         gate = self.gate(claim)
         # gate() may observe a newer state; never admit that against stale history.
         basis, runs = self._basis(history, claim)
         require(gate["basis_hash"] == basis == expected_basis, "stale review evidence bundle")
         require(gate["passed"], "mechanical gate failed: " + "; ".join(gate["failures"]))
-        c = self._get(history, claim, "claim")
-        plan = self._get(history, c["payload"]["protocol"], "protocol")
-        hypotheses = [self._get(history, id, "hypothesis") for id in plan["payload"]["hypotheses"]]
-        contributors = {c["actor"], plan["actor"], *(r["actor"] for r in runs),
-                        *(h["actor"] for h in hypotheses)}
-        for context in protocol_exposures(history, plan):
-            # Reading an evidence bundle as reviewer is expected; authoring a
-            # related protocol/attempt included in that bundle is a contribution.
-            if context["kind"] != "data_exposure":
-                contributors.add(context["actor"])
-                if context["kind"] == "protocol":
-                    contributors.update(self._get(history, id, "hypothesis")["actor"]
-                                        for id in context["payload"]["hypotheses"])
+        context, contributors, admissible_refs = self._review_members(history, claim)
+        require(not context.link_ids or link_assessments is not None,
+                "linked claim context requires review_with_links")
         require(self.actor.id not in contributors, "reviewer must be independent of contributors")
         require(isinstance(verdict, str) and verdict in {"approve", "request_changes", "reject"},
                 "invalid review verdict")
@@ -474,8 +586,74 @@ class Kernel:
                 "actions must be nonempty strings")
         require(verdict == "approve" or bool(actions), "non-approval requires replan actions")
         require(verdict != "approve" or not actions, "approval cannot have unresolved actions")
-        return self._write(history, "review", dict(claim=claim, verdict=verdict,
-                           rationale=rationale, actions=actions, basis_hash=basis), {"reviewer"})
+        payload = dict(claim=claim, verdict=verdict, rationale=rationale, actions=actions, basis_hash=basis)
+        if link_assessments is not None:
+            self._validate_assessments(link_assessments, set(context.link_ids), admissible_refs, verdict)
+            if verdict == "approve":
+                acknowledged = {id for assessment in link_assessments.values() for id in assessment["evidence"]}
+                require(self._context_findings(history, claim)[1] <= acknowledged,
+                        "approval must explicitly acknowledge every open review in the linked context")
+                accepted_replacements = {
+                    self._get(history, id, "claim_link")["payload"]["target"]
+                    for id, assessment in link_assessments.items()
+                    if assessment["judgment"] == "accepted"
+                    and self._get(history, id, "claim_link")["payload"]["relation"] == "supersedes"}
+                for id, assessment in link_assessments.items():
+                    if assessment["judgment"] != "accepted":
+                        continue
+                    link = self._get(history, id, "claim_link")["payload"]
+                    source = self._get(history, link["source"], "claim")
+                    # A -> B -> C keeps B's historical replacement decision,
+                    # while current coverage belongs to the accepted frontier C.
+                    current_source = (link["relation"] == "supersedes"
+                                      and source["id"] not in accepted_replacements)
+                    basis_history = (history if current_source else
+                                     [e for e in history if e["seq"] <= source["seq"]])
+                    checked = self._gate_local(basis_history, source["id"])
+                    require(checked["passed"], f"accepted link has mechanically unqualified source: {id}")
+            payload.update(review_schema_version=2, link_assessments=link_assessments)
+        return self._write(history, "review", payload, {"reviewer"})
+
+    def _review_members(self, history: list[dict[str, Any]], claim: str) -> tuple[Any, set[str], set[str]]:
+        context = resolve_context(history, claim)
+        contributors: set[str] = set()
+        admissible_refs = set(context.link_ids)
+        for id in context.claim_ids:
+            evidence, _ = self._local_evidence(history, id)
+            for event in evidence:
+                admissible_refs.add(event["id"])
+                if event["kind"] != "data_exposure":
+                    contributors.add(event["actor"])
+                if event["kind"] == "protocol":
+                    for hypothesis in event["payload"]["hypotheses"]:
+                        admissible_refs.add(hypothesis)
+                        contributors.add(self._get(history, hypothesis, "hypothesis")["actor"])
+        contributors.update(self._get(history, id, "claim_link")["actor"] for id in context.link_ids)
+        admissible_refs.update(event["id"] for event in self._context_findings(history, claim)[0])
+        return context, contributors, admissible_refs
+
+    @staticmethod
+    def _validate_assessments(assessments: dict[str, Any], links: set[str],
+                              admissible_refs: set[str], verdict: str) -> None:
+        require(isinstance(assessments, dict) and set(assessments) == links,
+                "assessments must cover exactly all claim links in the review context")
+        for assessment in assessments.values():
+            require(isinstance(assessment, dict) and set(assessment) == {
+                "judgment", "disposition", "rationale", "evidence"}, "invalid link assessment fields")
+            require(isinstance(assessment["judgment"], str) and assessment["judgment"] in {
+                "accepted", "rejected", "unresolved"}, "invalid link judgment")
+            require(isinstance(assessment["disposition"], str) and assessment["disposition"] in {
+                "compatible_as_written", "requires_claim_revision", "needs_evidence"}, "invalid link disposition")
+            require(isinstance(assessment["rationale"], str) and bool(assessment["rationale"].strip()),
+                    "link assessment requires a rationale")
+            refs = assessment["evidence"]
+            require(isinstance(refs, list) and bool(refs) and all(isinstance(id, str) for id in refs)
+                    and len(set(refs)) == len(refs) and set(refs) <= admissible_refs,
+                    "link assessment needs unique evidence references from its review context")
+            if verdict == "approve":
+                require(assessment["judgment"] != "unresolved"
+                        and assessment["disposition"] == "compatible_as_written",
+                        "approval cannot leave an unresolved or incompatible claim link")
 
     def next_action(self, claim: str) -> dict[str, Any]:
         return self._next_action(self._history(), claim)
@@ -484,15 +662,21 @@ class Kernel:
         gate = self._gate(history, claim)
         if not gate["passed"]:
             return dict(action="repair_evidence", reasons=gate["failures"])
-        reviews = [e for e in history if e["kind"] == "review"
-                   and e["payload"]["claim"] == claim
-                   and e["payload"]["basis_hash"] == gate["basis_hash"]]
-        if not reviews:
-            return dict(action="scientific_review", basis_hash=gate["basis_hash"])
+        all_reviews = [e for e in history if e["kind"] == "review" and e["payload"]["claim"] == claim]
+        reviews = [e for e in all_reviews if e["payload"]["basis_hash"] == gate["basis_hash"]]
         # Latest opinion per reviewer; an unresolved negative opinion is a veto.
-        latest = {e["actor"]: e["payload"] for e in reviews}
+        latest = {e["actor"]: e["payload"] for e in all_reviews}
         negative = [r for r in latest.values() if r["verdict"] != "approve"]
         if negative:
             return dict(action="replan", reasons=[a for r in negative for a in r["actions"]])
+        if not reviews:
+            return dict(action="scientific_review", basis_hash=gate["basis_hash"])
+        current = {e["actor"]: e["payload"] for e in reviews}
+        for link in (self._get(history, id, "claim_link") for id in resolve_context(history, claim).link_ids):
+            if link["payload"]["relation"] == "supersedes" and link["payload"]["target"] == claim:
+                if any(review.get("link_assessments", {}).get(link["id"], {}).get("judgment") == "accepted"
+                       for review in current.values()):
+                    return dict(action="superseded", claim=claim, replacement=link["payload"]["source"],
+                                reason="reviewed replacement; original claim and findings remain in history")
         return dict(action="paper_candidate", claim=claim, basis_hash=gate["basis_hash"],
                     limitation="local internal approval; human release and venue review still required")

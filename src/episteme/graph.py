@@ -27,6 +27,8 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from .kernel import Actor, GateError, Kernel, protocol_exposures
+from .claim_context import resolve_context, validate_link
+from .claims import ClaimLink
 from .protocols import DesignError, StatisticalDesign
 from .store import IntegrityError, Store, canonical, digest
 
@@ -41,6 +43,7 @@ class NodeKind(str, Enum):
     RUN = "run"
     RESULT = "result"
     CLAIM = "claim"
+    CLAIM_LINK = "claim_link"
     REVIEW = "review"
     PAPER = "paper"
     TOURNAMENT = "tournament"
@@ -94,6 +97,12 @@ class Relation(str, Enum):
     EXPOSED_DATA = "exposed_data"
     EXPOSURE_PROTOCOL = "exposure_protocol"
     REVIEW_EXPOSURE = "review_exposure_basis"
+    LINK_SOURCE = "claim_link_source"
+    LINK_TARGET = "claim_link_target"
+    REVIEW_LINK = "review_claim_link"
+    REVIEW_CONTEXT = "review_context_claim"
+    ASSESSMENT_EVIDENCE = "assessment_evidence"
+    CONTEXT_FINDING = "context_review_finding"
 
 
 def _freeze(value: Any) -> Any:
@@ -277,14 +286,8 @@ class _Projection:
             self.fail(f"reference hash mismatch in {field}")
 
     def basis(self, claim: dict[str, Any], before: int) -> str:
-        protocol = self.events[claim["payload"]["protocol"]]
-        runs = [e for e in self.history if e["seq"] < before and e["kind"] == "run"
-                and e["payload"]["protocol"] == protocol["id"]]
-        ids = {e["id"] for e in runs}
-        results = [e for e in self.history if e["seq"] < before and e["kind"] == "result"
-                   and e["payload"]["run"] in ids]
         preceding = [event for event in self.history if event["seq"] < before]
-        return digest(canonical([protocol, claim, *runs, *results, *protocol_exposures(preceding, protocol)]))
+        return Kernel(self.store, Actor("graph-reader", "observer"))._basis(preceding, claim["id"])[0]
 
     def project(self) -> None:
         e, p = self.event, self.event["payload"]
@@ -376,6 +379,17 @@ class _Projection:
                 for label, key in result["payload"]["outputs"].items():
                     self.blob(key, Relation.EVIDENCE_ARTIFACT, field + f".outputs.{label}",
                               derivation="resolved_run_result_output")
+        elif kind == "claim_link":
+            source = self.ref(p["source"], "claim", Relation.LINK_SOURCE, "source")
+            target = self.ref(p["target"], "claim", Relation.LINK_TARGET, "target")
+            preceding = [event for event in self.history if event["seq"] < e["seq"]]
+            try:
+                validate_link(preceding, ClaimLink.from_dict(p))
+            except ValueError as exc:
+                self.fail(str(exc))
+            if (self.basis(source, e["seq"]) != p["source_basis"]
+                    or self.basis(target, e["seq"]) != p["target_basis"]):
+                self.fail("claim link basis does not match its preceding evidence revisions")
         elif kind == "review":
             claim = self.ref(p["claim"], "claim", Relation.REVIEW_TARGET, "claim")
             if self.basis(claim, e["seq"]) != p["basis_hash"]:
@@ -385,6 +399,36 @@ class _Projection:
             for exposure in protocol_exposures(preceding, plan):
                 self.ref(exposure["id"], None, Relation.REVIEW_EXPOSURE, "basis_hash",
                          derivation="resolved_exposure_basis")
+            context = resolve_context(preceding, claim["id"])
+            version = p.get("review_schema_version", 1)
+            if type(version) is not int or version not in {1, 2} or (context.link_ids and version != 2):
+                self.fail("unsupported review schema or linked context lacks explicit assessments")
+            if version == 2:
+                admissible = set(context.link_ids)
+                reader = Kernel(self.store, Actor("graph-reader", "observer"))
+                for id in context.claim_ids:
+                    self.ref(id, "claim", Relation.REVIEW_CONTEXT, "basis_hash",
+                             derivation="resolved_claim_context")
+                    for record in reader._local_evidence(preceding, id)[0]:
+                        admissible.add(record["id"])
+                        if record["kind"] == "protocol":
+                            admissible.update(record["payload"]["hypotheses"])
+                findings, open_findings = reader._context_findings(preceding, claim["id"])
+                for finding in findings:
+                    admissible.add(finding["id"])
+                    self.ref(finding["id"], "review", Relation.CONTEXT_FINDING, "basis_hash",
+                             derivation="resolved_foreign_review_context")
+                try:
+                    reader._validate_assessments(p["link_assessments"], set(context.link_ids), admissible, p["verdict"])
+                    if p["verdict"] == "approve" and not open_findings <= {
+                            id for assessment in p["link_assessments"].values() for id in assessment["evidence"]}:
+                        self.fail("approval omits open reviews in its linked context")
+                except GateError as exc:
+                    self.fail(str(exc))
+                for id, assessment in p["link_assessments"].items():
+                    self.ref(id, "claim_link", Relation.REVIEW_LINK, f"link_assessments.{id}")
+                    self.refs(assessment["evidence"], None, Relation.ASSESSMENT_EVIDENCE,
+                              f"link_assessments.{id}.evidence")
         elif kind == "paper":
             self.refs(p["claims"], "claim", Relation.PAPER_CLAIM, "claims")
             if set(p["reviewed_bases"]) != set(p["claims"]):

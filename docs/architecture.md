@@ -1,6 +1,6 @@
 # EpistemeOS: архитектура исследовательского harness
 
-Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 9 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
+Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 10 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
 
 ## 1. Решение
 
@@ -50,7 +50,7 @@ flowchart TD
 
 ## 4. Данные и ссылки
 
-Целевая модель связывает все идентификаторы со study. Записи версионируются; изменения создают новые версии с `supersedes` и основанием. Сейчас опубликованы JSON schemas command envelope и statistical design v1; прочие сущности и общие supersession/contradiction links остаются в M1. `study_id` в текущей command receipt — metadata, не граница доступа.
+Целевая модель связывает все идентификаторы со study. Записи версионируются; изменения создают новые версии с `supersedes` и основанием. Сейчас опубликованы JSON schemas command envelope, statistical design, claim link v1 и review с оценками связей v2. Между claims реализованы `supports`, `contradicts`, `limits`, `supersedes`; revisions остальных сущностей остаются в M1. `study_id` в текущей command receipt — metadata, не граница доступа.
 
 | Сущность | Основные поля и инварианты |
 |---|---|
@@ -149,6 +149,8 @@ TMLR и ICLR получают разные review profiles. TMLR акценти�
 
 `episteme demo --with-search` исполняет выбранный из двух зафиксированных вариантов, сохраняет альтернативу и бюджетную остановку. Баллы и ballots в нём заданы fixture-кодом. Реальные агенты не оценивают гипотезы, а scientific review остаётся открытым; это интеграционная проверка search → execution → evidence, не доказательство качества научного выбора.
 
-Добавлены read-only `ResearchGraph` с типизированными рёбрами, проверкой ссылок/bytes и запросами ancestors/descendants/exact-scope claims; historical Afterlife adapter с ограниченным hash scan и идемпотентным импортом metadata. Historical snapshot остаётся отдельным узлом, не preregistered protocol или accepted evidence. Полноценные schemas/migrations/contradiction events и исполнение afterlife через общий DomainPack ещё не реализованы.
+Добавлены read-only `ResearchGraph` с типизированными рёбрами, проверкой ссылок/bytes и запросами ancestors/descendants/exact-scope claims; historical Afterlife adapter с ограниченным hash scan и идемпотентным импортом metadata. Historical snapshot остаётся отдельным узлом, не preregistered protocol или accepted evidence. Полноценные entity schemas/migrations и исполнение afterlife через общий DomainPack ещё не реализованы.
 
 Инкремент M1 от 9 сентября: [command admission](decisions/0001-command-admission.md), [CLI/API](command-api.md), [typed statistical design и exposure](decisions/0002-statistical-design.md). Проверены duplicate delivery, crash после commit, competing writers, атомарный rollback и аддитивная receipt migration. Typed review basis учитывает просмотр данных и связанные попытки других ветвей; заявленный exploratory finding нельзя повысить до confirmatory без нового допустимого protocol. Это не аутентификация доступа и не проверка фактической статистики.
+
+Инкремент M1 от 10 сентября: [claim relations и review context](decisions/0003-claim-relations.md). Связи фиксируют hashes и bases обоих endpoints; supports/limits образуют DAG, contradictions и supersession включают обе стороны в review context. Новые evidence и эпизоды отрицательного review связанных claims меняют basis зависимых решений. Review v2 явно оценивает все связи и ссылается на открытые связанные замечания; это не закрывает их исходные veto. Историческая и текущая mechanical readiness источников показываются отдельно. Accepted supersession выводит прежний claim из paper anchors, сохраняя его историю, и не одобряет замену автоматически. Paper сохраняет конкурирующий контекст и замечания. Per-finding obligations, evidence-backed closure и автоматический replan остаются в M4.

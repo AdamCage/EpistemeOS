@@ -13,6 +13,7 @@ Research harness для вычислительных научных исслед
 - [План оценки научной результативности](docs/research/evaluation-plan.md) и [инженерное review](docs/implementation-review.md).
 - [Текущая проверка, runs и оставшиеся ограничения](docs/validation.md).
 - [Идемпотентные команды v1](docs/command-api.md) и [статистический протокол / exposure](docs/decisions/0002-statistical-design.md).
+- [Связи claims, зависимый review и supersession](docs/decisions/0003-claim-relations.md).
 
 ## Локальный запуск
 
@@ -69,7 +70,7 @@ uv run episteme gate <claim-id> --root .research/demo
 uv run episteme review <claim-id> --root .research/demo --input review.json
 ```
 
-Verdicts: `approve`, `request_changes`, `reject`. `approve` требует пустого списка незакрытых actions. Reviewer с ID автора протокола, claim или любого связанного run не допускается. Отрицательное мнение одного reviewer не отменяется одобрением другого. Новое evidence инвалидирует прежний review basis.
+Verdicts: `approve`, `request_changes`, `reject`. `approve` требует пустого списка незакрытых actions. Reviewer с ID участника evidence context, включая авторов гипотез и связей, не допускается. Отрицательное мнение одного reviewer не отменяется одобрением другого или изменением basis. Новое evidence инвалидирует прежний review basis. Для claims со связями нужен action `kernel.review_with_links` через [command API](docs/command-api.md), с явной оценкой каждой связи и открытых замечаний связанного контекста.
 
 После актуального approval можно собрать **внутренний черновик**:
 
@@ -77,7 +78,7 @@ Verdicts: `approve`, `request_changes`, `reject`. `approve` требует пу�
 uv run episteme paper <claim-id> --root .research/demo --title "Название исследования" --actor writer-1
 ```
 
-Он содержит только выбранные claims, зарегистрированные методы, точные метрики, ссылки на evidence и ограничения. Сохраняются immutable Markdown/JSON artifacts и paper event. Литературный обзор, проверка метода против кода, научный вклад, venue formatting и внешнее peer review остаются обязательной дальнейшей работой. CLI ничего не публикует.
+Он содержит выбранные claims, зарегистрированные методы, точные метрики, ссылки на evidence и ограничения. Связанные конкурирующие/прежние claims и открытые замечания показываются отдельно с их фактическим статусом. Сохраняются immutable Markdown/JSON artifacts и paper event. Литературный обзор, проверка метода против кода, научный вклад, venue formatting и внешнее peer review остаются обязательной дальнейшей работой. CLI ничего не публикует.
 
 ## Что уже обеспечивается
 
@@ -87,6 +88,7 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 - Typed statistical design, exploratory/confirmatory режим, declarative exposure ledger и запрет повторного объявления просмотренных bytes свежим holdout.
 - Сохранение failed/cancelled attempts, лимит числа runs и gates на полноту всех результатов.
 - Claim scope и run references, проверка повторного анализа, отклонение self-review/self-replication по ID.
+- Immutable `supports/contradicts/limits/supersedes` links, транзитивный evidence context, review v2 и сохранение прежних claims/замечаний.
 - Snapshot-consistent export, актуальность evidence для review, veto отрицательного review и блокировка premature paper.
 - Persistent tournament/tree, воспроизводимый replay решений, проверка актуальности frontier и общий лимит технических retries.
 

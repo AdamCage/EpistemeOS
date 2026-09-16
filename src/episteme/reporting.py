@@ -9,6 +9,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .claim_context import resolve_context
 from .kernel import Actor, Kernel, require
 from .store import Store, canonical
 
@@ -94,6 +95,7 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     summary = _summary(store, history)
     return dict(bundle_version=1, summary=summary, events=history,
                 artifacts=artifact_inventory(store, history),
+                claim_relations=[event for event in history if event["kind"] == "claim_link"],
                 delivery_restore="events_only; command receipts require a separate database backup",
                 scientific_review="not performed by export", snapshot_hash=summary["last_event_hash"])
 
@@ -119,6 +121,19 @@ def _run_table(store: Store, history: list[dict[str, Any]], runs: list[dict[str,
     return rows
 
 
+def _relation_table(links: list[dict[str, Any]]) -> list[str]:
+    if not links:
+        return []
+    rows = ["## Recorded claim relations", "",
+            "Relations are preserved proposals and context, not automatically established scientific truth.", "",
+            "| Link | Source | Relation | Target | Recorded rationale |",
+            "| --- | --- | --- | --- | --- |"]
+    for link in links:
+        p = link["payload"]
+        rows.append(f"| {link['id']} | {p['source']} | {p['relation']} | {p['target']} | {_cell(p['rationale'])} |")
+    return [*rows, ""]
+
+
 def export_store(store: Store) -> dict[str, str]:
     # All files refer to precisely this verified history, even if another writer
     # appends while the export is materialized. Each file is atomically replaced.
@@ -136,6 +151,7 @@ def export_store(store: Store) -> dict[str, str]:
                        f"Next action: **{claim['next_action']['action']}**.", ""])
         report.extend(f"- Gate failure: {failure}" for failure in claim["gate"]["failures"])
         report.extend(["", "Limitations:", "", *(f"- {item}" for item in c["limitations"]), ""])
+    report.extend(_relation_table(bundle["claim_relations"]))
     report.extend(["## Recorded computations", "", *_run_table(
         store, history, [e for e in history if e["kind"] == "run"]), "",
         "Frozen protocols, runtime records and artifact hashes: [review-bundle.json](review-bundle.json).", ""])
@@ -164,7 +180,12 @@ class PaperBuilder:
             require(decision["action"] == "paper_candidate", f"claim not eligible for paper: {id}")
             require(decision["basis_hash"] == expected_bases[id], f"stale paper evidence: {id}")
         bundle = review_bundle(self.store, history)
+        contexts = [resolve_context(history, id) for id in claims]
+        context_claims = {id for context in contexts for id in context.claim_ids}
+        context_links = {id for context in contexts for id in context.link_ids}
         bundle.update(selected_claims=claims, reviewed_bases=expected_bases,
+                      selected_context=dict(claims=[e["id"] for e in history if e["id"] in context_claims],
+                                            links=[e["id"] for e in history if e["id"] in context_links]),
                       paper_status="internal evidence-linked scaffold; human release pending")
         lines = [f"# {_cell(title)}", "", "**Internal evidence-linked draft.** "
                  "This scaffold records reviewed claims and computations. It is not a submission-ready paper.", "",
@@ -180,6 +201,49 @@ class PaperBuilder:
             runs = [e for e in history if e["kind"] == "run" and e["payload"]["protocol"] == c["protocol"]]
             lines.extend(_run_table(self.store, history, runs))
             lines.extend(["", "### Limitations", "", *(f"- {item}" for item in c["limitations"]), ""])
+        links = [e for e in history if e["id"] in context_links]
+        lines.extend(_relation_table(links))
+        if links:
+            findings = {id: self.kernel._context_findings(history, id) for id in claims}
+            bundle["selected_context"]["review_findings"] = {
+                id: dict(events=[event["id"] for event in records], open_reviews=sorted(pending))
+                for id, (records, pending) in findings.items()}
+            lines.extend(["## Competing and prior claims", "",
+                          "These records remain evidence context. Inclusion does not promote them to current approved results.", ""])
+            for id in bundle["selected_context"]["claims"]:
+                if id in claims:
+                    continue
+                c = Kernel._get(history, id, "claim")["payload"]
+                gate = self.kernel._gate_local(history, id)
+                lines.extend([f"### Context claim {id}", "", c["statement"], "",
+                              f"Recorded outcome: `{c['outcome']}`. Current local mechanical gate: "
+                              f"`{'passed' if gate['passed'] else 'failed'}`; scientific validity: `not_assessed`.", "",
+                              *(f"- Recorded limitation: {item}" for item in c["limitations"]), ""])
+                lines.extend(_run_table(self.store, history, [e for e in history
+                    if e["kind"] == "run" and e["payload"]["protocol"] == c["protocol"]]))
+                lines.append("")
+            lines.extend(["## Current relation assessments for selected claims", ""])
+            for id in claims:
+                latest = {e["actor"]: e for e in history if e["kind"] == "review"
+                          and e["payload"]["claim"] == id
+                          and e["payload"]["basis_hash"] == expected_bases[id]}
+                for actor, review in latest.items():
+                    for link, assessment in review["payload"].get("link_assessments", {}).items():
+                        lines.extend([f"- Claim `{id}`, link `{link}`, reviewer `{_cell(actor)}`: "
+                            f"`{assessment['judgment']}` / `{assessment['disposition']}`. "
+                            f"{_cell(assessment['rationale'])} Evidence refs: {', '.join(assessment['evidence'])}."])
+            lines.append("")
+            if any(records for records, _ in findings.values()):
+                lines.extend(["## Related review findings and recorded revisions", "",
+                              "Acknowledging a related finding does not close its original reviewer veto.", ""])
+                for id, (records, pending) in findings.items():
+                    for review in records:
+                        p = review["payload"]
+                        status = "open related finding" if review["id"] in pending else "historical episode record"
+                        lines.extend([f"- Context for `{id}`: review `{review['id']}` of `{p['claim']}` "
+                            f"by `{_cell(review['actor'])}`, `{p['verdict']}`, **{status}**. "
+                            f"{_cell(p['rationale'])} Recorded actions: {_cell('; '.join(p['actions']))}."])
+                lines.append("")
         lines.extend(["## Required author work before submission", "",
                       "Supply a verified literature review, explain the scientific contribution, check that "
                       "the registered methods match the implementation, and prepare the venue-specific "

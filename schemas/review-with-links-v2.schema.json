@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:episteme:review-with-links:v2",
+  "title": "Persisted review payload with explicit claim-link assessments",
+  "$comment": "This describes the persisted event payload, not the command envelope. Kernel additionally checks the historical basis, independence of declared actors, exact context-link coverage, permitted prior evidence references, and source mechanical qualification. Scientific compatibility is a reviewer judgment, not a schema result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["review_schema_version", "claim", "verdict", "rationale", "actions", "basis_hash", "link_assessments"],
+  "properties": {
+    "review_schema_version": {"const": 2},
+    "claim": {"$ref": "#/$defs/text"},
+    "verdict": {"enum": ["approve", "request_changes", "reject"]},
+    "rationale": {"$ref": "#/$defs/text"},
+    "actions": {"type": "array", "items": {"$ref": "#/$defs/text"}},
+    "basis_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "link_assessments": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/text"},
+      "additionalProperties": {"$ref": "#/$defs/assessment"}
+    }
+  },
+  "allOf": [{
+    "if": {"properties": {"verdict": {"const": "approve"}}},
+    "then": {"properties": {
+      "actions": {"maxItems": 0},
+      "link_assessments": {"additionalProperties": {"properties": {
+        "judgment": {"enum": ["accepted", "rejected"]},
+        "disposition": {"const": "compatible_as_written"}
+      }}}
+    }},
+    "else": {"properties": {"actions": {"minItems": 1}}}
+  }],
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["judgment", "disposition", "rationale", "evidence"],
+      "properties": {
+        "judgment": {"enum": ["accepted", "rejected", "unresolved"]},
+        "disposition": {"enum": ["compatible_as_written", "requires_claim_revision", "needs_evidence"]},
+        "rationale": {"$ref": "#/$defs/text"},
+        "evidence": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}}
+      }
+    }
+  }
+}

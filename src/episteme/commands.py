@@ -96,6 +96,8 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "kernel.finish_run": (Kernel, Kernel.finish_run, frozenset({"executor", "replicator"})),
     "kernel.claim": (Kernel, Kernel.claim, frozenset({"analyst", "executor"})),
     "kernel.review": (Kernel, Kernel.review, frozenset({"reviewer"})),
+    "kernel.review_with_links": (Kernel, Kernel.review_with_links, frozenset({"reviewer"})),
+    "kernel.link_claims": (Kernel, Kernel.link_claims, frozenset({"planner", "analyst"})),
     "kernel.expose_data": (Kernel, Kernel.expose_data,
                            frozenset({"planner", "executor", "replicator", "analyst", "reviewer"})),
     "search.register_tournament": (Search, Search.register_tournament, frozenset({"planner"})),

@@ -179,7 +179,7 @@ class ScientificWorkflowTests(unittest.TestCase):
         updated = self.planner.gate(claim)
         self.assertTrue(updated["passed"], updated["failures"])
         self.assertNotEqual(updated["basis_hash"], first_gate["basis_hash"])
-        self.assertEqual(self.planner.next_action(claim)["action"], "scientific_review")
+        self.assertEqual(self.planner.next_action(claim), dict(action="replan", reasons=["Obtain independent scientific assessment"]))
         with self.assertRaisesRegex(GateError, "stale review"):
             self.reviewer.review(claim, verdict="request_changes", rationale="Old basis",
                                  actions=["Review"], expected_basis=first_gate["basis_hash"])
@@ -211,7 +211,7 @@ class ScientificWorkflowTests(unittest.TestCase):
         after_start = self.planner.gate(claim)
         self.assertTrue(after_start["passed"], after_start["failures"])
         self.assertNotEqual(after_start["basis_hash"], initial["basis_hash"])
-        self.assertEqual(self.planner.next_action(claim)["action"], "scientific_review")
+        self.assertEqual(self.planner.next_action(claim), dict(action="replan", reasons=["Check alternate analyses"]))
         log = self.store.put(b"Foreign fixture failed after viewing data")
         terminal = self.executor.finish_run(attempt, status="failed", outputs={"log": log}, reason="Injected failure")
         after_finish = self.planner.gate(claim)

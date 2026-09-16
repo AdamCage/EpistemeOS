@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:epistemeos:claim-link:v1",
+  "title": "EpistemeOS claim link v1",
+  "description": "An actor's declared relation from source claim to target claim, bound to their event hashes and evidence basis hashes. This is not verified scientific support, contradiction, or approval. Supersession preserves the target's history and does not itself resolve findings.",
+  "$comment": "ClaimLink additionally requires source != target, which standard JSON Schema cannot express for arbitrary strings. The kernel must verify that endpoints are claims, resolve their hashes and evidence bases, and enforce scope, cycle and transition policies against persisted state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "source", "target", "relation", "rationale",
+    "source_hash", "target_hash", "source_basis", "target_basis"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "source": {"$ref": "#/$defs/text"},
+    "target": {"$ref": "#/$defs/text"},
+    "relation": {"enum": ["supports", "contradicts", "limits", "supersedes"]},
+    "rationale": {"$ref": "#/$defs/text"},
+    "source_hash": {"$ref": "#/$defs/digest"},
+    "target_hash": {"$ref": "#/$defs/digest"},
+    "source_basis": {"$ref": "#/$defs/digest"},
+    "target_basis": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "digest": {"type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"}
+  },
+  "examples": [
+    {
+      "schema_version": 1,
+      "source": "claim-fixture-new-result",
+      "target": "claim-fixture-earlier-result",
+      "relation": "contradicts",
+      "rationale": "Synthetic contract fixture only: declared conflicting estimates; no scientific assessment or real evidence is supplied.",
+      "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "target_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "source_basis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "target_basis": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ]
+}

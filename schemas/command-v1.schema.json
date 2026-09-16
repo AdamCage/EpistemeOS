@@ -29,7 +29,8 @@
         "version": {"const": 1},
         "action": {"enum": [
           "kernel.hypothesis", "kernel.preregister", "kernel.start_run", "kernel.finish_run",
-          "kernel.claim", "kernel.review", "kernel.expose_data", "search.register_tournament",
+          "kernel.claim", "kernel.review", "kernel.review_with_links", "kernel.link_claims",
+          "kernel.expose_data", "search.register_tournament",
           "search.ballot", "search.register_tree", "search.add_node", "search.select_next",
           "search.finish_selection", "paper.build"
         ]},
