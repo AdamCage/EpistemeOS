@@ -16,6 +16,7 @@ from .domains.afterlife import import_snapshot, inspect as inspect_afterlife
 from .graph import ResearchGraph
 from .kernel import Actor, Kernel
 from .reporting import PaperBuilder, export_store, inspect_store
+from .recovery import backup, restore
 from .store import Store
 
 
@@ -30,6 +31,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             ("paper", "Build an internal draft from currently reviewed claims"),
                             ("command", "Admit or replay a versioned local command JSON"),
                             ("receipts", "Verify and read historical command acknowledgements"),
+                            ("backup", "Create a verified SQLite and artifact directory snapshot"),
                             ("graph", "Verify recorded dependencies and export the research graph")):
         command = subcommands.add_parser(name, help=help_text)
         if name == "demo":
@@ -41,6 +43,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             command.add_argument("--input", type=Path, required=True, help="Review JSON file")
         if name == "command":
             command.add_argument("--input", type=Path, required=True, help="Versioned command envelope JSON")
+        if name == "backup":
+            command.add_argument("--output", type=Path, required=True, help="New snapshot directory")
         if name == "paper":
             command.add_argument("claims", nargs="+", help="Reviewed claim IDs")
             command.add_argument("--title", required=True)
@@ -48,6 +52,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if name == "graph":
             command.add_argument("--format", choices=("summary", "json", "dot"), default="summary")
         command.add_argument("--root", type=Path, required=True, help="Research state directory")
+    recovery = subcommands.add_parser("restore", help="Verify and restore a snapshot to a new state directory")
+    recovery.add_argument("snapshot", type=Path)
+    recovery.add_argument("--root", type=Path, required=True, help="New research state directory")
     afterlife = subcommands.add_parser("afterlife", help="Observe or import read-only historical Afterlife records")
     operations = afterlife.add_subparsers(dest="operation", required=True)
     for name in ("inspect", "import"):
@@ -73,6 +80,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "demo":
             result = run_demo(args.root, with_search=args.with_search)
             status = 0
+        elif args.command == "restore":
+            result, status = restore(args.snapshot, args.root), 0
         elif args.command == "command":
             envelope = parse_command(args.input.read_text(encoding="utf-8"))
             with Store(args.root) as store:
@@ -86,6 +95,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             with Store(args.root, read_only=args.command not in {"review", "paper"}) as store:
                 if args.command == "inspect":
                     result, status = inspect_store(store), 0
+                elif args.command == "backup":
+                    result, status = backup(store, args.output), 0
                 elif args.command == "receipts":
                     result, status = dict(receipts=store.receipts(),
                                           meaning="historical_command_commits"), 0

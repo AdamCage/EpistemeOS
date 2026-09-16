@@ -14,6 +14,7 @@ Research harness для вычислительных научных исслед
 - [Текущая проверка, runs и оставшиеся ограничения](docs/validation.md).
 - [Идемпотентные команды v1](docs/command-api.md) и [статистический протокол / exposure](docs/decisions/0002-statistical-design.md).
 - [Связи claims, зависимый review и supersession](docs/decisions/0003-claim-relations.md).
+- [Переносимый backup и восстановление состояния](docs/recovery.md).
 
 ## Локальный запуск
 
@@ -52,6 +53,15 @@ uv run episteme gate <claim-id> --root .research/demo
 
 Код возврата gate: `0` — формальные условия выполнены, `1` — нарушение/ошибка. Научную истинность gate не оценивает. `inspect`, `gate` и `export` открывают SQLite в read-only режиме; export создаёт производные файлы, не меняя журнал.
 
+Для переноса состояния вместе с artifact bytes и command receipts:
+
+```powershell
+uv run episteme backup --root .research/demo --output .research/demo-snapshot
+uv run episteme restore .research/demo-snapshot --root .research/demo-restored
+```
+
+Назначение должно быть новым каталогом. Snapshot сохраняет исходные IDs/hashes и повторную доставку команд; он не перезапускает процессы и не восстанавливает среду эксперимента. JSONL export отдельно от SQLite не сохраняет idempotency.
+
 ## Review и paper scaffold
 
 Внешний рецензент сначала читает frozen protocol и raw evidence, затем готовит JSON:
@@ -84,6 +94,7 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 
 - SHA-256 artifacts, проверяемый event hash chain и атомарная запись с expected revision.
 - Versioned `command` API: атомарные events/receipts, replay после потери ответа, conflict при изменении body, проверки конкурирующих writers.
+- Согласованный SQLite backup вместе с CAS, проверка полного snapshot и восстановление в новый Store с исходными receipts.
 - Protocol до RunStarted, immutable amendments, фиксированные inputs/code/environment и seed schedule.
 - Typed statistical design, exploratory/confirmatory режим, declarative exposure ledger и запрет повторного объявления просмотренных bytes свежим holdout.
 - Сохранение failed/cancelled attempts, лимит числа runs и gates на полноту всех результатов.

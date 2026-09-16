@@ -1,6 +1,6 @@
 # План реализации EpistemeOS
 
-План: 7 сентября; статус реализации обновлён 10 сентября 2026. Это план разработки и критерии приёмки, а не отчёт о завершённом автономном исследовании. Основания: [архитектура](architecture.md), [аудит afterlife](research/afterlife-audit.md), обзоры [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md) и [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md), [протокол оценки](research/evaluation-plan.md). [Карта репозитория](repository-map.md) связывает этапы с модулями.
+План: 7 сентября; статус реализации обновлён 16 сентября 2026. Это план разработки и критерии приёмки, а не отчёт о завершённом автономном исследовании. Основания: [архитектура](architecture.md), [аудит afterlife](research/afterlife-audit.md), обзоры [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md) и [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md), [протокол оценки](research/evaluation-plan.md). [Карта репозитория](repository-map.md) связывает этапы с модулями.
 
 ## Результат и границы MVP
 
@@ -16,7 +16,7 @@
 
 | Возможность | Текущее состояние | Что ещё требуется |
 |---|---|---|
-| Persistent state | SQLite WAL, append-only events/receipts, SHA-256 blobs, idempotent command admission, study/correlation/causation metadata, аддитивная receipt migration; typed graph, claim relations и зависимый review context. | Study access boundaries, остальные публичные entity schemas, общий migration/restore, revisions объяснений, внешний checkpoint. |
+| Persistent state | SQLite WAL, append-only events/receipts, SHA-256 blobs, idempotent command admission, study/correlation/causation metadata, аддитивная receipt migration; typed graph, claim relations, зависимый review context и verified backup/restore. | Study access boundaries, остальные публичные entity schemas, общий schema migration, revisions объяснений, внешний checkpoint. |
 | Конкурирующие объяснения | `Kernel.hypothesis` требует prediction/falsifier/scope; протокол ссылается минимум на две гипотезы. | Генерация разнообразного pool, проверка различимости предсказаний, literature support, версионирование explanation sets. |
 | Preregistration | Immutable protocol; typed estimand/unit/metrics/sample-size/uncertainty/stopping/multiplicity/splits, mode и exposure snapshot; typed amendments требуют основание. | Сопоставление деклараций с фактическими outputs, расчёт статистики, authenticated data access, сложные sequential designs. |
 | Runs и provenance | Контракты start/finish; demo реально запускает два фиксированных Python-приложения, сохраняет raw CSV, metrics, argv, runtime и логи. | Общий runner, восстановление процесса, полное source/environment closure, execution attestation, sandbox и измерение ресурсов. |
@@ -68,7 +68,9 @@ Paper scaffold сохраняет source snapshot и review bases, а build пр
 
 **Инкремент 10 сентября:** immutable claim relations, проверки scope/циклов/endpoint bases, транзитивный context и обновление basis зависимых reviews. Review v2 оценивает каждую связь; supersession сохраняет исходный claim; собственное veto переживает смену basis, связанные замечания требуют явного рассмотрения. Paper раскрывает связанные findings и не делает competing claims автоматически одобренными. Контракт и ограничения: [ADR 0003](decisions/0003-claim-relations.md).
 
-M1 в целом ещё открыт: публичные schemas всех entity types, ResearchQuestion/ExplanationSet revisions, полноценный migration/restore и planned-versus-observed domain validation не реализованы. Ниже сохранены полные критерии этапа.
+**Инкремент 16 сентября:** directory snapshot с согласованной SQLite-копией и проверенными CAS artifacts; restore сохраняет events/receipts и command replay без overlay существующего состояния. Проверяются receipt bindings, Graph closure и конкурирующая публикация. [Recovery contract](recovery.md) отделяет восстановление БД от job recovery и environment reconstruction M2.
+
+M1 в целом ещё открыт: публичные schemas всех entity types, ResearchQuestion/ExplanationSet revisions, общий schema migration и planned-versus-observed domain validation не реализованы. Ниже сохранены полные критерии этапа.
 
 1. Ввести versioned schemas для ResearchQuestion, HypothesisVersion, ExplanationSet, Protocol, RunAttempt, Artifact, Observation, Claim, EvidenceLink, Review, Decision и PaperBundle. Разделить техническое состояние запуска и научный исход; у каждого claim есть тип, scope, assumptions и limitations.
 2. Добавить study/correlation/causation IDs, command idempotency key, expected revision и schema migrations. Проекции объяснений, дерева поиска и claim–evidence DAG строятся из events и могут пересоздаваться; они не становятся отдельной истиной.

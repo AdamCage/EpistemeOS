@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Дата: 10 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Kernel/Search/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
+Дата: 16 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Kernel/Search/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
 
 ## Использование
 
@@ -80,7 +80,7 @@ Blob должен быть заранее сохранён через `Store.put
 
 Writable opening аддитивно создаёт таблицу квитанций и triggers; прежние v1 events, IDs и hashes сохраняются. Read-only opening старой базы не мигрирует её. Полные квитанции можно прочитать через `receipts`/`Store.receipts()` и экспортировать через `Store.export_receipts()`; они содержат нормализованный request, результат и точные связи с event range.
 
-Обычный `events.jsonl` и review bundle **не восстанавливают историю доставки**. Для возобновления без утраты idempotency нужен согласованный backup SQLite вместе с CAS artifacts. Нельзя копировать только активный `state.sqlite3`, игнорируя WAL; используйте SQLite backup API или остановленный и checkpointed Store. Общий restore/import API пока не реализован. Отдельные JSONL exports events/receipts следует делать при остановленном writer, если требуется один общий snapshot.
+Обычный `events.jsonl` и review bundle **не восстанавливают историю доставки**. Для возобновления без утраты idempotency реализованы CLI `backup`/`restore` и [directory snapshot v1](recovery.md): SQLite online backup вместе с проверенными CAS artifacts, без пересоздания events или receipts. Нельзя копировать только активный `state.sqlite3`, игнорируя WAL. Восстановление требует нового каталога и поддерживаемой схемы; общий migration framework ещё не реализован. Отдельные JSONL exports events/receipts следует делать при остановленном writer, если требуется один общий snapshot.
 
 Изменение signature, default или типа action требует новой версии command API с сохранением обработки прежних v1 запросов. Добавлять поля в старый нормализатор незаметно для caller нельзя: это изменит fingerprint при replay. Текущая версия реализует только v1.
 

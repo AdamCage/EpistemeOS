@@ -1,12 +1,14 @@
 # Проверка текущего прототипа
 
-Дата: 11 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа и инкрементов M1, не оценка качества научных открытий.
+Дата: 16 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа и инкрементов M1, не оценка качества научных открытий.
 
 ## Выполненные проверки
 
-`uv run python -m unittest discover -s tests -v`: **226 тестов, 225 успешно, 1 skipped**, 39.656 секунды. Локальный transcript: `.research/claim-tests-20260910.log` (git-ignored; окончательный прогон 11 сентября). Пропущен тест создания symlink: среда Windows не предоставляет это право. Обход reparse points реализован, но настоящий symlink case на этом хосте не проверен. Предыдущий инкремент 9 сентября: 186 тестов, 185 успешно, 1 skipped.
+`uv run python -m unittest discover -s tests -v`: **239 тестов, 237 успешно, 2 skipped**, 50.222 секунды. Локальный transcript: `.research/recovery-tests-20260916.log` (git-ignored). Пропущены два теста создания symlink: среда Windows не предоставляет это право. Обход reparse points и отказ от symlink entries реализованы, но эти cases на данном хосте не проверены. Предыдущие инкременты: 9 сентября — 186 тестов, 185 успешно, 1 skipped; 11 сентября — 226 тестов, 225 успешно, 1 skipped.
 
 Первый commit `46c783b` опубликован в публичном [GitHub repository](https://github.com/AdamCage/EpistemeOS) и прошёл [CI run 34277599425](https://github.com/AdamCage/EpistemeOS/actions/runs/34277599425). M1 increment [`91192d4`](https://github.com/AdamCage/EpistemeOS/commit/91192d4) отдельно прошёл [CI run 34385764051](https://github.com/AdamCage/EpistemeOS/actions/runs/34385764051): все четыре jobs успешны — Windows/Linux, Python 3.11/3.13.
+
+Инкремент claim relations [`a1bcc6c`](https://github.com/AdamCage/EpistemeOS/commit/a1bcc6c) опубликован 16 сентября и прошёл [CI run 35113659014](https://github.com/AdamCage/EpistemeOS/actions/runs/35113659014): все четыре jobs Windows/Linux, Python 3.11/3.13 успешны.
 
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
 
@@ -16,6 +18,7 @@
 |---|---|
 | Kernel | Preregistration до run, frozen source/environment, scope, полнота seeds, отрицательные результаты и failed logs, self-review включая автора гипотезы, stale basis, review veto. |
 | Store | Corruption, missing artifacts, append-only triggers, conflicting writers, reopen, read-only inspection. |
+| Recovery | 13 новых тестов: exact events/receipts/graph round-trip, stale command replay и altered-body conflict, orphan CAS, byte corruption, invalid receipt/graph, manifest paths/duplicate keys/unknown version, active transaction refusal, existing target/containment, real CLI. Writer после SQLite snapshot не смешивает revisions; два restore не заменяют общий destination; пересчитанный DB checksum не скрывает нарушенный receipt binding. |
 | Command delivery | Два concurrent writers с одинаковым ID/body и с разными IDs; два события + receipt атомарно; lost response после `os._exit`; rollback-only после подавленной ошибки append; receipt corruption/range/overlap; readonly legacy schema и additive migration с неизменным JSONL. |
 | Versioned service | Role/type/argument admission до handler; omitted/explicit defaults; replay terminal run, search reservation, review/paper после смены evidence; strict JSON; real CLI reopen и receipts. |
 | Statistical workflow | Null-result остаётся inconclusive/not_assessed; metric/stopping/unit mismatch; protected split до просмотра; started/failed inputs без parent не становятся новым holdout; typed amendments сохраняют reason/seen_data; foreign attempt и declared exposure требуют fresh review; unrelated inherited snapshot не инвалидирует basis. |
@@ -33,6 +36,8 @@
 Один example из публичной command schema дважды отправлен реальным CLI в `.research/command-example-20260909`. Оба процесса вернули `hypothesis-570a0cac8e85485e`; после read-only reopen в Store ровно одно событие и одна receipt. Event hash: `dfe8e18f8adc106904662a7278b14916846f7ee396b34372088c74dcf64c0ad5`. [Локальная проверка](../.research/command-example-20260909/verification.json) и request находятся в ignored каталоге. Это доставка fixture hypothesis, без эксперимента или scientific approval.
 
 ## Сохранённый demo
+
+16 сентября CLI `backup`/`restore` проверены на `.research/command-example-20260909` и `.research/search-demo-20260908`, с восстановлением в новые каталоги `command-restored-20260916` и `search-restored-20260916`. Сравнены полные event JSONL, receipt JSONL и Graph: все совпали. Повтор исходного command envelope в восстановленном Store вернул тот же `hypothesis-570a0cac8e85485e`, сохранив одно событие и одну receipt. Demo сохранил 26 событий, 45 nodes/112 edges и прежний head hash. [Локальная проверка восстановления](../.research/recovery-verification-20260916.json) и directory snapshots остаются git-ignored; это перенос существующего evidence, без нового научного эксперимента или approval.
 
 Команда: `uv run episteme demo --with-search --root .research/search-demo-20260908`.
 

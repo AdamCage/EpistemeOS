@@ -1,6 +1,6 @@
 # Карта репозитория EpistemeOS
 
-Дата: 10 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
+Дата: 16 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
 
 ## Фактическое ядро v0.1
 
@@ -16,6 +16,7 @@ EpistemeOS/
 │   ├── mvp-plan.md               этапы, зависимости, критерии приёмки
 │   ├── repository-map.md         эта карта
 │   ├── command-api.md            versioned local command interface
+│   ├── recovery.md               directory snapshot и восстановление receipts/CAS
 │   ├── decisions/                command admission, statistical design, claim relations ADRs
 │   └── research/
 │       ├── afterlife-audit.md
@@ -25,8 +26,9 @@ EpistemeOS/
 ├── src/episteme/
 │   ├── __init__.py
 │   ├── __main__.py               python -m episteme
-│   ├── cli.py                    demo / inspect / gate / export / review / paper / graph / afterlife / command / receipts
+│   ├── cli.py                    demo / inspect / gate / export / review / paper / graph / afterlife / command / receipts / backup / restore
 │   ├── store.py                  SQLite events/receipts и content-addressed blobs
+│   ├── recovery.py               согласованный backup и verified restore в новый каталог
 │   ├── commands.py               versioned allowlist, type/role admission, normalization
 │   ├── protocols.py              immutable statistical declarations и validation
 │   ├── claims.py                 типизированный immutable ClaimLink
@@ -52,6 +54,8 @@ EpistemeOS/
     ├── test_claim_context.py     scope, direction, cycles и context closure
     ├── test_claim_workflow.py    review propagation, veto, supersession, paper и CLI replay
     ├── test_claim_lineage.py     последовательные версии и current replacement frontier
+    ├── test_recovery.py          exact state/receipt replay, corruption и recovery CLI
+    ├── test_recovery_concurrency.py snapshot при append, no-overwrite race, manifest/binding corruption
     ├── test_scientific_workflow.py exposure timing, mode, amendments и review invalidation
     └── test_workflow.py          фактический search → execution → evidence demo
 ```
@@ -60,7 +64,8 @@ EpistemeOS/
 
 | Файл | Реальная ответственность | Граница |
 |---|---|---|
-| `store.py` | Canonical JSON, CAS, verified chain/receipts, atomic command transaction/replay, additive receipt migration и export. | Нет аутентификации, внешнего checkpoint, общего migration/restore или distributed storage. |
+| `store.py` | Canonical JSON, CAS, verified chain/receipts, atomic command transaction/replay, additive receipt migration и export. | Нет аутентификации, внешнего checkpoint, общего schema migration или distributed storage. |
+| `recovery.py` | SQLite online backup, полный наблюдаемый CAS, manifest, semantic closure и restore с точной историей/receipts; эксклюзивный новый destination. | Не переносит процессы/внешнюю среду; filesystem доверенный, нет внешней аутентификации или атомарной видимости всего каталога. |
 | `commands.py` | Явный action/role allowlist, strict JSON, аргументы и defaults v1, допуск до handler, historical acknowledgement. | Доверенный local caller; нет внешнего execution или меж-study access boundary. |
 | `protocols.py` | Frozen design dataclasses, units/estimand/metrics/splits, mode и structural statistical validation. | Не проверяет actual data, мощность, реальную независимость или uncertainty computation. |
 | `claims.py`, `claim_context.py` | Immutable proposals отношений, validation порядка/scope/циклов; review context из incoming supports/limits и symmetric contradictions/supersession. | Не доказывают научную связь; binding evidence basis и bytes проверяет Kernel/Graph. |
