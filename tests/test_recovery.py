@@ -160,10 +160,13 @@ class RecoveryTests(unittest.TestCase):
         backup(self.store, snapshot)
         for operation, target in (("backup", backup_target), ("restore", restore_target)):
             with self.subTest(operation=operation):
+                # Windows readlink may return a verbatim \\?\ path. Preserve
+                # the actual original link text rather than assume its spelling.
+                original_link = target.readlink()
                 with self.assertRaises((ValueError, OSError)):
                     backup(self.store, target) if operation == "backup" else restore(snapshot, target)
                 self.assertTrue(target.is_symlink())
-                self.assertEqual(target.readlink(), missing)
+                self.assertEqual(target.readlink(), original_link)
                 self.assertFalse(missing.exists())
 
     def test_backup_rejects_active_transaction_without_committing_or_rolling_it_back(self):

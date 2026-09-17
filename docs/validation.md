@@ -10,6 +10,8 @@
 
 Инкремент claim relations [`a1bcc6c`](https://github.com/AdamCage/EpistemeOS/commit/a1bcc6c) опубликован 16 сентября и прошёл [CI run 35113659014](https://github.com/AdamCage/EpistemeOS/actions/runs/35113659014): все четыре jobs Windows/Linux, Python 3.11/3.13 успешны.
 
+В [первом CI backup/restore](https://github.com/AdamCage/EpistemeOS/actions/runs/35114984511) обе Linux jobs прошли, Windows 3.13 выявил ошибочное ожидание теста: `readlink()` возвращал verbatim path с префиксом, отсутствующим в исходном `Path`. 17 сентября тест исправлен: сравнивает фактическое содержимое ссылки до и после отказа операции. Локально focused recovery suite прошла 8 проверок и пропустила symlink case; для исполнения этого case нужны права CI runner.
+
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
 
 Четыре публичные JSON schemas и содержащиеся в них examples проверены `jsonschema.Draft202012Validator` в отдельном установленном окружении. `jsonschema` не добавлен в runtime. Schema validation проверяет форму; исторические ссылки, bases и условия переходов проверяются Kernel и workflow tests.
