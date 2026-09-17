@@ -11,6 +11,7 @@ from typing import Any
 
 from .claim_context import resolve_context
 from .kernel import Actor, Kernel, require
+from .planning import planning_context, validate_planning
 from .store import Store, canonical
 
 
@@ -92,10 +93,13 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
 
 
 def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]:
+    validate_planning(history)
     summary = _summary(store, history)
     return dict(bundle_version=1, summary=summary, events=history,
                 artifacts=artifact_inventory(store, history),
                 claim_relations=[event for event in history if event["kind"] == "claim_link"],
+                research_questions=[event for event in history if event["kind"] == "research_question"],
+                explanation_sets=[event for event in history if event["kind"] == "explanation_set"],
                 delivery_restore="events_only; command receipts require a separate database backup",
                 scientific_review="not performed by export", snapshot_hash=summary["last_event_hash"])
 
@@ -134,6 +138,36 @@ def _relation_table(links: list[dict[str, Any]]) -> list[str]:
     return [*rows, ""]
 
 
+def _planning_table(records: list[dict[str, Any]]) -> list[str]:
+    if not records:
+        return []
+    lines = ["## Recorded research planning", "",
+             "Versioned declarations; constraints and stopping criteria are not automatically executed.", ""]
+    for event in records:
+        p = event["payload"]
+        if event["kind"] == "research_question":
+            lines.extend([f"### Question `{event['id']}`", "", _cell(p["statement"]), "",
+                f"Study: `{_cell(p['study_id'])}`. Objective: {_cell(p['objective'])}", "",
+                f"Scope: `{_cell(json.dumps(p['scope'], ensure_ascii=False))}`.", "",
+                *(f"- Constraint: {_cell(item)}" for item in p["constraints"]),
+                *(f"- Stopping criterion: {_cell(item)}" for item in p["stopping_criteria"]), ""])
+        elif event["kind"] == "explanation_set":
+            lines.extend([f"### Explanation set `{event['id']}`", "",
+                f"Question revision: `{p['question']}`. Candidates: {', '.join(p['hypotheses'])}.", "",
+                f"Comparison plan: {_cell(p['comparison_plan'])}", "",
+                *(f"- Excluded candidate `{id}`: {_cell(reason)}" for id, reason in p["excluded_reasons"].items()), ""])
+        elif event["kind"] == "hypothesis":
+            lines.extend([f"### Hypothesis `{event['id']}`", "", _cell(p["statement"]), "",
+                          f"Prediction: {_cell(p['prediction'])}", "",
+                          f"Falsifier: {_cell(p['falsifier'])}", ""])
+            continue
+        else:
+            continue
+        if p["parent"] is not None:
+            lines.extend([f"Prior revision: `{p['parent']}`. Revision reason: {_cell(p['revision_reason'])}", ""])
+    return lines
+
+
 def export_store(store: Store) -> dict[str, str]:
     # All files refer to precisely this verified history, even if another writer
     # appends while the export is materialized. Each file is atomically replaced.
@@ -152,6 +186,11 @@ def export_store(store: Store) -> dict[str, str]:
         report.extend(f"- Gate failure: {failure}" for failure in claim["gate"]["failures"])
         report.extend(["", "Limitations:", "", *(f"- {item}" for item in c["limitations"]), ""])
     report.extend(_relation_table(bundle["claim_relations"]))
+    planning_ids = {record["id"] for event in history if event["kind"] == "protocol"
+                    and "planning" in event["payload"]
+                    for record in planning_context(history, event["payload"]["planning"])}
+    report.extend(_planning_table([event for event in history if event["id"] in planning_ids
+                                  or event["kind"] in {"research_question", "explanation_set"}]))
     report.extend(["## Recorded computations", "", *_run_table(
         store, history, [e for e in history if e["kind"] == "run"]), "",
         "Frozen protocols, runtime records and artifact hashes: [review-bundle.json](review-bundle.json).", ""])
@@ -193,6 +232,8 @@ class PaperBuilder:
         for id in claims:
             c = Kernel._get(history, id, "claim")["payload"]
             p = Kernel._get(history, c["protocol"], "protocol")["payload"]
+            if "planning" in p:
+                lines.extend(_planning_table(planning_context(history, p["planning"])))
             lines.extend([f"## Result {id}", "", c["statement"], "",
                           f"Recorded outcome: `{c['outcome']}`. Scope: `{json.dumps(c['scope'], ensure_ascii=False)}`.",
                           "", f"Protocol: `{c['protocol']}`. Review basis: `{expected_bases[id]}`.", "",

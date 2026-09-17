@@ -15,6 +15,7 @@ Research harness для вычислительных научных исслед
 - [Идемпотентные команды v1](docs/command-api.md) и [статистический протокол / exposure](docs/decisions/0002-statistical-design.md).
 - [Связи claims, зависимый review и supersession](docs/decisions/0003-claim-relations.md).
 - [Переносимый backup и восстановление состояния](docs/recovery.md).
+- [Версии исследовательского вопроса и explanation sets](docs/decisions/0004-planning-lineage.md).
 
 ## Локальный запуск
 
@@ -96,6 +97,7 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 - Versioned `command` API: атомарные events/receipts, replay после потери ответа, conflict при изменении body, проверки конкурирующих writers.
 - Согласованный SQLite backup вместе с CAS, проверка полного snapshot и восстановление в новый Store с исходными receipts.
 - Protocol до RunStarted, immutable amendments, фиксированные inputs/code/environment и seed schedule.
+- Версии ResearchQuestion и ExplanationSet, frozen protocol binding, причины исключения кандидатов и сохранение planning ancestry.
 - Typed statistical design, exploratory/confirmatory режим, declarative exposure ledger и запрет повторного объявления просмотренных bytes свежим holdout.
 - Сохранение failed/cancelled attempts, лимит числа runs и gates на полноту всех результатов.
 - Claim scope и run references, проверка повторного анализа, отклонение self-review/self-replication по ID.

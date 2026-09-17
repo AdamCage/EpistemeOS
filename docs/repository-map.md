@@ -1,6 +1,6 @@
 # Карта репозитория EpistemeOS
 
-Дата: 16 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
+Дата: 17 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
 
 ## Фактическое ядро v0.1
 
@@ -31,6 +31,7 @@ EpistemeOS/
 │   ├── recovery.py               согласованный backup и verified restore в новый каталог
 │   ├── commands.py               versioned allowlist, type/role admission, normalization
 │   ├── protocols.py              immutable statistical declarations и validation
+│   ├── planning.py               версии ResearchQuestion/ExplanationSet, bindings и ancestry
 │   ├── claims.py                 типизированный immutable ClaimLink
 │   ├── claim_context.py          scope/циклы связей и транзитивный review context
 │   ├── kernel.py                 валидируемые научные команды и gates
@@ -39,7 +40,7 @@ EpistemeOS/
 │   ├── graph.py                  типизированная read-only проекция и queries
 │   ├── domains/afterlife.py      bounded historical inspection/import
 │   └── demo.py                   два фиксированных CPU-приложения
-├── schemas/                      command, statistical design, claim link v1; linked review v2
+├── schemas/                      command, statistical design, question/set, claim link v1; linked review v2
 └── tests/
     ├── test_kernel.py            инварианты ядра и исторические failure cases
     ├── test_cli.py               реальные CLI/subprocess интеграции
@@ -50,6 +51,8 @@ EpistemeOS/
     ├── test_commands_store.py    receipt integrity, atomicity, competing writers и crash
     ├── test_commands_service.py  versioned dispatch, historical replay и real CLI
     ├── test_protocols.py         typed statistical declarations
+    ├── test_planning.py          immutable revisions, exact refs, scope, exclusions и head races
+    ├── test_planning_workflow.py protocol/review/study/graph binding, CLI и recovery
     ├── test_claims.py            shape и hashes immutable claim links
     ├── test_claim_context.py     scope, direction, cycles и context closure
     ├── test_claim_workflow.py    review propagation, veto, supersession, paper и CLI replay
@@ -68,6 +71,7 @@ EpistemeOS/
 | `recovery.py` | SQLite online backup, полный наблюдаемый CAS, manifest, semantic closure и restore с точной историей/receipts; эксклюзивный новый destination. | Не переносит процессы/внешнюю среду; filesystem доверенный, нет внешней аутентификации или атомарной видимости всего каталога. |
 | `commands.py` | Явный action/role allowlist, strict JSON, аргументы и defaults v1, допуск до handler, historical acknowledgement. | Доверенный local caller; нет внешнего execution или меж-study access boundary. |
 | `protocols.py` | Frozen design dataclasses, units/estimand/metrics/splits, mode и structural statistical validation. | Не проверяет actual data, мощность, реальную независимость или uncertainty computation. |
+| `planning.py` | ResearchQuestion/ExplanationSet v1, immutable parent refs, heads, hashes/scope, exact exclusion reasons; frozen context с прежними гипотезами. | Constraints и comparison plan декларативны; нет генерации/научной оценки, resource enforcement или actor authentication. |
 | `claims.py`, `claim_context.py` | Immutable proposals отношений, validation порядка/scope/циклов; review context из incoming supports/limits и symmetric contradictions/supersession. | Не доказывают научную связь; binding evidence basis и bytes проверяет Kernel/Graph. |
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
 | `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; общий runner и metric recomputation не перенесены. |

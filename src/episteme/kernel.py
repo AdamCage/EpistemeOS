@@ -15,6 +15,7 @@ from uuid import uuid4
 from .claim_context import resolve_context, validate_link
 from .claims import ClaimLink
 from .protocols import DesignError, StatisticalDesign
+from .planning import binding_for, planning_context
 from .store import IntegrityError, Store, canonical, digest
 
 
@@ -107,6 +108,8 @@ def exposure_artifacts(event: dict[str, Any]) -> set[str]:
         return {p["implementation"], p["environment"]}
     if event["kind"] == "result":
         return set(p["outputs"].values())
+    if event["kind"] in {"research_question", "explanation_set", "hypothesis"}:
+        return set()  # Frozen planning declarations contain event refs, not blob refs.
     raise GateError("unsupported exposure evidence kind")
 
 
@@ -154,7 +157,38 @@ class Kernel:
                     replication_tolerance: float, parent: str | None = None,
                     statistical_design: dict[str, Any] | None = None,
                     amendment_reason: str | None = None, seen_data: list[str] | None = None) -> str:
+        return self._preregister(history=self._history(), planning=None, hypotheses=hypotheses,
+            scope=scope, design=design, metric=metric, analysis_plan=analysis_plan,
+            stopping_rule=stopping_rule, seeds=seeds, run_limit=run_limit,
+            implementation=implementation, environment=environment, data=data,
+            replication_tolerance=replication_tolerance, parent=parent,
+            statistical_design=statistical_design, amendment_reason=amendment_reason, seen_data=seen_data)
+
+    def preregister_for_set(self, *, explanation_set: str, design: str, metric: str,
+                            analysis_plan: str, stopping_rule: str, seeds: list[int],
+                            run_limit: int, implementation: str, environment: str, data: str,
+                            replication_tolerance: float, parent: str | None = None,
+                            statistical_design: dict[str, Any] | None = None,
+                            amendment_reason: str | None = None, seen_data: list[str] | None = None) -> str:
         history = self._history()
+        binding = binding_for(history, explanation_set, current=True)
+        question = self._get(history, binding["question"], "research_question")["payload"]
+        explanations = self._get(history, explanation_set, "explanation_set")["payload"]
+        return self._preregister(history=history, planning=binding,
+            hypotheses=list(explanations["hypotheses"]), scope=dict(question["scope"]),
+            design=design, metric=metric, analysis_plan=analysis_plan,
+            stopping_rule=stopping_rule, seeds=seeds, run_limit=run_limit,
+            implementation=implementation, environment=environment, data=data,
+            replication_tolerance=replication_tolerance, parent=parent,
+            statistical_design=statistical_design, amendment_reason=amendment_reason, seen_data=seen_data)
+
+    def _preregister(self, *, history: list[dict[str, Any]], planning: dict[str, Any] | None,
+                     hypotheses: list[str], scope: dict[str, str], design: str,
+                     metric: str, analysis_plan: str, stopping_rule: str, seeds: list[int],
+                     run_limit: int, implementation: str, environment: str, data: str,
+                     replication_tolerance: float, parent: str | None,
+                     statistical_design: dict[str, Any] | None,
+                     amendment_reason: str | None, seen_data: list[str] | None) -> str:
         self._scope(scope)
         require(len(set(hypotheses)) >= 2 and len(set(hypotheses)) == len(hypotheses),
                 "at least two distinct competing hypotheses required")
@@ -181,6 +215,9 @@ class Kernel:
                        seeds=seeds, run_limit=run_limit, implementation=implementation,
                        environment=environment, data=data,
                        replication_tolerance=replication_tolerance, parent=parent)
+        if planning is not None:
+            payload["planning"] = planning
+        self._validate_planning_protocol(history, payload)
         if statistical_design is not None:
             try:
                 typed = StatisticalDesign.from_dict(statistical_design)
@@ -197,6 +234,35 @@ class Kernel:
             require(amendment_reason is None and seen_data is None,
                     "amendment/exposure declarations require a statistical design")
         return self._write(history, "protocol", payload, {"planner"})
+
+    def _validate_planning_protocol(self, preceding: list[dict[str, Any]], p: dict[str, Any]) -> None:
+        previous = self._get(preceding, p["parent"], "protocol")["payload"] if p["parent"] is not None else {}
+        require("planning" not in previous or "planning" in p,
+                "planning-bound protocol amendment cannot drop its planning binding")
+        if "planning" not in p:
+            return
+        binding = p["planning"]
+        try:
+            context = planning_context(preceding, binding)
+            require(binding_for(preceding, binding["explanation_set"], current=True) == binding,
+                    "protocol planning binding is not current at preregistration")
+            question = self._get(preceding, binding["question"], "research_question")["payload"]
+            explanations = self._get(preceding, binding["explanation_set"], "explanation_set")["payload"]
+            require(p["scope"] == question["scope"] and p["hypotheses"] == explanations["hypotheses"],
+                    "protocol scope or hypotheses differ from its frozen explanation set")
+            if "planning" in previous:
+                prior = planning_context(preceding, previous["planning"])
+                roots = lambda events: {event["id"] for event in events
+                    if event["kind"] == "research_question" and event["payload"]["parent"] is None}
+                require(previous["planning"]["study_id"] == binding["study_id"] and roots(prior) == roots(context),
+                        "protocol amendment must retain its study and question lineage")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise GateError(f"invalid protocol planning binding: {exc}") from exc
+
+    def _planning_evidence(self, history: list[dict[str, Any]], plan: dict[str, Any]) -> list[dict[str, Any]]:
+        preceding = [event for event in history if event["seq"] < plan["seq"]]
+        self._validate_planning_protocol(preceding, plan["payload"])
+        return planning_context(preceding, plan["payload"]["planning"]) if "planning" in plan["payload"] else []
 
     @staticmethod
     def _known_seen_data(history: list[dict[str, Any]], parent: str | None = None) -> set[str]:
@@ -273,6 +339,7 @@ class Kernel:
         history = self._history()
         plan = self._get(history, protocol, "protocol")
         p = plan["payload"]
+        self._planning_evidence(history, plan)
         self._validate_typed_protocol([event for event in history if event["seq"] < plan["seq"]], p)
         require(type(seed) is int and seed in p["seeds"], "seed not preregistered")
         require(isinstance(command, list) and bool(command) and all(
@@ -378,6 +445,9 @@ class Kernel:
         ids = {e["id"] for e in runs}
         results = [e for e in history if e["kind"] == "result" and e["payload"]["run"] in ids]
         basis = [plan, c, *runs, *results, *protocol_exposures(history, plan)]
+        planning = {event["id"]: event for protocol_event in basis if protocol_event["kind"] == "protocol"
+                    for event in self._planning_evidence(history, protocol_event)}
+        basis.extend(sorted(planning.values(), key=lambda event: event["seq"]))
         return basis, runs
 
     def _basis(self, history: list[dict[str, Any]], claim: str) -> tuple[str, list[dict[str, Any]]]:

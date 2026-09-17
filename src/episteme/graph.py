@@ -29,6 +29,7 @@ from typing import Any, Mapping
 from .kernel import Actor, GateError, Kernel, protocol_exposures
 from .claim_context import resolve_context, validate_link
 from .claims import ClaimLink
+from .planning import validate_planning
 from .protocols import DesignError, StatisticalDesign
 from .store import IntegrityError, Store, canonical, digest
 
@@ -38,6 +39,8 @@ class GraphIntegrityError(IntegrityError):
 
 
 class NodeKind(str, Enum):
+    RESEARCH_QUESTION = "research_question"
+    EXPLANATION_SET = "explanation_set"
     HYPOTHESIS = "hypothesis"
     PROTOCOL = "protocol"
     RUN = "run"
@@ -58,6 +61,13 @@ class NodeKind(str, Enum):
 
 
 class Relation(str, Enum):
+    QUESTION_PARENT = "question_parent"
+    EXPLANATION_QUESTION = "explanation_question"
+    EXPLANATION_PARENT = "explanation_parent"
+    EXPLANATION_HYPOTHESIS = "explanation_hypothesis"
+    PROTOCOL_QUESTION = "protocol_question"
+    PROTOCOL_EXPLANATIONS = "protocol_explanation_set"
+    REVIEW_PLANNING_CONTEXT = "review_planning_context"
     REGISTERED_HYPOTHESIS = "registered_hypothesis"
     PROTOCOL_PARENT = "protocol_parent"
     RUN_PROTOCOL = "run_protocol"
@@ -294,6 +304,20 @@ class _Projection:
         kind = e["kind"]
         if kind == "hypothesis":
             return
+        if kind in {"research_question", "explanation_set"}:
+            try:
+                validate_planning([event for event in self.history if event["seq"] <= e["seq"]])
+            except ValueError as exc:
+                self.fail(str(exc))
+            if p["parent"] is not None:
+                parent = self.ref(p["parent"], kind,
+                    Relation.QUESTION_PARENT if kind == "research_question" else Relation.EXPLANATION_PARENT, "parent")
+                self.hash_ref(parent, p["parent_hash"], "parent_hash")
+            if kind == "explanation_set":
+                question = self.ref(p["question"], "research_question", Relation.EXPLANATION_QUESTION, "question")
+                self.hash_ref(question, p["question_hash"], "question_hash")
+                self.refs(p["hypotheses"], "hypothesis", Relation.EXPLANATION_HYPOTHESIS, "hypotheses")
+            return
         if kind == "afterlife_snapshot":
             if p["adapter"] != "afterlife" or p["trust"] != "historical_unverified":
                 self.fail("invalid historical snapshot trust/adapter")
@@ -319,6 +343,15 @@ class _Projection:
                 parent = self.ref(p["parent"], "protocol", Relation.PROTOCOL_PARENT, "parent")
                 if "statistical_design" in parent["payload"] and "statistical_design" not in p:
                     self.fail("typed protocol amendment cannot drop statistical design")
+            preceding = [event for event in self.history if event["seq"] < e["seq"]]
+            try:
+                Kernel(self.store, Actor("graph-validation", "reader"))._validate_planning_protocol(preceding, p)
+            except ValueError as exc:
+                self.fail(str(exc))
+            if "planning" in p:
+                self.ref(p["planning"]["question"], "research_question", Relation.PROTOCOL_QUESTION, "planning.question")
+                self.ref(p["planning"]["explanation_set"], "explanation_set", Relation.PROTOCOL_EXPLANATIONS,
+                         "planning.explanation_set")
             for field in ("implementation", "environment", "data"):
                 self.blob(p[field], Relation.ARTIFACT_INPUT, field)
             if "statistical_design" in p:
@@ -400,6 +433,12 @@ class _Projection:
                 self.ref(exposure["id"], None, Relation.REVIEW_EXPOSURE, "basis_hash",
                          derivation="resolved_exposure_basis")
             context = resolve_context(preceding, claim["id"])
+            reader = Kernel(self.store, Actor("graph-reader", "observer"))
+            for context_claim in context.claim_ids:
+                for record in reader._local_evidence(preceding, context_claim)[0]:
+                    if record["kind"] in {"research_question", "explanation_set", "hypothesis"}:
+                        self.ref(record["id"], record["kind"], Relation.REVIEW_PLANNING_CONTEXT, "basis_hash",
+                                 derivation="resolved_frozen_planning_ancestry")
             version = p.get("review_schema_version", 1)
             if type(version) is not int or version not in {1, 2} or (context.link_ids and version != 2):
                 self.fail("unsupported review schema or linked context lacks explicit assessments")

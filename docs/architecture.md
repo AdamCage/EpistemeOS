@@ -1,6 +1,6 @@
 # EpistemeOS: архитектура исследовательского harness
 
-Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 16 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
+Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 17 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
 
 ## 1. Решение
 
@@ -50,7 +50,7 @@ flowchart TD
 
 ## 4. Данные и ссылки
 
-Целевая модель связывает все идентификаторы со study. Записи версионируются; изменения создают новые версии с `supersedes` и основанием. Сейчас опубликованы JSON schemas command envelope, statistical design, claim link v1 и review с оценками связей v2. Между claims реализованы `supports`, `contradicts`, `limits`, `supersedes`; revisions остальных сущностей остаются в M1. `study_id` в текущей command receipt — metadata, не граница доступа.
+Целевая модель связывает все идентификаторы со study. Записи версионируются; изменения создают новые версии с parent/supersedes и основанием. Сейчас опубликованы JSON schemas command envelope, statistical design, ResearchQuestion, ExplanationSet, claim link v1 и review с оценками связей v2. Между claims реализованы `supports`, `contradicts`, `limits`, `supersedes`; остальные entity schemas остаются в M1. Bound planning study сверяется с command context, но это metadata consistency, не граница доступа.
 
 | Сущность | Основные поля и инварианты |
 |---|---|
@@ -156,3 +156,5 @@ TMLR и ICLR получают разные review profiles. TMLR акценти�
 Инкремент M1 от 10 сентября: [claim relations и review context](decisions/0003-claim-relations.md). Связи фиксируют hashes и bases обоих endpoints; supports/limits образуют DAG, contradictions и supersession включают обе стороны в review context. Новые evidence и эпизоды отрицательного review связанных claims меняют basis зависимых решений. Review v2 явно оценивает все связи и ссылается на открытые связанные замечания; это не закрывает их исходные veto. Историческая и текущая mechanical readiness источников показываются отдельно. Accepted supersession выводит прежний claim из paper anchors, сохраняя его историю, и не одобряет замену автоматически. Paper сохраняет конкурирующий контекст и замечания. Per-finding obligations, evidence-backed closure и автоматический replan остаются в M4.
 
 Инкремент M1 от 16 сентября: [backup/restore](recovery.md). SQLite online backup фиксирует одну ревизию events/receipts; CAS копируется и проверяется после неё как superset, включая orphans. Restore проверяет hashes, inventory, SQLite integrity, event chain, receipt bindings и Graph closure до резервирования нового destination. IDs и retry semantics сохраняются, история не воспроизводится через Kernel. Существующий каталог не заменяется; публикация устанавливает readiness file последним, но crash может оставить незавершённый занятый путь. Это восстановление сохранённого состояния, не среды исполнения или активных jobs.
+
+Инкремент M1 от 17 сентября: [planning lineage](decisions/0004-planning-lineage.md). Immutable вопросы и наборы объяснений связывают prior hypotheses с hashes, exact scope и причинами исключения. `preregister_for_set` выводит scope/pool и фиксирует binding до первого run. Evidence basis и reviewer conflicts учитывают frozen ancestry, включая исключённые hypotheses. Новые revisions не переписывают старые protocols или approvals и требуют нового binding для нового исследования. Question constraints/stopping criteria пока декларативны; resource enforcement, domain/data declarations и выполнение плана остаются дальнейшей работой.

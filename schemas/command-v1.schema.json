@@ -28,6 +28,7 @@
       "properties": {
         "version": {"const": 1},
         "action": {"enum": [
+          "planning.question", "planning.explanation_set", "kernel.preregister_for_set",
           "kernel.hypothesis", "kernel.preregister", "kernel.start_run", "kernel.finish_run",
           "kernel.claim", "kernel.review", "kernel.review_with_links", "kernel.link_claims",
           "kernel.expose_data", "search.register_tournament",

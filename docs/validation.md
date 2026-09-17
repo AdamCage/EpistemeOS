@@ -1,10 +1,10 @@
 # Проверка текущего прототипа
 
-Дата: 16 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа и инкрементов M1, не оценка качества научных открытий.
+Дата: 17 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа и инкрементов M1, не оценка качества научных открытий.
 
 ## Выполненные проверки
 
-`uv run python -m unittest discover -s tests -v`: **239 тестов, 237 успешно, 2 skipped**, 50.222 секунды. Локальный transcript: `.research/recovery-tests-20260916.log` (git-ignored). Пропущены два теста создания symlink: среда Windows не предоставляет это право. Обход reparse points и отказ от symlink entries реализованы, но эти cases на данном хосте не проверены. Предыдущие инкременты: 9 сентября — 186 тестов, 185 успешно, 1 skipped; 11 сентября — 226 тестов, 225 успешно, 1 skipped.
+`uv run python -m unittest discover -s tests -v`: **268 тестов, 266 успешно, 2 skipped**, 58.754 секунды. Локальный transcript: `.research/planning-tests-20260917.log` (git-ignored). Пропущены два теста создания symlink: среда Windows не предоставляет это право. Обход reparse points и отказ от symlink entries реализованы, но эти cases на данном хосте не проверены. Предыдущие инкременты: 9 сентября — 186 тестов, 185 успешно, 1 skipped; 11 сентября — 226 тестов, 225 успешно, 1 skipped; 16 сентября — 239 тестов, 237 успешно, 2 skipped.
 
 Первый commit `46c783b` опубликован в публичном [GitHub repository](https://github.com/AdamCage/EpistemeOS) и прошёл [CI run 34277599425](https://github.com/AdamCage/EpistemeOS/actions/runs/34277599425). M1 increment [`91192d4`](https://github.com/AdamCage/EpistemeOS/commit/91192d4) отдельно прошёл [CI run 34385764051](https://github.com/AdamCage/EpistemeOS/actions/runs/34385764051): все четыре jobs успешны — Windows/Linux, Python 3.11/3.13.
 
@@ -12,15 +12,18 @@
 
 В [первом CI backup/restore](https://github.com/AdamCage/EpistemeOS/actions/runs/35114984511) обе Linux jobs прошли, Windows 3.13 выявил ошибочное ожидание теста: `readlink()` возвращал verbatim path с префиксом, отсутствующим в исходном `Path`. 17 сентября тест исправлен: сравнивает фактическое содержимое ссылки до и после отказа операции. Локально focused recovery suite прошла 8 проверок и пропустила symlink case; для исполнения этого case нужны права CI runner.
 
+Исправление [`8183e47`](https://github.com/AdamCage/EpistemeOS/commit/8183e47) прошло [CI run 35197219085](https://github.com/AdamCage/EpistemeOS/actions/runs/35197219085): все четыре jobs Windows/Linux и Python 3.11/3.13 успешны.
+
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
 
-Четыре публичные JSON schemas и содержащиеся в них examples проверены `jsonschema.Draft202012Validator` в отдельном установленном окружении. `jsonschema` не добавлен в runtime. Schema validation проверяет форму; исторические ссылки, bases и условия переходов проверяются Kernel и workflow tests.
+Шесть публичных JSON schemas и содержащиеся в них examples проверены `jsonschema.Draft202012Validator` в отдельном установленном окружении. `jsonschema` не добавлен в runtime. Schema validation проверяет форму; исторические ссылки, bases и условия переходов проверяются Kernel и workflow tests.
 
 | Проверяемая область | Сценарии |
 |---|---|
 | Kernel | Preregistration до run, frozen source/environment, scope, полнота seeds, отрицательные результаты и failed logs, self-review включая автора гипотезы, stale basis, review veto. |
 | Store | Corruption, missing artifacts, append-only triggers, conflicting writers, reopen, read-only inspection. |
 | Recovery | 13 новых тестов: exact events/receipts/graph round-trip, stale command replay и altered-body conflict, orphan CAS, byte corruption, invalid receipt/graph, manifest paths/duplicate keys/unknown version, active transaction refusal, existing target/containment, real CLI. Writer после SQLite snapshot не смешивает revisions; два restore не заменяют общий destination; пересчитанный DB checksum не скрывает нарушенный receipt binding. |
+| Planning lineage | 29 новых тестов: strict Q/set payloads, hashes/scope, current heads, exact exclusion reasons, concurrent revision conflict, исторический context без descendants. Protocol derives pool/scope, сохраняет binding и не сбрасывает lineage в amendment. Replay переживает новые heads; study mismatch блокирует bound run и tree selection без events/receipts. Reviewer conflicts включают ancestors и удалённые hypotheses; Graph проверяет forged binding; CLI и recovery сохраняют версии. Paper раскрывает исключённую альтернативу и причину её исключения. |
 | Command delivery | Два concurrent writers с одинаковым ID/body и с разными IDs; два события + receipt атомарно; lost response после `os._exit`; rollback-only после подавленной ошибки append; receipt corruption/range/overlap; readonly legacy schema и additive migration с неизменным JSONL. |
 | Versioned service | Role/type/argument admission до handler; omitted/explicit defaults; replay terminal run, search reservation, review/paper после смены evidence; strict JSON; real CLI reopen и receipts. |
 | Statistical workflow | Null-result остаётся inconclusive/not_assessed; metric/stopping/unit mismatch; protected split до просмотра; started/failed inputs без parent не становятся новым holdout; typed amendments сохраняют reason/seen_data; foreign attempt и declared exposure требуют fresh review; unrelated inherited snapshot не инвалидирует basis. |

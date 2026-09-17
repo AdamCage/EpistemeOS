@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AdamCage/EpistemeOS/schemas/research-question-v1.schema.json",
+  "title": "ResearchQuestion v1 event payload",
+  "description": "Immutable declared research question. Constraints and stopping criteria are declarations, not enforced resource or scientific policies. Prior references, current lineage head and study consistency require runtime validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "study_id", "statement", "objective", "scope", "constraints", "stopping_criteria", "parent", "parent_hash", "revision_reason"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "study_id": {"$ref": "#/$defs/text"},
+    "statement": {"$ref": "#/$defs/text"},
+    "objective": {"$ref": "#/$defs/text"},
+    "scope": {
+      "type": "object", "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/text"},
+      "additionalProperties": {"$ref": "#/$defs/text"}
+    },
+    "constraints": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}},
+    "stopping_criteria": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}},
+    "parent": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]},
+    "parent_hash": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/digest"}]},
+    "revision_reason": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]}
+  },
+  "allOf": [{
+    "if": {"properties": {"parent": {"type": "null"}}},
+    "then": {"properties": {"parent_hash": {"type": "null"}, "revision_reason": {"type": "null"}}},
+    "else": {"properties": {"parent_hash": {"$ref": "#/$defs/digest"}, "revision_reason": {"$ref": "#/$defs/text"}}}
+  }],
+  "$defs": {
+    "text": {"type": "string", "pattern": "\\S"},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

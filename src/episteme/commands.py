@@ -15,6 +15,7 @@ import types
 from typing import Any, Callable, get_args, get_origin, get_type_hints
 
 from .kernel import Actor, Kernel
+from .planning import Planning
 from .reporting import PaperBuilder
 from .search import Search
 from .store import Store, canonical
@@ -90,8 +91,11 @@ class CommandContext:
 # An explicit allowlist prevents payloads from naming arbitrary methods or tools.
 # No handler here starts a process, contacts a provider or materializes exports.
 _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
+    "planning.question": (Planning, Planning.question, frozenset({"planner"})),
+    "planning.explanation_set": (Planning, Planning.explanation_set, frozenset({"planner"})),
     "kernel.hypothesis": (Kernel, Kernel.hypothesis, frozenset({"planner"})),
     "kernel.preregister": (Kernel, Kernel.preregister, frozenset({"planner"})),
+    "kernel.preregister_for_set": (Kernel, Kernel.preregister_for_set, frozenset({"planner"})),
     "kernel.start_run": (Kernel, Kernel.start_run, frozenset({"executor", "replicator"})),
     "kernel.finish_run": (Kernel, Kernel.finish_run, frozenset({"executor", "replicator"})),
     "kernel.claim": (Kernel, Kernel.claim, frozenset({"analyst", "executor"})),
@@ -108,6 +112,46 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "search.finish_selection": (Search, Search.finish_selection, frozenset({"planner"})),
     "paper.build": (PaperBuilder, PaperBuilder.build, frozenset({"writer"})),
 }
+
+
+def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, Any], study: str) -> None:
+    """Keep typed planning provenance consistent; this is not an access boundary.
+
+    Legacy records have no implicit study assignment. A typed reference binds
+    its command metadata, including when a later run/review uses a legacy action.
+    Admission runs inside Store.command, after the historical-replay fast path.
+    """
+    if action == "planning.question" and payload["study_id"] != study:
+        raise ValueError("command study_id differs from the research question")
+    events = {event["id"]: event for event in history}
+    refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
+                                    "claim", "source", "target", "selection", "tree")
+            if isinstance(payload.get(key), str)]
+    if action == "paper.build":
+        refs.extend(payload["claims"])
+    visited: set[str] = set()
+    while refs:
+        id = refs.pop()
+        if id in visited or id not in events:
+            continue  # The handler validates missing references and their types.
+        visited.add(id)
+        event = events[id]
+        p, kind = event["payload"], event["kind"]
+        assigned = (p.get("study_id") if kind in {"research_question", "explanation_set"}
+                    else p.get("planning", {}).get("study_id") if kind == "protocol" else None)
+        if assigned is not None and assigned != study:
+            raise ValueError("command study_id differs from its planning-bound references")
+        fields = {
+            "run": ("protocol",), "result": ("run",), "claim": ("protocol",), "review": ("claim",),
+            "claim_link": ("source", "target"), "experiment_node": ("protocol", "tree"),
+            "search_selection": ("node", "tree"), "search_terminal": ("selection",),
+        }.get(kind, ())
+        refs.extend(p[field] for field in fields if isinstance(p.get(field), str))
+        if kind == "paper":
+            refs.extend(p["claims"])
+        if kind == "search_tree":
+            refs.extend(other["id"] for other in history
+                        if other["kind"] == "experiment_node" and other["payload"]["tree"] == id)
 
 
 def _matches_type(value: Any, annotation: Any) -> bool:
@@ -177,6 +221,7 @@ explicit default denote the same request within this API version.
         normalized = dict(version=1, action=action, payload=payload)
 
         def invoke() -> Any:
+            _check_study(self.store.events(), action, payload, context.study_id)
             target = target_type(self.store, Actor(context.actor, context.role))
             return handler(target, **payload)
 

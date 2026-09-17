@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Дата: 16 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Kernel/Search/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
+Дата: 17 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
 
 ## Использование
 
@@ -34,6 +34,8 @@ with Store(".research/command-example") as store:
 
 | Action | Допустимая роль | Результат |
 |---|---|---|
+| `planning.question`, `planning.explanation_set` | planner | Immutable версия вопроса/набора с prior refs и revision reason |
+| `kernel.preregister_for_set` | planner | Protocol, привязанный к текущему question/set; hypotheses и scope выводятся из них |
 | `kernel.hypothesis`, `kernel.preregister` | planner | Event ID |
 | `kernel.start_run` | executor для primary; replicator при `replicate_of` | Run ID; процесс ещё не запущен |
 | `kernel.finish_run` | Назначенный executor/replicator | Result ID |
@@ -50,6 +52,14 @@ with Store(".research/command-example") as store:
 Blob должен быть заранее сохранён через `Store.put`/`put_json`; command ссылается на digest. Здесь нет универсальной загрузки файлов из произвольных agent paths. `paper.build` сохраняет bounded внутренние artifacts; `PaperBuilder.materialize` вызывается отдельно и заново проверяет актуальность evidence.
 
 Прямые Python-методы и прежние CLI `review`/`paper` сохраняют optimistic concurrency, но не получают command idempotency автоматически. Новые retryable worker interfaces должны использовать `CommandService`, сохранять request и обрабатывать исторический acknowledgement отдельно от текущего workflow.
+
+## Версии планирования
+
+`planning.question` принимает `study_id`, `statement`, `objective`, `scope`, непустые списки `constraints` и `stopping_criteria`; optional `parent` и `revision_reason` по умолчанию null. `planning.explanation_set` принимает `question`, минимум два existing `hypotheses`, `comparison_plan`; optional `parent`, `revision_reason`, `excluded_reasons`. Revision требует причину и актуальную parent head; removed candidates перечисляются в `excluded_reasons` ровно по одному с причиной. Root не содержит revision reason или исключений.
+
+`kernel.preregister_for_set` принимает `explanation_set` и остальные параметры `kernel.preregister`, кроме `hypotheses` и `scope`: они выводятся из выбранных версий. Binding сохраняется внутри protocol event. Новый protocol не может использовать устаревший набор/вопрос; существующий protocol продолжает ссылаться на свою исходную версию. Его planning-bound amendment не может сбросить binding, перейти в другой study или другую question lineage. Полный контракт: [ADR 0004](decisions/0004-planning-lineage.md).
+
+Для новых записей `context.study_id` должен совпадать с bound study. Та же проверка действует при последующих commands с bound protocol/run/claim/review/paper и при работе с tree, содержащим bound protocols. Она выполняется внутри admission transaction после проверки исторического replay. Legacy records без binding остаются без неявного study; различимость объяснений, исполнение ограничений и аутентификация этим не обеспечиваются.
 
 ## Связи claims и review v2
 
