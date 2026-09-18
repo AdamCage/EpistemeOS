@@ -39,6 +39,9 @@ class GraphIntegrityError(IntegrityError):
 
 
 class NodeKind(str, Enum):
+    EXECUTION_JOB = "execution_job"
+    EXECUTION_DISPATCH = "execution_dispatch"
+    EXECUTION_FINALIZED = "execution_finalized"
     RESEARCH_QUESTION = "research_question"
     EXPLANATION_SET = "explanation_set"
     HYPOTHESIS = "hypothesis"
@@ -61,6 +64,12 @@ class NodeKind(str, Enum):
 
 
 class Relation(str, Enum):
+    EXECUTION_RUN = "execution_run"
+    EXECUTION_JOB = "execution_job"
+    EXECUTION_DISPATCH = "execution_dispatch"
+    EXECUTION_RESULT = "execution_result"
+    EXECUTION_ARTIFACT = "execution_artifact"
+    REVIEW_EXECUTION = "review_execution"
     QUESTION_PARENT = "question_parent"
     EXPLANATION_QUESTION = "explanation_question"
     EXPLANATION_PARENT = "explanation_parent"
@@ -302,6 +311,18 @@ class _Projection:
     def project(self) -> None:
         e, p = self.event, self.event["payload"]
         kind = e["kind"]
+        if kind.startswith("execution_"):
+            from .execution import execution_artifacts
+            if kind == "execution_job":
+                self.ref(p["run"], "run", Relation.EXECUTION_RUN, "run")
+            else:
+                self.ref(p["job"], "execution_job", Relation.EXECUTION_JOB, "job")
+                if kind == "execution_finalized":
+                    self.ref(p["dispatch"], "execution_dispatch", Relation.EXECUTION_DISPATCH, "dispatch")
+                    self.ref(p["result"], "result", Relation.EXECUTION_RESULT, "result")
+            for key in sorted(execution_artifacts(self.store, e)):
+                self.blob(key, Relation.EXECUTION_ARTIFACT, "execution_provenance")
+            return
         if kind == "hypothesis":
             return
         if kind in {"research_question", "explanation_set"}:
@@ -439,6 +460,9 @@ class _Projection:
                     if record["kind"] in {"research_question", "explanation_set", "hypothesis"}:
                         self.ref(record["id"], record["kind"], Relation.REVIEW_PLANNING_CONTEXT, "basis_hash",
                                  derivation="resolved_frozen_planning_ancestry")
+                    elif record["kind"].startswith("execution_"):
+                        self.ref(record["id"], record["kind"], Relation.REVIEW_EXECUTION, "basis_hash",
+                                 derivation="resolved_execution_provenance")
             version = p.get("review_schema_version", 1)
             if type(version) is not int or version not in {1, 2} or (context.link_ids and version != 2):
                 self.fail("unsupported review schema or linked context lacks explicit assessments")
@@ -549,6 +573,12 @@ class _Projection:
                     self.fail("terminal claim does not cite selected run/protocol")
 
     def build(self) -> ResearchGraph:
+        if any(e["kind"].startswith("execution_") for e in self.history):
+            from .execution import execution_context
+            try:
+                execution_context(self.store, self.history, set())
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid execution history: {exc}")
         for event in self.history:
             self.event = event
             try:

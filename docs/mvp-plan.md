@@ -1,6 +1,6 @@
 # План реализации EpistemeOS
 
-План: 7 сентября; статус реализации обновлён 17 сентября 2026. Это план разработки и критерии приёмки, а не отчёт о завершённом автономном исследовании. Основания: [архитектура](architecture.md), [аудит afterlife](research/afterlife-audit.md), обзоры [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md) и [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md), [протокол оценки](research/evaluation-plan.md). [Карта репозитория](repository-map.md) связывает этапы с модулями.
+План: 7 сентября; статус реализации обновлён 18 сентября 2026. Это план разработки и критерии приёмки, а не отчёт о завершённом автономном исследовании. Основания: [архитектура](architecture.md), [аудит afterlife](research/afterlife-audit.md), обзоры [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md) и [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md), [протокол оценки](research/evaluation-plan.md). [Карта репозитория](repository-map.md) связывает этапы с модулями.
 
 ## Результат и границы MVP
 
@@ -19,7 +19,7 @@
 | Persistent state | SQLite WAL, append-only events/receipts, SHA-256 blobs, idempotent command admission, study/correlation/causation metadata, аддитивная receipt migration; typed graph, claim relations, зависимый review context и verified backup/restore. | Study access boundaries, остальные публичные entity schemas, общий schema migration и внешний checkpoint. |
 | Конкурирующие объяснения | Hypotheses с prediction/falsifier/scope; версии ResearchQuestion/ExplanationSet, prior hashes, причины исключения кандидатов, frozen protocol binding и planning ancestry. | Генерация разнообразного pool, научная проверка различимости, literature support, resource/domain/data declarations и явные HypothesisVersion lineages. |
 | Preregistration | Immutable protocol; typed estimand/unit/metrics/sample-size/uncertainty/stopping/multiplicity/splits, mode и exposure snapshot; typed amendments требуют основание. | Сопоставление деклараций с фактическими outputs, расчёт статистики, authenticated data access, сложные sequential designs. |
-| Runs и provenance | Контракты start/finish; demo реально запускает два фиксированных Python-приложения, сохраняет raw CSV, metrics, argv, runtime и логи. | Общий runner, восстановление процесса, полное source/environment closure, execution attestation, sandbox и измерение ресурсов. |
+| Runs и provenance | Контракты start/finish; общий trusted local Python runner с atomic job, one-shot dispatch, immutable completion/CAS, reconcile после crash controller, Windows Job Object / POSIX group и bounded logs. | Leases/dispatch recovery policy, multi-file source и environment closure, подписанное attestation, sandbox, фактический resource ledger и domain recomputation. |
 | Mechanical gates | Проверка completeness, hashes, seed coverage, finite primary metric, scope и agreement повторного анализа. | Domain recomputation метрики и статистические проверки; schema/units, planned-versus-observed accounting, объяснимые exemptions. |
 | Replication / review | Проверяются заявленные actor IDs, разные implementation digests, basis review, self-review и незакрытый отрицательный verdict. | Аутентифицированные назначения, отдельные контексты и права чтения; реальное независимое выполнение и научная оценка. |
 | Replanning | `next_action` вычисляет рекомендацию; CLI принимает отдельно подготовленный review JSON. Demo останавливается перед scientific review. | Durable dispatch, obligations, автоматический новый эксперимент и реально независимые agent sessions. |
@@ -84,6 +84,8 @@ M1 в целом ещё открыт: остальные публичные enti
 SQLite остаётся локальным transactional backend: один writer service и несколько readers, короткие `BEGIN IMMEDIATE` транзакции, retry только после перечитывания состояния. Долгий LLM/API вызов никогда не удерживает SQL write lock. WAL хранится на локальном диске; несколько машин не разделяют SQLite-файл через сетевой filesystem. Потребность в нескольких write-services потребует отдельного backend и повторных concurrency-проверок.
 
 ## M2 — runner, provenance, sandbox и бюджет
+
+**Инкремент 18 сентября:** реализован [первый local runner](decisions/0005-local-runner.md) с командной очередью, одним dispatch на attempt и восстановлением по durable completion. [Исполняемый пример](../examples/local_execution.py) выполняет primary/reanalysis и останавливается перед scientific review. Этот срез не закрывает M2: worker имеет обычные права локального пользователя, environment фиксируется fingerprint, а единственный резерв — число protocol attempts. Полные требования ниже сохраняются.
 
 Runner получает immutable job specification, не прямой доступ к записи scientific state. До dispatch одной транзакцией создаются attempt, budget reservation и outbox entry. Worker использует lease/heartbeat; успешная финализация проверяет ownership, exit status, expected outputs и manifests. Повторная доставка не запускает второй attempt незаметно.
 

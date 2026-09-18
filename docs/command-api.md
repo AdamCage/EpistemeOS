@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Дата: 17 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
+Дата: 18 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
 
 ## Использование
 
@@ -34,6 +34,9 @@ with Store(".research/command-example") as store:
 
 | Action | Допустимая роль | Результат |
 |---|---|---|
+| `execution.enqueue` | executor / replicator | Atomic новый run + frozen job, занятый protocol attempt slot |
+| `execution.dispatch` | Назначенный executor / replicator | Durable намерение однократного запуска; handler не запускает процесс |
+| `execution.finalize` | Назначенный executor / replicator | Atomic проверенные result + execution_finalized |
 | `planning.question`, `planning.explanation_set` | planner | Immutable версия вопроса/набора с prior refs и revision reason |
 | `kernel.preregister_for_set` | planner | Protocol, привязанный к текущему question/set; hypotheses и scope выводятся из них |
 | `kernel.hypothesis`, `kernel.preregister` | planner | Event ID |
@@ -52,6 +55,18 @@ with Store(".research/command-example") as store:
 Blob должен быть заранее сохранён через `Store.put`/`put_json`; command ссылается на digest. Здесь нет универсальной загрузки файлов из произвольных agent paths. `paper.build` сохраняет bounded внутренние artifacts; `PaperBuilder.materialize` вызывается отдельно и заново проверяет актуальность evidence.
 
 Прямые Python-методы и прежние CLI `review`/`paper` сохраняют optimistic concurrency, но не получают command idempotency автоматически. Новые retryable worker interfaces должны использовать `CommandService`, сохранять request и обрабатывать исторический acknowledgement отдельно от текущего workflow.
+
+## Локальное исполнение
+
+`execution.enqueue` требует `protocol`, `seed`, `outputs` (logical name → portable basename, обязательно `raw_data` и `metrics`), `wall_seconds` (1–86400), `max_output_bytes` (1–1 GiB на каждый output и каждый stdout/stderr). Optional `implementation`, `environment`, `replicate_of`, `required_capabilities`. Primary берёт source/environment из protocol; reanalysis требует другую implementation и получает ровно raw data исходного completed run. Environment создаётся `freeze_environment(store)` либо `episteme execution environment --root <directory>` и затем используется при preregistration.
+
+Job фиксирует один Python source artifact. Программа вызывается как `python -I -S program.py input.dat --seed <seed>` в отдельном каталоге и записывает заявленные outputs. Это профиль для standard-library Python programs; multi-file source, dependencies/container reconstruction и DomainPack metrics ещё требуют расширения.
+
+Capabilities: `separate_cwd`, `python_isolated_mode`, `bounded_output_capture`, а также `job_object_timeout` на Windows или `process_group_timeout` на POSIX. Неподдерживаемые требования, в том числе network isolation, отвергаются при enqueue. Capture cap не является OS disk quota; POSIX descendants должны оставаться в process group. `wall_seconds` отсчитывается после выдачи payload permit; подготовка supervisor и финальный capture входят в observed `elapsed_seconds`, но не в этот лимит. Supervisor должен быть жив для enforcement; Windows Job Object также закрывает назначенные процессы при смерти supervisor.
+
+Обычный controller entry point — `episteme execution work <job-id> --root <directory>`. Он сначала сохраняет dispatch, затем выполняет worker вне SQL transaction. `execution status` читает queued/unknown/terminal состояние; `execution reconcile` проверяет существующую completion и сохраняет результат без запуска. После dispatch без доказанного завершения status остаётся `unknown`, даже если процесс всё ещё работает. CLI status/work/reconcile возвращает JSON состояния с code 0; failed/unknown job не следует считать successful experiment по exit code CLI. Ошибки команды дают code 2.
+
+Прямой `kernel.finish_run` запрещён для managed job. Replay dispatch receipt не разрешает новый subprocess. Backup сохраняет завершённую provenance в CAS, но не активные workspaces; restored unknown job остаётся unknown. Подробности и crash windows: [ADR 0005](decisions/0005-local-runner.md). Исполняемый [пример](../examples/local_execution.py) не фабрикует scientific review.
 
 ## Версии планирования
 

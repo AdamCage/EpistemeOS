@@ -97,9 +97,13 @@ def protocol_data(payload: dict[str, Any]) -> set[str]:
                               payload.get("statistical_design", {}).get("data_splits", []))}
 
 
-def exposure_artifacts(event: dict[str, Any]) -> set[str]:
+def exposure_artifacts(event: dict[str, Any], store: Store | None = None) -> set[str]:
     """Artifact closure of the extra events used to evaluate exposure context."""
     p = event["payload"]
+    if event["kind"].startswith("execution_"):
+        from .execution import execution_artifacts
+        require(store is not None, "execution provenance requires its artifact store")
+        return execution_artifacts(store, event)
     if event["kind"] == "data_exposure":
         return {p["data"]}
     if event["kind"] == "protocol":
@@ -375,7 +379,15 @@ class Kernel:
 
     def finish_run(self, run: str, *, status: str, outputs: dict[str, str],
                    reason: str = "") -> str:
+        return self._finish_run(run, status=status, outputs=outputs, reason=reason, managed_job=None)
+
+    def _finish_run(self, run: str, *, status: str, outputs: dict[str, str], reason: str,
+                    managed_job: str | None) -> str:
         history = self._history()
+        managed = next((e for e in history if e["kind"] == "execution_job" and e["payload"]["run"] == run), None)
+        require((managed is None and managed_job is None) or (managed is not None
+                and managed["id"] == managed_job and self.store._command_context is not None),
+                "managed runs require verified Execution finalization")
         started = self._get(history, run, "run")
         require(started["actor"] == self.actor.id and started["role"] == self.actor.role,
                 "only the assigned run actor can record its terminal result")
@@ -448,6 +460,10 @@ class Kernel:
         planning = {event["id"]: event for protocol_event in basis if protocol_event["kind"] == "protocol"
                     for event in self._planning_evidence(history, protocol_event)}
         basis.extend(sorted(planning.values(), key=lambda event: event["seq"]))
+        if any(e["kind"] == "execution_job" for e in history):
+            from .execution import execution_context
+            context_runs = {event["id"] for event in basis if event["kind"] == "run"}
+            basis.extend(execution_context(self.store, history, context_runs))
         return basis, runs
 
     def _basis(self, history: list[dict[str, Any]], claim: str) -> tuple[str, list[dict[str, Any]]]:
@@ -537,7 +553,7 @@ class Kernel:
                     for event in self._local_evidence(history, id)[0]:
                         if event["kind"] == "claim":
                             continue
-                        for key in exposure_artifacts(event):
+                        for key in exposure_artifacts(event, self.store):
                             try:
                                 self.store.read(key)
                             except IntegrityError as exc:
@@ -572,7 +588,7 @@ class Kernel:
             self._validate_typed_protocol([event for event in history if event["seq"] < plan["seq"]], p)
             self._inference_mode(p, c.get("inference_mode"))
             for exposure in protocol_exposures(history, plan):
-                for key in exposure_artifacts(exposure):
+                for key in exposure_artifacts(exposure, self.store):
                     self.store.read(key)
         except (GateError, IntegrityError, KeyError) as exc:
             failures.append(str(exc))

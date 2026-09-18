@@ -66,6 +66,9 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
     keys: set[str] = set()
     for event in history:
         p = event["payload"]
+        if event["kind"].startswith("execution_"):
+            from .execution import execution_artifacts
+            keys.update(execution_artifacts(store, event))
         if event["kind"] == "protocol":
             keys.update(p[key] for key in ("implementation", "environment", "data"))
             if p.get("statistical_design") is not None:
@@ -94,6 +97,8 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
 
 def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]:
     validate_planning(history)
+    from .execution import execution_context
+    execution_context(store, history, set())
     summary = _summary(store, history)
     return dict(bundle_version=1, summary=summary, events=history,
                 artifacts=artifact_inventory(store, history),
@@ -107,11 +112,15 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
 def _run_table(store: Store, history: list[dict[str, Any]], runs: list[dict[str, Any]]) -> list[str]:
     rows = ["| Run | Kind | Seed | Primary metric | Value | Raw data | Implementation |",
             "| --- | --- | --- | --- | --- | --- | --- |"]
+    jobs = {e["payload"]["run"]: e for e in history if e["kind"] == "execution_job"}
     for run in runs:
         p = run["payload"]
         plan = Kernel._get(history, p["protocol"], "protocol")["payload"]
         result = Kernel._result(history, run["id"])
         status = result["payload"]["status"] if result else "running"
+        if result is None and run["id"] in jobs:
+            status = "unknown" if any(e["kind"] == "execution_dispatch" and e["payload"]["job"] == jobs[run["id"]]["id"]
+                                      for e in history) else "queued"
         if status != "completed":
             rows.append(f"| {run['id']} | {status} | {p['seed']} | {_cell(plan['metric'])} | — | — | — |")
             continue
@@ -122,6 +131,16 @@ def _run_table(store: Store, history: list[dict[str, Any]], runs: list[dict[str,
                     f"{_cell(metrics[plan['metric']])} | "
                     f"[raw](artifacts/sha256/{outputs['raw_data']}) | "
                     f"[source](artifacts/sha256/{p['implementation']}) |")
+    selected = [jobs[run["id"]] for run in runs if run["id"] in jobs]
+    if selected:
+        rows.extend(["", "Execution provenance: trusted local Python, without filesystem/network sandbox. "
+                     "Separate processes do not prove independent scientific reasoning.", ""])
+        for job in selected:
+            terminal = next((e for e in history if e["kind"] == "execution_finalized" and e["payload"]["job"] == job["id"]), None)
+            manifest = (f"[completion](artifacts/sha256/{terminal['payload']['manifest']})"
+                        if terminal else "no verified completion")
+            rows.append(f"- `{job['payload']['run']}`: `{job['payload']['mode']}`; "
+                        f"[frozen specification](artifacts/sha256/{job['payload']['specification']}); {manifest}.")
     return rows
 
 

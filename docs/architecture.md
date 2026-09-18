@@ -1,6 +1,6 @@
 # EpistemeOS: архитектура исследовательского harness
 
-Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 17 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
+Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 18 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
 
 ## 1. Решение
 
@@ -78,7 +78,7 @@ Authoritative scientific state — append-only события. Ключевые 
 
 Это контроль случайной порчи в доверенном локальном процессе. Владелец файлов может переписать всю историю или её хвост вместе с hashes. В M2 нужен внешний checkpoint, подписанный runner manifest и отдельный write-service; hashes не заменяют эти границы. Удаление последних событий не обнаруживается одним внутренним hash chain.
 
-Runner в M2 использует lease, heartbeat, attempt IDs и transactional outbox. После падения диспетчера run получает `interrupted/unknown`, затем reconciliation проверяет фактический процесс и artifacts. Повтор использует новый attempt; завершённый результат не перезаписывается. Claim promotion и сборка paper обязаны повторно валидировать basis непосредственно перед commit. `next_action` v0.1 — рекомендация на snapshot, не durable job dispatch.
+Целевой runner M2 использует lease, heartbeat, attempt IDs и transactional outbox. Первый срез сохраняет run/job атомарно и разрешает один dispatch на attempt; без проверенного completion состояние остаётся `unknown`. Reconciliation импортирует исходные artifacts и не повторяет запуск. Leases/reclaim и автоматический retry пока отсутствуют. Claim promotion и сборка paper обязаны повторно валидировать basis непосредственно перед commit. `next_action` v0.1 — рекомендация на snapshot, не автоматический dispatch исследовательского цикла.
 
 ## 6. Протокол и gate-переходы
 
@@ -158,3 +158,5 @@ TMLR и ICLR получают разные review profiles. TMLR акценти�
 Инкремент M1 от 16 сентября: [backup/restore](recovery.md). SQLite online backup фиксирует одну ревизию events/receipts; CAS копируется и проверяется после неё как superset, включая orphans. Restore проверяет hashes, inventory, SQLite integrity, event chain, receipt bindings и Graph closure до резервирования нового destination. IDs и retry semantics сохраняются, история не воспроизводится через Kernel. Существующий каталог не заменяется; публикация устанавливает readiness file последним, но crash может оставить незавершённый занятый путь. Это восстановление сохранённого состояния, не среды исполнения или активных jobs.
 
 Инкремент M1 от 17 сентября: [planning lineage](decisions/0004-planning-lineage.md). Immutable вопросы и наборы объяснений связывают prior hypotheses с hashes, exact scope и причинами исключения. `preregister_for_set` выводит scope/pool и фиксирует binding до первого run. Evidence basis и reviewer conflicts учитывают frozen ancestry, включая исключённые hypotheses. Новые revisions не переписывают старые protocols или approvals и требуют нового binding для нового исследования. Question constraints/stopping criteria пока декларативны; resource enforcement, domain/data declarations и выполнение плана остаются дальнейшей работой.
+
+Инкремент M2 от 18 сентября: [local runner](decisions/0005-local-runner.md). Controller сохраняет immutable job, запускает worker вне SQL transaction и проверяет completion перед atomic result/finalized. Общий backend исполняет один frozen Python source с input artifact, ограничивает capture, контролирует Windows Job Object либо POSIX process group. Unknown не превращается в failed и не получает повторного запуска. Job/specification/dispatch/manifest входят в Graph, CAS inventory и review basis. Это trusted local execution без файловой/сетевой изоляции, полного environment closure, подписанного attestation, глобального resource ledger или независимых LLM-сессий.

@@ -16,6 +16,7 @@ Research harness для вычислительных научных исслед
 - [Связи claims, зависимый review и supersession](docs/decisions/0003-claim-relations.md).
 - [Переносимый backup и восстановление состояния](docs/recovery.md).
 - [Версии исследовательского вопроса и explanation sets](docs/decisions/0004-planning-lineage.md).
+- [Локальный runner, однократный dispatch и восстановление результата](docs/decisions/0005-local-runner.md).
 
 ## Локальный запуск
 
@@ -27,6 +28,7 @@ uv run episteme demo --root .research/demo
 uv run episteme inspect --root .research/demo
 uv run episteme export --root .research/demo
 uv run episteme demo --with-search --root .research/search-demo
+uv run python examples/local_execution.py --root .research/local-execution-example
 uv run python -m unittest discover -s tests -v
 ```
 
@@ -35,6 +37,8 @@ uv run python -m unittest discover -s tests -v
 Demo выполняет три реальных CPU-вычисления на синтетических данных и три повторных анализа другой формулой в отдельных Python-процессах. Сохраняет код, inputs, среду, raw CSV, метрики и логи; останавливается на `scientific_review`. Это fixture с заданными ролями, а не независимые LLM-агенты или новое научное открытие. Повторный запуск требует новой пустой папки.
 
 Флаг `--with-search` добавляет сохраняемый турнир с перестановкой A/B, два варианта эксперимента и best-first выбор под бюджетом. Неисполненная альтернатива остаётся в дереве. Судейские оценки и компоненты приоритета заданы fixture-кодом; рейтинг не является оценкой научной истинности.
+
+`examples/local_execution.py` использует общий runner: создаёт frozen Python jobs, выполняет primary и отдельный повторный анализ, сохраняет manifests и останавливается перед scientific review. Runner поддерживает `execution status`, `execution work` и `execution reconcile`; неизвестный исход после dispatch не запускается повторно. Это trusted local backend без filesystem/network sandbox. У среды фиксируется fingerprint интерпретатора/ОС, а не переносимый полный environment bundle.
 
 Результат в выбранном `--root`:
 

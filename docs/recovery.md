@@ -4,6 +4,8 @@
 
 Snapshot переносит SQLite-состояние вместе с content-addressed artifacts в новый каталог. Он сохраняет научную историю и историю доставки команд, включая неудачные попытки, отрицательные результаты и прежние версии решений. Backup и restore не выполняют эксперименты и не создают научных approvals.
 
+С local runner от 18 сентября завершённые specification/completion/log/output artifacts входят в CAS и проверку Graph. Активные каталоги `executions/` не входят в snapshot. Восстановленный dispatched job без finalized остаётся `unknown`; restore не даёт новое право запуска. Snapshot очереди, сделанный до dispatch, и исходный store не разделяют глобальный execution lock: writable clones нельзя считать одной очередью с общей гарантией однократного исполнения. Автоматического resume после restore нет; [ADR 0005](decisions/0005-local-runner.md) описывает границы.
+
 ## CLI и API
 
 ```powershell

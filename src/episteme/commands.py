@@ -16,6 +16,7 @@ from typing import Any, Callable, get_args, get_origin, get_type_hints
 
 from .kernel import Actor, Kernel
 from .planning import Planning
+from .execution import Execution
 from .reporting import PaperBuilder
 from .search import Search
 from .store import Store, canonical
@@ -91,6 +92,9 @@ class CommandContext:
 # An explicit allowlist prevents payloads from naming arbitrary methods or tools.
 # No handler here starts a process, contacts a provider or materializes exports.
 _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
+    "execution.enqueue": (Execution, Execution.enqueue, frozenset({"executor", "replicator"})),
+    "execution.dispatch": (Execution, Execution.dispatch, frozenset({"executor", "replicator"})),
+    "execution.finalize": (Execution, Execution.finalize, frozenset({"executor", "replicator"})),
     "planning.question": (Planning, Planning.question, frozenset({"planner"})),
     "planning.explanation_set": (Planning, Planning.explanation_set, frozenset({"planner"})),
     "kernel.hypothesis": (Kernel, Kernel.hypothesis, frozenset({"planner"})),
@@ -125,7 +129,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
         raise ValueError("command study_id differs from the research question")
     events = {event["id"]: event for event in history}
     refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
-                                    "claim", "source", "target", "selection", "tree")
+                                    "claim", "source", "target", "selection", "tree", "job")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -145,6 +149,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "run": ("protocol",), "result": ("run",), "claim": ("protocol",), "review": ("claim",),
             "claim_link": ("source", "target"), "experiment_node": ("protocol", "tree"),
             "search_selection": ("node", "tree"), "search_terminal": ("selection",),
+            "execution_job": ("run",), "execution_dispatch": ("job",), "execution_finalized": ("job",),
         }.get(kind, ())
         refs.extend(p[field] for field in fields if isinstance(p.get(field), str))
         if kind == "paper":

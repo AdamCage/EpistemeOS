@@ -18,6 +18,7 @@ from .kernel import Actor, Kernel
 from .reporting import PaperBuilder, export_store, inspect_store
 from .recovery import backup, restore
 from .store import Store
+from .execution import freeze_environment, job_state, reconcile_job, work_job
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -65,9 +66,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         if name == "import":
             operation.add_argument("--root", type=Path, required=True)
             operation.add_argument("--actor", default="afterlife-importer")
+    execution = subcommands.add_parser("execution", help="Explicit trusted local Python execution; no sandbox")
+    execution_ops = execution.add_subparsers(dest="operation", required=True)
+    for name in ("environment", "status", "work", "reconcile"):
+        operation = execution_ops.add_parser(name)
+        if name != "environment":
+            operation.add_argument("job", help="Recorded execution_job ID")
+        operation.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "afterlife":
+        if args.command == "execution":
+            if args.operation != "environment" and not (args.root / "state.sqlite3").is_file():
+                raise ValueError("existing research state is required")
+            with Store(args.root, read_only=args.operation == "status") as store:
+                if args.operation == "environment":
+                    result = dict(environment=freeze_environment(store), isolation="trusted local; no sandbox")
+                else:
+                    action = {"status": job_state, "work": work_job, "reconcile": reconcile_job}[args.operation]
+                    result = action(store, args.job)
+            status = 0
+        elif args.command == "afterlife":
             if args.operation == "import" and args.root.resolve().is_relative_to(args.source.resolve()):
                 raise ValueError("import destination must be outside the read-only source checkout")
             snapshot = inspect_afterlife(args.source, max_verify_total_bytes=args.max_verify_mib * 1024 * 1024)
@@ -135,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     status = 0 if result["passed"] else 1
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return status
-    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+    except (OSError, ValueError, RuntimeError, KeyError, sqlite3.Error) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1 if args.command == "gate" else 2
 

@@ -1,10 +1,10 @@
 # Проверка текущего прототипа
 
-Дата: 17 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа и инкрементов M1, не оценка качества научных открытий.
+Дата: 18 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа, инкрементов M1 и первого local runner M2, не оценка качества научных открытий.
 
 ## Выполненные проверки
 
-`uv run python -m unittest discover -s tests -v`: **268 тестов, 266 успешно, 2 skipped**, 58.754 секунды. Локальный transcript: `.research/planning-tests-20260917.log` (git-ignored). Пропущены два теста создания symlink: среда Windows не предоставляет это право. Обход reparse points и отказ от symlink entries реализованы, но эти cases на данном хосте не проверены. Предыдущие инкременты: 9 сентября — 186 тестов, 185 успешно, 1 skipped; 11 сентября — 226 тестов, 225 успешно, 1 skipped; 16 сентября — 239 тестов, 237 успешно, 2 skipped.
+`uv run python -m unittest discover -s tests -v`: **289 тестов, 286 успешно, 3 skipped**, 139.944 секунды. Локальный transcript: `.research/runner-tests-20260918.log` (git-ignored). Пропущены три теста создания symlink: среда Windows не предоставляет это право. Отказ от symlink entries реализован, но эти cases на данном хосте не проверены. Предыдущие инкременты: 9 сентября — 186 тестов, 185 успешно, 1 skipped; 11 сентября — 226 тестов, 225 успешно, 1 skipped; 16 сентября — 239 тестов, 237 успешно, 2 skipped; 17 сентября — 268 тестов, 266 успешно, 2 skipped.
 
 Первый commit `46c783b` опубликован в публичном [GitHub repository](https://github.com/AdamCage/EpistemeOS) и прошёл [CI run 34277599425](https://github.com/AdamCage/EpistemeOS/actions/runs/34277599425). M1 increment [`91192d4`](https://github.com/AdamCage/EpistemeOS/commit/91192d4) отдельно прошёл [CI run 34385764051](https://github.com/AdamCage/EpistemeOS/actions/runs/34385764051): все четыре jobs успешны — Windows/Linux, Python 3.11/3.13.
 
@@ -14,6 +14,8 @@
 
 Исправление [`8183e47`](https://github.com/AdamCage/EpistemeOS/commit/8183e47) прошло [CI run 35197219085](https://github.com/AdamCage/EpistemeOS/actions/runs/35197219085): все четыре jobs Windows/Linux и Python 3.11/3.13 успешны.
 
+Planning increment [`1301083`](https://github.com/AdamCage/EpistemeOS/commit/1301083) прошёл [CI run 35232388814](https://github.com/AdamCage/EpistemeOS/actions/runs/35232388814) во всех четырёх конфигурациях. Платформенная проверка нового runner публикуется отдельным CI после commit; локальный результат выше относится к Windows 3.11.
+
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
 
 Шесть публичных JSON schemas и содержащиеся в них examples проверены `jsonschema.Draft202012Validator` в отдельном установленном окружении. `jsonschema` не добавлен в runtime. Schema validation проверяет форму; исторические ссылки, bases и условия переходов проверяются Kernel и workflow tests.
@@ -21,6 +23,7 @@
 | Проверяемая область | Сценарии |
 |---|---|
 | Kernel | Preregistration до run, frozen source/environment, scope, полнота seeds, отрицательные результаты и failed logs, self-review включая автора гипотезы, stale basis, review veto. |
+| Local execution | 21 новый test: реальные CPU jobs и CLI, atomic attempt reservation/последний slot, concurrent controllers, dispatch/finalize replay, controller kill до completion, reconcile без spawn, unknown после intent и restore, Graph/CAS closure, отказ direct finish/forged result, raw data reanalysis, nonzero exit, invalid metric, missing/oversized outputs, input/runtime drift, bounded stdout, живые descendants при timeout и после выхода parent. Один symlink-output case локально skipped. |
 | Store | Corruption, missing artifacts, append-only triggers, conflicting writers, reopen, read-only inspection. |
 | Recovery | 13 новых тестов: exact events/receipts/graph round-trip, stale command replay и altered-body conflict, orphan CAS, byte corruption, invalid receipt/graph, manifest paths/duplicate keys/unknown version, active transaction refusal, existing target/containment, real CLI. Writer после SQLite snapshot не смешивает revisions; два restore не заменяют общий destination; пересчитанный DB checksum не скрывает нарушенный receipt binding. |
 | Planning lineage | 29 новых тестов: strict Q/set payloads, hashes/scope, current heads, exact exclusion reasons, concurrent revision conflict, исторический context без descendants. Protocol derives pool/scope, сохраняет binding и не сбрасывает lineage в amendment. Replay переживает новые heads; study mismatch блокирует bound run и tree selection без events/receipts. Reviewer conflicts включают ancestors и удалённые hypotheses; Graph проверяет forged binding; CLI и recovery сохраняют версии. Paper раскрывает исключённую альтернативу и причину её исключения. |
@@ -42,6 +45,8 @@
 
 ## Сохранённый demo
 
+18 сентября выполнен `uv run python examples/local_execution.py --root .research/local-runner-verified-20260918`: primary и отдельный повторный анализ через общий backend, шесть command receipts, 14 events, 27 Graph nodes/61 edges. Head: `3fb1ece148e9121c31c931119eace707a8d1467aa5fdd2b0fa1c6508d440afec`; claim `claim-976be9541b184cf7`; basis `f48941396cc6f3cbfb254f021fba042ad098d6bfa71a70df21f023560862cf42`. Вычисленный mean равен 2 на трёх synthetic values. Gate прошёл, `scientific_validity=not_assessed`, next action `scientific_review`; review/approval не создавались. [Локальный report](../.research/local-runner-verified-20260918/report.md), bundle и outputs git-ignored. Environment содержит native OS/interpreter fingerprint, но не portable environment closure; Linux process control требует отдельного CI.
+
 16 сентября CLI `backup`/`restore` проверены на `.research/command-example-20260909` и `.research/search-demo-20260908`, с восстановлением в новые каталоги `command-restored-20260916` и `search-restored-20260916`. Сравнены полные event JSONL, receipt JSONL и Graph: все совпали. Повтор исходного command envelope в восстановленном Store вернул тот же `hypothesis-570a0cac8e85485e`, сохранив одно событие и одну receipt. Demo сохранил 26 событий, 45 nodes/112 edges и прежний head hash. [Локальная проверка восстановления](../.research/recovery-verification-20260916.json) и directory snapshots остаются git-ignored; это перенос существующего evidence, без нового научного эксперимента или approval.
 
 Команда: `uv run episteme demo --with-search --root .research/search-demo-20260908`.
@@ -62,8 +67,8 @@ Snapshot ID: `66ebe1b365171db89c5b88b2d8d2735aee00f43c397d12a32539e5d2538dea59`.
 
 ## Незавершённое
 
-Общая цель ещё не достигнута: реальных provider agents, аутентифицированных назначений и контекстной/OS изоляции, универсального исполнителя, durable job recovery, автоматического review-driven replanning и полного manuscript pipeline пока нет. M1–M6 остаются в [плане](mvp-plan.md); прототип закрывает только указанные сценарии.
+Общая цель ещё не достигнута: реальных provider agents, аутентифицированных назначений и контекстной/OS изоляции, полного runner с environment reconstruction/resource ledger/leases, автоматического review-driven replanning и полного manuscript pipeline пока нет. Первый trusted local runner восстанавливает результат по completion без повторного исполнения; это часть M2. M1–M6 остаются в [плане](mvp-plan.md); прототип закрывает только указанные сценарии.
 
-Docker CLI обнаружен, но проверка `docker version` не смогла подключиться к Linux engine named pipe. Sandbox на этом хосте не проверялся. Это ограничение следующего execution-этапа; локальные фикстуры используют обычный Python subprocess.
+Docker CLI обнаружен, но проверка `docker version` не смогла подключиться к Linux engine named pipe; повторная read-only проверка 17 сентября дала тот же результат. Sandbox на этом хосте не проверялся. Новый Windows backend использует Job Object для жизненного цикла процессов, сохраняя обычные права пользователя на файлы/сеть.
 
 Независимый технический [review от 7 сентября](implementation-review.md) сохраняет результаты того запуска. Отмеченное там отсутствие защиты от review автором гипотезы исправлено и проверено отдельным `test_hypothesis_author_cannot_review_when_another_actor_registered_protocol`; исторический отчёт не переписан как будто исправление было проверено раньше.

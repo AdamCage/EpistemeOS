@@ -1,6 +1,6 @@
 # Карта репозитория EpistemeOS
 
-Дата: 17 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
+Дата: 18 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
 
 ## Фактическое ядро v0.1
 
@@ -32,6 +32,8 @@ EpistemeOS/
 │   ├── commands.py               versioned allowlist, type/role admission, normalization
 │   ├── protocols.py              immutable statistical declarations и validation
 │   ├── planning.py               версии ResearchQuestion/ExplanationSet, bindings и ancestry
+│   ├── execution.py              atomic job admission, one-shot dispatch, verified reconciliation
+│   ├── runner_backend.py         trusted local Python process supervisor, bounded logs и completion
 │   ├── claims.py                 типизированный immutable ClaimLink
 │   ├── claim_context.py          scope/циклы связей и транзитивный review context
 │   ├── kernel.py                 валидируемые научные команды и gates
@@ -53,6 +55,8 @@ EpistemeOS/
     ├── test_protocols.py         typed statistical declarations
     ├── test_planning.py          immutable revisions, exact refs, scope, exclusions и head races
     ├── test_planning_workflow.py protocol/review/study/graph binding, CLI и recovery
+    ├── test_execution.py         реальные jobs, controller crash, concurrency, Graph/CAS/backup
+    ├── test_runner_backend.py    реальные descendants, timeout, capture cap и duplicate delivery
     ├── test_claims.py            shape и hashes immutable claim links
     ├── test_claim_context.py     scope, direction, cycles и context closure
     ├── test_claim_workflow.py    review propagation, veto, supersession, paper и CLI replay
@@ -72,6 +76,8 @@ EpistemeOS/
 | `commands.py` | Явный action/role allowlist, strict JSON, аргументы и defaults v1, допуск до handler, historical acknowledgement. | Доверенный local caller; нет внешнего execution или меж-study access boundary. |
 | `protocols.py` | Frozen design dataclasses, units/estimand/metrics/splits, mode и structural statistical validation. | Не проверяет actual data, мощность, реальную независимость или uncertainty computation. |
 | `planning.py` | ResearchQuestion/ExplanationSet v1, immutable parent refs, heads, hashes/scope, exact exclusion reasons; frozen context с прежними гипотезами. | Constraints и comparison plan декларативны; нет генерации/научной оценки, resource enforcement или actor authentication. |
+| `execution.py` | Atomic run/job и result/finalized, unique dispatch, historical receipts, completion identities/hashes, context и CAS closure. | Нет auto-reclaim/retry, signed attestation, study resource ledger или cross-clone exactly-once. |
+| `runner_backend.py` | Frozen single Python source/input, отдельный cwd, gated process launch, Windows Job Object / POSIX group, bounded capture, durable completion. | Trusted local profile, без filesystem/network sandbox, package environment reconstruction или domain metric recomputation. |
 | `claims.py`, `claim_context.py` | Immutable proposals отношений, validation порядка/scope/циклов; review context из incoming supports/limits и symmetric contradictions/supersession. | Не доказывают научную связь; binding evidence basis и bytes проверяет Kernel/Graph. |
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
 | `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; общий runner и metric recomputation не перенесены. |
