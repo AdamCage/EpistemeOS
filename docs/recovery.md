@@ -8,6 +8,8 @@ Snapshot переносит SQLite-состояние вместе с content-ad
 
 ## CLI и API
 
+С [batch layer от 21 сентября](decisions/0006-execution-batches.md) planner связывает набор запусков с hash локального `.execution-authority.json`. Marker намеренно не включён в snapshot. Восстановленный batch можно читать и экспортировать, но новые slot admissions и dispatch через `batch advance` или `execution work` отклоняются без соответствующего marker. Автоматического handoff нет; копирование token вручную не создаёт распределённой гарантии единственного исполнителя.
+
 ```powershell
 uv run episteme backup --root .research/study --output .research/study-snapshot
 uv run episteme restore .research/study-snapshot --root .research/study-restored

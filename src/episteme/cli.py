@@ -73,9 +73,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         if name != "environment":
             operation.add_argument("job", help="Recorded execution_job ID")
         operation.add_argument("--root", type=Path, required=True)
+    batches = subcommands.add_parser("batch", help="Resume a frozen local attempt roster; no scientific approval")
+    batch_ops = batches.add_subparsers(dest="operation", required=True)
+    for name in ("status", "advance"):
+        operation = batch_ops.add_parser(name)
+        operation.add_argument("batch", help="Recorded batch_plan ID")
+        operation.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "execution":
+        if args.command == "batch":
+            from .batch import batch_state
+            from .batch_controller import advance_batch
+            if not (args.root / "state.sqlite3").is_file():
+                raise ValueError("existing research state is required")
+            with Store(args.root, read_only=args.operation == "status") as store:
+                result = (batch_state if args.operation == "status" else advance_batch)(store, args.batch)
+            status = 0
+        elif args.command == "execution":
             if args.operation != "environment" and not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
             with Store(args.root, read_only=args.operation == "status") as store:

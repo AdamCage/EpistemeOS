@@ -17,6 +17,7 @@ from typing import Any, Callable, get_args, get_origin, get_type_hints
 from .kernel import Actor, Kernel
 from .planning import Planning
 from .execution import Execution
+from .batch import Batch
 from .reporting import PaperBuilder
 from .search import Search
 from .store import Store, canonical
@@ -92,6 +93,9 @@ class CommandContext:
 # An explicit allowlist prevents payloads from naming arbitrary methods or tools.
 # No handler here starts a process, contacts a provider or materializes exports.
 _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
+    "batch.plan": (Batch, Batch.plan, frozenset({"planner"})),
+    "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),
+    "batch.settle": (Batch, Batch.settle, frozenset({"planner"})),
     "execution.enqueue": (Execution, Execution.enqueue, frozenset({"executor", "replicator"})),
     "execution.dispatch": (Execution, Execution.dispatch, frozenset({"executor", "replicator"})),
     "execution.finalize": (Execution, Execution.finalize, frozenset({"executor", "replicator"})),
@@ -129,7 +133,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
         raise ValueError("command study_id differs from the research question")
     events = {event["id"]: event for event in history}
     refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
-                                    "claim", "source", "target", "selection", "tree", "job")
+                                    "claim", "source", "target", "selection", "tree", "job", "batch")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -150,6 +154,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "claim_link": ("source", "target"), "experiment_node": ("protocol", "tree"),
             "search_selection": ("node", "tree"), "search_terminal": ("selection",),
             "execution_job": ("run",), "execution_dispatch": ("job",), "execution_finalized": ("job",),
+            "batch_plan": ("protocol", "selection"), "batch_slot": ("batch",), "batch_settlement": ("batch",),
         }.get(kind, ())
         refs.extend(p[field] for field in fields if isinstance(p.get(field), str))
         if kind == "paper":

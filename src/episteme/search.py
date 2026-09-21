@@ -407,6 +407,8 @@ class Search:
         """
         history = self._history()
         chosen = self._get(history, selection, "search_selection")["payload"]
+        require(not any(e["kind"] == "batch_plan" and e["payload"]["selection"] == selection
+                        for e in history), "batch-bound selection requires batch settlement")
         require(chosen["node"] is not None, "cannot finish a wait/stop decision")
         require(not any(e["kind"] == "search_terminal" and e["payload"]["selection"] == selection
                         for e in history), "selection already terminal")

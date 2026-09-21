@@ -17,6 +17,7 @@ Research harness для вычислительных научных исслед
 - [Переносимый backup и восстановление состояния](docs/recovery.md).
 - [Версии исследовательского вопроса и explanation sets](docs/decisions/0004-planning-lineage.md).
 - [Локальный runner, однократный dispatch и восстановление результата](docs/decisions/0005-local-runner.md).
+- [Выбранный эксперимент, полный набор запусков и восстановление controller](docs/decisions/0006-execution-batches.md).
 
 ## Локальный запуск
 
@@ -29,6 +30,7 @@ uv run episteme inspect --root .research/demo
 uv run episteme export --root .research/demo
 uv run episteme demo --with-search --root .research/search-demo
 uv run python examples/local_execution.py --root .research/local-execution-example
+uv run python examples/search_execution_batch.py --root .research/search-batch-example
 uv run python -m unittest discover -s tests -v
 ```
 
@@ -39,6 +41,8 @@ Demo выполняет три реальных CPU-вычисления на с
 Флаг `--with-search` добавляет сохраняемый турнир с перестановкой A/B, два варианта эксперимента и best-first выбор под бюджетом. Неисполненная альтернатива остаётся в дереве. Судейские оценки и компоненты приоритета заданы fixture-кодом; рейтинг не является оценкой научной истинности.
 
 `examples/local_execution.py` использует общий runner: создаёт frozen Python jobs, выполняет primary и отдельный повторный анализ, сохраняет manifests и останавливается перед scientific review. Runner поддерживает `execution status`, `execution work` и `execution reconcile`; неизвестный исход после dispatch не запускается повторно. Это trusted local backend без filesystem/network sandbox. У среды фиксируется fingerprint интерпретатора/ОС, а не переносимый полный environment bundle.
+
+`examples/search_execution_batch.py` связывает Search с runner: замораживает primary/reanalysis для всех seeds и резервирует число attempts. `episteme batch advance <batch-id> --root <directory>` продолжает сохранённый набор; unknown удерживает резерв, а failed primary оставляет зависимый переанализ заблокированным. Completed batch останавливается на `awaiting_analysis`, без claim или review. DB/CAS restore сохраняет evidence, но не локальный token разрешения новых запусков batch.
 
 Результат в выбранном `--root`:
 

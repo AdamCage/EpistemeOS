@@ -66,6 +66,9 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
     keys: set[str] = set()
     for event in history:
         p = event["payload"]
+        if event["kind"].startswith("batch_"):
+            from .batch import batch_artifacts
+            keys.update(batch_artifacts(store, event))
         if event["kind"].startswith("execution_"):
             from .execution import execution_artifacts
             keys.update(execution_artifacts(store, event))
@@ -99,8 +102,11 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     validate_planning(history)
     from .execution import execution_context
     execution_context(store, history, set())
+    from .batch import batch_summaries
+    batches = batch_summaries(store, history)
     summary = _summary(store, history)
     return dict(bundle_version=1, summary=summary, events=history,
+                execution_batches=batches,
                 artifacts=artifact_inventory(store, history),
                 claim_relations=[event for event in history if event["kind"] == "claim_link"],
                 research_questions=[event for event in history if event["kind"] == "research_question"],
@@ -205,6 +211,15 @@ def export_store(store: Store) -> dict[str, str]:
         report.extend(f"- Gate failure: {failure}" for failure in claim["gate"]["failures"])
         report.extend(["", "Limitations:", "", *(f"- {item}" for item in c["limitations"]), ""])
     report.extend(_relation_table(bundle["claim_relations"]))
+    if bundle["execution_batches"]:
+        report.extend(["## Execution batches", "",
+            "Technical execution only; completed batches still require analysis and scientific review.", "",
+            "| Batch | Status | Enqueued / planned attempts | Next action |",
+            "| --- | --- | --- | --- |"])
+        report.extend(f"| {_cell(row['batch'])} | {_cell(row['status'])} | "
+                      f"{row['enqueued_attempts']} / {row['plan']['reserved_cost']} | {_cell(row['next_action'])} |"
+                      for row in bundle["execution_batches"])
+        report.append("")
     planning_ids = {record["id"] for event in history if event["kind"] == "protocol"
                     and "planning" in event["payload"]
                     for record in planning_context(history, event["payload"]["planning"])}

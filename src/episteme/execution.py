@@ -264,6 +264,15 @@ class Execution:
                 max_output_bytes: int, implementation: str | None = None,
                 environment: str | None = None, replicate_of: str | None = None,
                 required_capabilities: list[str] | None = None) -> str:
+        return self._enqueue(protocol=protocol, seed=seed, outputs=outputs, wall_seconds=wall_seconds,
+            max_output_bytes=max_output_bytes, implementation=implementation, environment=environment,
+            replicate_of=replicate_of, required_capabilities=required_capabilities, batch_slot=None)
+
+    def _enqueue(self, *, protocol: str, seed: int, outputs: dict[str, str], wall_seconds: int,
+                 max_output_bytes: int, implementation: str | None = None,
+                 environment: str | None = None, replicate_of: str | None = None,
+                 required_capabilities: list[str] | None = None,
+                 batch_slot: tuple[str, str] | None = None) -> str:
         history = self._history()
         _index(self.store, history)
         plan = Kernel._get(history, protocol, "protocol")["payload"]
@@ -291,8 +300,8 @@ class Execution:
                     environment_fingerprint=declared["fingerprint"])
         _spec(spec)
         key = self.store.put_json(spec)
-        run = Kernel(self.store, self.actor).start_run(protocol, seed=seed, implementation=implementation,
-                                                      environment=environment, command=command, replicate_of=replicate_of)
+        run = Kernel(self.store, self.actor)._start_run(protocol, seed=seed, implementation=implementation,
+            environment=environment, command=command, replicate_of=replicate_of, batch_slot=batch_slot)
         event = Kernel._get(self.store.events(), run, "run")
         return self._write("execution_job", dict(schema_version=1, run=run, run_hash=event["hash"],
                     specification=key, mode="independent_reanalysis" if replicate_of else "primary",
@@ -300,6 +309,8 @@ class Execution:
 
     def dispatch(self, *, job: str, workspace_token: str) -> str:
         state = _index(self.store, self._history())[job]
+        from .batch import validate_dispatch
+        validate_dispatch(self.store, self.store.events(), job)
         require(state["job"]["actor"] == self.actor.id and state["job"]["role"] == self.actor.role,
                 "only assigned execution actor may dispatch")
         require(state["dispatch"] is None, "execution already dispatched; reconcile instead of launching again")

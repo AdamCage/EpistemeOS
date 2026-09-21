@@ -29,6 +29,7 @@
         "version": {"const": 1},
         "action": {"enum": [
           "execution.enqueue", "execution.dispatch", "execution.finalize",
+          "batch.plan", "batch.enqueue_slot", "batch.settle",
           "planning.question", "planning.explanation_set", "kernel.preregister_for_set",
           "kernel.hypothesis", "kernel.preregister", "kernel.start_run", "kernel.finish_run",
           "kernel.claim", "kernel.review", "kernel.review_with_links", "kernel.link_claims",

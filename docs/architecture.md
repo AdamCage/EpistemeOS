@@ -1,6 +1,6 @@
 # EpistemeOS: архитектура исследовательского harness
 
-Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 18 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
+Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 21 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
 
 ## 1. Решение
 
@@ -72,7 +72,7 @@ Scopes должны включать научно значимые режимы:
 
 ## 5. Event log, storage и восстановление
 
-Authoritative scientific state — append-only события. Ключевые поля: schema version, monotonic sequence, actor/role, timestamp, payload, previous hash, event hash. CommandService связывает study/correlation/causation IDs, command ID и expected revision с immutable receipt; events и receipt фиксируются одной SQLite-транзакцией. Receipt хранит историю доставки, не scientific approval; прежние event hashes сохраняются. Резерв фактического исполнения и outbox добавляются в M2. JSONL и Markdown — экспорты; events-only JSONL не восстанавливает квитанции доставки.
+Authoritative scientific state — append-only события. Ключевые поля: schema version, monotonic sequence, actor/role, timestamp, payload, previous hash, event hash. CommandService связывает study/correlation/causation IDs, command ID и expected revision с immutable receipt; events и receipt фиксируются одной SQLite-транзакцией. Receipt хранит историю доставки, не scientific approval; прежние event hashes сохраняются. Резерв attempts для frozen batch реализован; outbox с lease/reclaim и внешний resource ledger остаются в M2. JSONL и Markdown — экспорты; events-only JSONL не восстанавливает квитанции доставки.
 
 В v0.1 события хранятся в одной SQLite-таблице, граф восстанавливается из ссылок на ID в payload. SHA-256 blobs сохраняются до события, которое на них ссылается. Авария между сохранением blob и commit может оставить orphan artifact, но не dangling event. Каждое чтение blob сверяет digest. Запись проверяет expected revision под `BEGIN IMMEDIATE`; конкурентный устаревший writer получает conflict. DB triggers предотвращают UPDATE/DELETE через обычные операции.
 
@@ -81,6 +81,8 @@ Authoritative scientific state — append-only события. Ключевые 
 Целевой runner M2 использует lease, heartbeat, attempt IDs и transactional outbox. Первый срез сохраняет run/job атомарно и разрешает один dispatch на attempt; без проверенного completion состояние остаётся `unknown`. Reconciliation импортирует исходные artifacts и не повторяет запуск. Leases/reclaim и автоматический retry пока отсутствуют. Claim promotion и сборка paper обязаны повторно валидировать basis непосредственно перед commit. `next_action` v0.1 — рекомендация на snapshot, не автоматический dispatch исследовательского цикла.
 
 ## 6. Протокол и gate-переходы
+
+Инкремент 21 сентября связывает выбранный Search node с runner через [frozen execution batch](decisions/0006-execution-batches.md). Planner резервирует primary/reanalysis для всех seeds; controller сохраняет каждую slot binding, повторно использует исходный completion после сбоя и закрывает selection только по полному набору результатов. Стоимость пока измеряется в `enqueued_attempt`; unknown удерживает резерв. Completed batch ожидает анализа, без автоматического scientific verdict. Локальный marker блокирует новый dispatch batch из DB/CAS-only restore; это не распределённый lease или защита от полного копирования файлов владельцем.
 
 Нужно разделять техническое состояние `queued/running/completed/failed/cancelled` и научный исход `supports/refutes/inconclusive/invalid`. Отрицательный научный результат с корректным выполнением — полноценный результат. Сбой исполнения не является опровержением гипотезы.
 

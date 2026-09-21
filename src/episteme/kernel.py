@@ -99,6 +99,10 @@ def protocol_data(payload: dict[str, Any]) -> set[str]:
 
 def exposure_artifacts(event: dict[str, Any], store: Store | None = None) -> set[str]:
     """Artifact closure of the extra events used to evaluate exposure context."""
+    if event["kind"].startswith("batch_"):
+        from .batch import batch_artifacts
+        require(store is not None, "batch artifact context requires a store")
+        return batch_artifacts(store, event)
     p = event["payload"]
     if event["kind"].startswith("execution_"):
         from .execution import execution_artifacts
@@ -112,7 +116,8 @@ def exposure_artifacts(event: dict[str, Any], store: Store | None = None) -> set
         return {p["implementation"], p["environment"]}
     if event["kind"] == "result":
         return set(p["outputs"].values())
-    if event["kind"] in {"research_question", "explanation_set", "hypothesis"}:
+    if event["kind"] in {"research_question", "explanation_set", "hypothesis",
+                         "search_tree", "experiment_node", "search_selection"}:
         return set()  # Frozen planning declarations contain event refs, not blob refs.
     raise GateError("unsupported exposure evidence kind")
 
@@ -340,7 +345,16 @@ class Kernel:
 
     def start_run(self, protocol: str, *, seed: int, implementation: str,
                   environment: str, command: list[str], replicate_of: str | None = None) -> str:
+        return self._start_run(protocol, seed=seed, implementation=implementation,
+                               environment=environment, command=command, replicate_of=replicate_of,
+                               batch_slot=None)
+
+    def _start_run(self, protocol: str, *, seed: int, implementation: str,
+                   environment: str, command: list[str], replicate_of: str | None,
+                   batch_slot: tuple[str, str] | None) -> str:
         history = self._history()
+        from .batch import validate_start
+        validate_start(self.store, history, protocol, batch_slot)
         plan = self._get(history, protocol, "protocol")
         p = plan["payload"]
         self._planning_evidence(history, plan)
@@ -464,6 +478,10 @@ class Kernel:
             from .execution import execution_context
             context_runs = {event["id"] for event in basis if event["kind"] == "run"}
             basis.extend(execution_context(self.store, history, context_runs))
+        if any(e["kind"] == "batch_plan" for e in history):
+            from .batch import batch_context
+            context_runs = {event["id"] for event in basis if event["kind"] == "run"}
+            basis.extend(batch_context(self.store, history, context_runs))
         return basis, runs
 
     def _basis(self, history: list[dict[str, Any]], claim: str) -> tuple[str, list[dict[str, Any]]]:

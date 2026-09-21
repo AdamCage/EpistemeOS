@@ -1,6 +1,6 @@
 # Карта репозитория EpistemeOS
 
-Дата: 18 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
+Дата: 21 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
 
 ## Фактическое ядро v0.1
 
@@ -33,6 +33,9 @@ EpistemeOS/
 │   ├── protocols.py              immutable statistical declarations и validation
 │   ├── planning.py               версии ResearchQuestion/ExplanationSet, bindings и ancestry
 │   ├── execution.py              atomic job admission, one-shot dispatch, verified reconciliation
+│   ├── batch.py                  frozen primary/reanalysis roster, attempt ownership и settlement
+│   ├── batch_controller.py       последовательный resume по сохранённым slots
+│   ├── execution_authority.py    локальный marker вне backup/CAS, запрет запуска restored batch
 │   ├── runner_backend.py         trusted local Python process supervisor, bounded logs и completion
 │   ├── claims.py                 типизированный immutable ClaimLink
 │   ├── claim_context.py          scope/циклы связей и транзитивный review context
@@ -56,6 +59,8 @@ EpistemeOS/
     ├── test_planning.py          immutable revisions, exact refs, scope, exclusions и head races
     ├── test_planning_workflow.py protocol/review/study/graph binding, CLI и recovery
     ├── test_execution.py         реальные jobs, controller crash, concurrency, Graph/CAS/backup
+    ├── test_batch.py             полный roster, failures/unknown, atomicity, restore guard и CLI
+    ├── test_execution_authority.py atomic marker, concurrency, corruption и restore
     ├── test_runner_backend.py    реальные descendants, timeout, capture cap и duplicate delivery
     ├── test_claims.py            shape и hashes immutable claim links
     ├── test_claim_context.py     scope, direction, cycles и context closure
@@ -71,6 +76,8 @@ EpistemeOS/
 
 | Файл | Реальная ответственность | Граница |
 |---|---|---|
+| `batch.py`, `batch_controller.py` | Полный roster primary/reanalysis для выбранного scientific node, резерв будущих slots, resume без повторного dispatch, полный технический settlement. | Fresh primary policy; стоимость в attempts, без agent reasoning, automatic analysis/review/replanning. |
+| `execution_authority.py` | Локальный token и проверка hash перед изменением execution state batch; DB/CAS restore не получает token. | Не аутентификация и не distributed lease; полное копирование marker владельцем файлов может создать исполняемый clone. |
 | `store.py` | Canonical JSON, CAS, verified chain/receipts, atomic command transaction/replay, additive receipt migration и export. | Нет аутентификации, внешнего checkpoint, общего schema migration или distributed storage. |
 | `recovery.py` | SQLite online backup, полный наблюдаемый CAS, manifest, semantic closure и restore с точной историей/receipts; эксклюзивный новый destination. | Не переносит процессы/внешнюю среду; filesystem доверенный, нет внешней аутентификации или атомарной видимости всего каталога. |
 | `commands.py` | Явный action/role allowlist, strict JSON, аргументы и defaults v1, допуск до handler, historical acknowledgement. | Доверенный local caller; нет внешнего execution или меж-study access boundary. |
@@ -85,7 +92,7 @@ EpistemeOS/
 | `search.py` | `register_tournament`, `pairings`, `ballot`, `ranking`; `register_tree`, `add_node`, `select_next`, `tree_state`, `finish_selection`. Сохраняются policy, ballots, nodes, решения и резервы объявленной стоимости. | Нет LLM judge, worker dispatch/lease или независимого измерения расходов. Priority не продвигает claim и допускает неполное сравнение pool. |
 | `demo.py` | Генерация синтетических CSV и два способа OLS в реальных subprocess, локальные actors; завершение перед review. | Только фиксированные программы, без LLM и независимого scientific review. Runtime record не восстанавливает произвольную среду. |
 | `reporting.py` | Один snapshot для inspect/export; `PaperBuilder.build` проверяет текущую eligibility и записывает immutable Markdown/JSON+paper event; `materialize` повторно проверяет basis и bytes. | Внутренний scaffold, без полноценного literature/figures/Methods validation или venue formatting; свободный claim text не сертифицируется. |
-| `cli.py` | Demo/inspection/gates/export, запись отдельно подготовленного review JSON и сборка paper scaffold. Read-only Store для inspect/gate/export. | Actor ID задаётся доверенным caller; нет общего исполнителя кода, provider commands, services или публикации. |
+| `cli.py` | Demo/inspection/gates/export, запись отдельно подготовленного review JSON и сборка paper scaffold. Read-only Store для inspect/gate/export. | Actor ID задаётся доверенным caller; trusted local execution/batch доступны, provider agents, sandbox services и публикации нет. |
 | `tests/test_kernel.py` | Протокол до run, источники evidence, scope, budgets при конфликте writers, retention failures, stale review, self-review, integrity. | Unit tests не доказывают clean-room, sandbox, научную правильность или публикационное качество. |
 | `tests/test_search.py`, `tests/test_reporting.py`, `tests/test_cli.py` | Поиск и cost reservations, snapshot consistency и paper eligibility, входные review JSON и запускаемые CLI/subprocess сценарии. | Покрытие конкретных failure cases не означает общего доказательства безопасности либо работы независимых научных агентов. |
 | `docs/research/*` | Проверяемые основания решений и заранее предлагаемый evaluation design. | Литературный обзор и локальный code audit не означают независимого запуска внешних систем. |

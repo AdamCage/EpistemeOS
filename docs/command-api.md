@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Дата: 18 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
+Дата: 21 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
 
 ## Использование
 
@@ -34,6 +34,9 @@ with Store(".research/command-example") as store:
 
 | Action | Допустимая роль | Результат |
 |---|---|---|
+| `batch.plan` | planner | Frozen roster primary/reanalysis, назначенные actors, recipe и резерв `enqueued_attempt` |
+| `batch.enqueue_slot` | Назначенный executor / replicator | Atomic run + job + уникальная slot binding |
+| `batch.settle` | Автор batch, planner | Atomic полный batch settlement + search terminal; claim/review не создаются |
 | `execution.enqueue` | executor / replicator | Atomic новый run + frozen job, занятый protocol attempt slot |
 | `execution.dispatch` | Назначенный executor / replicator | Durable намерение однократного запуска; handler не запускает процесс |
 | `execution.finalize` | Назначенный executor / replicator | Atomic проверенные result + execution_finalized |

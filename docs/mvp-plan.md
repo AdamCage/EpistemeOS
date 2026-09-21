@@ -1,6 +1,6 @@
 # План реализации EpistemeOS
 
-План: 7 сентября; статус реализации обновлён 18 сентября 2026. Это план разработки и критерии приёмки, а не отчёт о завершённом автономном исследовании. Основания: [архитектура](architecture.md), [аудит afterlife](research/afterlife-audit.md), обзоры [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md) и [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md), [протокол оценки](research/evaluation-plan.md). [Карта репозитория](repository-map.md) связывает этапы с модулями.
+План: 7 сентября; статус реализации обновлён 21 сентября 2026. Это план разработки и критерии приёмки, а не отчёт о завершённом автономном исследовании. Основания: [архитектура](architecture.md), [аудит afterlife](research/afterlife-audit.md), обзоры [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md) и [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md), [протокол оценки](research/evaluation-plan.md). [Карта репозитория](repository-map.md) связывает этапы с модулями.
 
 ## Результат и границы MVP
 
@@ -84,6 +84,8 @@ M1 в целом ещё открыт: остальные публичные enti
 SQLite остаётся локальным transactional backend: один writer service и несколько readers, короткие `BEGIN IMMEDIATE` транзакции, retry только после перечитывания состояния. Долгий LLM/API вызов никогда не удерживает SQL write lock. WAL хранится на локальном диске; несколько машин не разделяют SQLite-файл через сетевой filesystem. Потребность в нескольких write-services потребует отдельного backend и повторных concurrency-проверок.
 
 ## M2 — runner, provenance, sandbox и бюджет
+
+**Инкремент 21 сентября:** [execution batches](decisions/0006-execution-batches.md) соединяют Search selection с полным roster primary/reanalysis. Реализованы protocol ownership будущих slots, atomic bindings, resume controller, полный settlement в единицах `enqueued_attempt` и блокировка запуска восстановленной копии без локального marker. Synthetic [пример](../examples/search_execution_batch.py) останавливается на `awaiting_analysis`. M2 остаётся открытым: полная изоляция, environment closure, leases, внешний resource ledger и metric recomputation требуют отдельной реализации.
 
 **Инкремент 18 сентября:** реализован [первый local runner](decisions/0005-local-runner.md) с командной очередью, одним dispatch на attempt и восстановлением по durable completion. [Исполняемый пример](../examples/local_execution.py) выполняет primary/reanalysis и останавливается перед scientific review. Этот срез не закрывает M2: worker имеет обычные права локального пользователя, environment фиксируется fingerprint, а единственный резерв — число protocol attempts. Полные требования ниже сохраняются.
 

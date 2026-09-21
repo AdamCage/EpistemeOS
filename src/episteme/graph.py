@@ -39,6 +39,9 @@ class GraphIntegrityError(IntegrityError):
 
 
 class NodeKind(str, Enum):
+    BATCH_PLAN = "batch_plan"
+    BATCH_SLOT = "batch_slot"
+    BATCH_SETTLEMENT = "batch_settlement"
     EXECUTION_JOB = "execution_job"
     EXECUTION_DISPATCH = "execution_dispatch"
     EXECUTION_FINALIZED = "execution_finalized"
@@ -64,6 +67,9 @@ class NodeKind(str, Enum):
 
 
 class Relation(str, Enum):
+    BATCH_REFERENCE = "batch_reference"
+    BATCH_ARTIFACT = "batch_artifact"
+    REVIEW_BATCH = "review_batch"
     EXECUTION_RUN = "execution_run"
     EXECUTION_JOB = "execution_job"
     EXECUTION_DISPATCH = "execution_dispatch"
@@ -311,6 +317,24 @@ class _Projection:
     def project(self) -> None:
         e, p = self.event, self.event["payload"]
         kind = e["kind"]
+        if kind.startswith("batch_"):
+            from .batch import batch_artifacts
+            fields = ({"selection": "search_selection", "node": "experiment_node",
+                       "tree": "search_tree", "protocol": "protocol"} if kind == "batch_plan"
+                      else {"batch": "batch_plan", "run": "run", "job": "execution_job"}
+                      if kind == "batch_slot" else {"batch": "batch_plan"})
+            for field, target_kind in fields.items():
+                self.ref(p[field], target_kind, Relation.BATCH_REFERENCE, field)
+            if kind == "batch_settlement":
+                for index, slot in enumerate(p["slots"]):
+                    for field, target_kind in {"binding": "batch_slot", "run": "run",
+                                               "job": "execution_job", "result": "result"}.items():
+                        if slot[field] is not None:
+                            self.ref(slot[field], target_kind, Relation.BATCH_REFERENCE,
+                                     f"slots[{index}].{field}")
+            for key in sorted(batch_artifacts(self.store, e)):
+                self.blob(key, Relation.BATCH_ARTIFACT, "batch_recipe")
+            return
         if kind.startswith("execution_"):
             from .execution import execution_artifacts
             if kind == "execution_job":
@@ -463,6 +487,10 @@ class _Projection:
                     elif record["kind"].startswith("execution_"):
                         self.ref(record["id"], record["kind"], Relation.REVIEW_EXECUTION, "basis_hash",
                                  derivation="resolved_execution_provenance")
+                    elif record["kind"].startswith("batch_") or record["kind"] in {
+                            "search_selection", "experiment_node", "search_tree"}:
+                        self.ref(record["id"], record["kind"], Relation.REVIEW_BATCH, "basis_hash",
+                                 derivation="resolved_batch_provenance")
             version = p.get("review_schema_version", 1)
             if type(version) is not int or version not in {1, 2} or (context.link_ids and version != 2):
                 self.fail("unsupported review schema or linked context lacks explicit assessments")
@@ -552,6 +580,11 @@ class _Projection:
                 if node["payload"]["tree"] != p["tree"]:
                     self.fail("frontier node belongs to another tree")
         elif kind == "search_terminal":
+            if "batch" in p:
+                self.ref(p["batch"], "batch_plan", Relation.BATCH_REFERENCE, "batch")
+                self.ref(p["settlement"], "batch_settlement", Relation.BATCH_REFERENCE, "settlement")
+                self.refs(p["runs"], "run", Relation.TERMINAL_RUN, "runs")
+                self.refs(p["results"], "result", Relation.EXECUTION_RESULT, "results")
             self.ref(p["tree"], "search_tree", Relation.TERMINAL_TREE, "tree")
             selected = self.ref(p["selection"], "search_selection", Relation.TERMINAL_SELECTION,
                                 "selection")
@@ -573,6 +606,12 @@ class _Projection:
                     self.fail("terminal claim does not cite selected run/protocol")
 
     def build(self) -> ResearchGraph:
+        if any(e["kind"].startswith("batch_") for e in self.history):
+            from .batch import batch_context
+            try:
+                batch_context(self.store, self.history, set())
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid batch history: {exc}")
         if any(e["kind"].startswith("execution_") for e in self.history):
             from .execution import execution_context
             try:
