@@ -4,6 +4,18 @@ Research harness для вычислительных научных исслед
 
 **Статус: начальная реализация, не готовый автономный AI Scientist.** Исследованы `llm-semantic-afterlife`, AI Scientist, Kosmos, Virtual Lab, Robin и AI Co-Scientist; спроектирована архитектура и реализовано проверяемое локальное ядро. Публикационное качество и превосходство над другими системами пока не оценены.
 
+
+Первый агентный task реализован через [Codex CLI adapter](docs/decisions/0007-model-proposals.md): сохранённый вопрос → ответ модели → проверенные по форме hypotheses/ExplanationSet. Failed, invalid и abstained responses сохраняются; после неизвестного исхода автоматического повторного вызова нет. Это trusted local execution, без доказанной независимости или научного approval.
+
+Подготовка одного задания (уже установленный и авторизованный Codex CLI, model указывается явно):
+
+```powershell
+uv run python examples/model_hypotheses.py --root .research/model-proposal --model <model-id>
+uv run episteme agent advance <agent-request-id> --root .research/model-proposal
+```
+
+Первая команда делает только version probe и сохраняет задание; вторая вызывает модель и применяет допустимое предложение. `agent work` сохраняет response без application; `agent status` читает состояние; `agent reconcile` импортирует исходный completion без нового вызова. Пример ограничен одним admission и 120 секундами; это не hard token/денежный budget. Реальные результаты и ограничения — в [validation.md](docs/validation.md).
+
 ## Начать с документов
 
 - [Архитектура и границы гарантий](docs/architecture.md).

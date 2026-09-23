@@ -18,6 +18,7 @@ from .kernel import Actor, Kernel
 from .planning import Planning
 from .execution import Execution
 from .batch import Batch
+from .agents import Agents
 from .reporting import PaperBuilder
 from .search import Search
 from .store import Store, canonical
@@ -93,6 +94,11 @@ class CommandContext:
 # An explicit allowlist prevents payloads from naming arbitrary methods or tools.
 # No handler here starts a process, contacts a provider or materializes exports.
 _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
+    "agent.register_budget": (Agents, Agents.register_budget, frozenset({"planner"})),
+    "agent.request_hypotheses": (Agents, Agents.request_hypotheses, frozenset({"planner"})),
+    "agent.dispatch": (Agents, Agents.dispatch, frozenset({"planner"})),
+    "agent.finalize": (Agents, Agents.finalize, frozenset({"planner"})),
+    "agent.apply_hypotheses": (Agents, Agents.apply_hypotheses, frozenset({"planner"})),
     "batch.plan": (Batch, Batch.plan, frozenset({"planner"})),
     "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),
     "batch.settle": (Batch, Batch.settle, frozenset({"planner"})),
@@ -129,11 +135,11 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
     its command metadata, including when a later run/review uses a legacy action.
     Admission runs inside Store.command, after the historical-replay fast path.
     """
-    if action == "planning.question" and payload["study_id"] != study:
+    if action in {"planning.question", "agent.register_budget"} and payload["study_id"] != study:
         raise ValueError("command study_id differs from the research question")
     events = {event["id"]: event for event in history}
     refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
-                                    "claim", "source", "target", "selection", "tree", "job", "batch")
+                                    "claim", "source", "target", "selection", "tree", "job", "batch", "request", "budget")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -145,7 +151,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
         visited.add(id)
         event = events[id]
         p, kind = event["payload"], event["kind"]
-        assigned = (p.get("study_id") if kind in {"research_question", "explanation_set"}
+        assigned = (p.get("study_id") if kind in {"research_question", "explanation_set", "agent_budget"}
                     else p.get("planning", {}).get("study_id") if kind == "protocol" else None)
         if assigned is not None and assigned != study:
             raise ValueError("command study_id differs from its planning-bound references")
@@ -155,6 +161,8 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "search_selection": ("node", "tree"), "search_terminal": ("selection",),
             "execution_job": ("run",), "execution_dispatch": ("job",), "execution_finalized": ("job",),
             "batch_plan": ("protocol", "selection"), "batch_slot": ("batch",), "batch_settlement": ("batch",),
+            "agent_request": ("question", "budget"), "agent_dispatch": ("request",),
+            "agent_response": ("request",), "agent_application": ("request",),
         }.get(kind, ())
         refs.extend(p[field] for field in fields if isinstance(p.get(field), str))
         if kind == "paper":

@@ -76,3 +76,5 @@ Restore переносит БД, не воспроизводя команды ч
 Работа выполняется доверенным локальным caller на доверенном filesystem. Проверки entries и no-overwrite не являются OS sandbox или защитой от владельца файлов, который одновременно подменяет пути и данные. Manifest и hashes выявляют несогласованность и порчу; они не предоставляют внешнюю аутентификацию или независимый checkpoint истории.
 
 Snapshot сохраняет имеющиеся artifacts, но не восстанавливает окружение исполнения, внешние datasets/services, активные процессы или состояние удалённых API. Он не перезапускает прерванные runs. Полное environment reconstruction, leases/outbox и reconciliation фактического исполнения остаются в M2; общий migration framework остаётся отдельной задачей M1.
+
+Model proposal requests также входят в verified DB/CAS snapshot: frozen context/profile/source и original response bytes сохраняются. Agent workspaces и authority marker не копируются; queued restored request нельзя dispatch без исходного локального authority. Applied/invalid/failed responses читаются исторически, а unknown не получает повторного вызова.

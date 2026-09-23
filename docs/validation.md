@@ -1,8 +1,10 @@
 # Проверка текущего прототипа
 
-Дата: 21 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа, инкрементов M1 и local runner/batch M2, не оценка качества научных открытий.
+Дата: 23 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа, инкрементов M1 и local runner/batch M2, не оценка качества научных открытий.
 
 ## Выполненные проверки
+
+После agent integration и финального исправления concurrent application полный `uv run python -m unittest discover -s tests -v` прошёл **369 тестов: 365 успешно, 4 skipped**, 500.967 секунды. Transcript: `.research/agents-tests-release-20260923.log` (git-ignored). Добавлены 57 tests: proposal contracts, provider profiles, durable agent workflow и provenance. Skips — прежние Windows symlink cases. Published command enum и proposal schema совпадают с runtime; обе schemas проверены Draft 2020-12 validator. Независимый read-only code review нашёл гонку второго controller при уже применённом response; regression test и повторный review подтвердили исправление.
 
 После batch integration полный `uv run python -m unittest discover -s tests -v` прошёл **312 тестов: 308 успешно, 4 skipped**, 165.214 секунды. Transcript: `.research/batch-tests-final-20260921.log` (git-ignored). Все четыре skips относятся к недоступному локально созданию symlinks на Windows. Добавлены 12 batch tests и 11 authority tests: полный multi-seed roster, попытки обойти резерв и assigned actor, atomic rollback/lost response, неизвестный исход без повторного запуска, failed primary с blocked dependency, несовпадение метрик при техническом completed, concurrent admission, stale selection, прямой dispatch восстановленного queued batch, controller resume после terminal result, rollback settlement, запрет review от автора выбора и реальный CLI. Отдельный request_changes в тесте — явно synthetic проверка границы, не scientific approval.
 
@@ -16,7 +18,7 @@
 
 Исправление [`8183e47`](https://github.com/AdamCage/EpistemeOS/commit/8183e47) прошло [CI run 35197219085](https://github.com/AdamCage/EpistemeOS/actions/runs/35197219085): все четыре jobs Windows/Linux и Python 3.11/3.13 успешны.
 
-Planning increment [`1301083`](https://github.com/AdamCage/EpistemeOS/commit/1301083) прошёл [CI run 35232388814](https://github.com/AdamCage/EpistemeOS/actions/runs/35232388814) во всех четырёх конфигурациях. Local runner [`a033073`](https://github.com/AdamCage/EpistemeOS/commit/a033073) также прошёл [CI run 35343118284](https://github.com/AdamCage/EpistemeOS/actions/runs/35343118284): Windows/Linux, Python 3.11/3.13, включая Linux process control. Для batch increment локальный результат указан выше; его CI фиксируется после публикации commit.
+Planning increment [`1301083`](https://github.com/AdamCage/EpistemeOS/commit/1301083) прошёл [CI run 35232388814](https://github.com/AdamCage/EpistemeOS/actions/runs/35232388814) во всех четырёх конфигурациях. Local runner [`a033073`](https://github.com/AdamCage/EpistemeOS/commit/a033073) также прошёл [CI run 35343118284](https://github.com/AdamCage/EpistemeOS/actions/runs/35343118284): Windows/Linux, Python 3.11/3.13, включая Linux process control. Batch increment [`989dfec`](https://github.com/AdamCage/EpistemeOS/commit/989dfec) прошёл [CI run 35619538349](https://github.com/AdamCage/EpistemeOS/actions/runs/35619538349) во всех четырёх конфигурациях; Linux также исполнил symlink authority case.
 
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
 
@@ -76,3 +78,16 @@ Snapshot ID: `66ebe1b365171db89c5b88b2d8d2735aee00f43c397d12a32539e5d2538dea59`.
 Docker CLI обнаружен, но проверка `docker version` не смогла подключиться к Linux engine named pipe; повторная read-only проверка 17 сентября дала тот же результат. Sandbox на этом хосте не проверялся. Новый Windows backend использует Job Object для жизненного цикла процессов, сохраняя обычные права пользователя на файлы/сеть.
 
 Независимый технический [review от 7 сентября](implementation-review.md) сохраняет результаты того запуска. Отмеченное там отсутствие защиты от review автором гипотезы исправлено и проверено отдельным `test_hypothesis_author_cannot_review_when_another_actor_registered_protocol`; исторический отчёт не переписан как будто исправление было проверено раньше.
+
+
+## Реальные model proposals, 23 сентября
+
+Два отдельных bounded задания на `gpt-6-astra` через `codex-cli 0.153.4`, каждое с max_calls=1, wall_seconds=120 и capture limit=1 MiB. Вопрос учебный: различение реальной пользы метода и data leakage в будущем synthetic regression benchmark; исходных наблюдений нет. Модель не проводила научный эксперимент, harness не создавал claims/reviews/papers.
+
+Первое задание `.research/agent-proposal-20260923`, request `agent_request-40afb64265cb46a0`, завершило transport, но получило `invalid`: JSONL содержал два startup error items — unstable feature warning и недоступный Code Mode host. Ответ и usage (6647 input, 911 output tokens) сохранены; hypotheses/application отсутствуют. Ошибка не замаскирована approval и не запущена повторно.
+
+После исправления provider profile 2 создано отдельное задание `.research/agent-proposal-profile2-20260923`, request `agent_request-eeb281e0a5de4c36`, response `agent_response-6c1f5e913f01412c`, application `agent_application-911930b373704528`. Оно прошло механические проверки и сохранило четыре hypotheses/root ExplanationSet. В наблюдаемом JSONL tool items отсутствовали; это не гарантия чистой среды или научной независимости. Usage: 6658 input, 879 output tokens; model validity/novelty не оценивались.
+
+Снимок: 11 events, Graph 20 nodes/31 edges, head `fd3a21008da80b520a9450ba6542ed3cc1cb11446acdcc39f7fe2304b6399123`. CLI graph/export и повторный advance проверены; история осталась той же, нового вызова не было. DB/CAS backup/restore в новый каталог сохранил applied state и точный Graph. Все локальные artifacts, outputs и CLI auth остаются вне Git; в репозитории пример, contracts и тесты.
+
+Новые tests используют synthetic workers/manifest fixtures или mocked CLI, без платных model calls и без manufactured scientific approvals. Покрывают strict proposal validation, versioned profile и environment filter, atomic application/rollback/replay, stale question, assigned actor/study/admission budget, concurrent admission и application между snapshot контроллера, timeout/overflow/missing output, tool-use rejection с сохранением usage, interrupted controller reconciliation, output corruption, graph/review provenance и recovery.

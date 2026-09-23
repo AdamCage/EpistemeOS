@@ -99,6 +99,10 @@ def protocol_data(payload: dict[str, Any]) -> set[str]:
 
 def exposure_artifacts(event: dict[str, Any], store: Store | None = None) -> set[str]:
     """Artifact closure of the extra events used to evaluate exposure context."""
+    if event["kind"].startswith("agent_"):
+        from .agents import agent_artifacts
+        require(store is not None, "agent provenance requires its artifact store")
+        return agent_artifacts(store, event)
     if event["kind"].startswith("batch_"):
         from .batch import batch_artifacts
         require(store is not None, "batch artifact context requires a store")
@@ -474,6 +478,17 @@ class Kernel:
         planning = {event["id"]: event for protocol_event in basis if protocol_event["kind"] == "protocol"
                     for event in self._planning_evidence(history, protocol_event)}
         basis.extend(sorted(planning.values(), key=lambda event: event["seq"]))
+        if any(e["kind"].startswith("agent_") for e in history):
+            from .agents import agent_context
+            # Legacy protocols still carry generated hypotheses. Planning
+            # ancestry also retains excluded candidates and preceding sets.
+            entities = {event["id"] for event in basis
+                        if event["kind"] in {"hypothesis", "explanation_set"}}
+            entities.update(id for event in basis if event["kind"] == "protocol"
+                            for id in event["payload"]["hypotheses"])
+            existing = {event["id"] for event in basis}
+            basis.extend(event for event in agent_context(self.store, history, entities)
+                         if event["id"] not in existing)
         if any(e["kind"] == "execution_job" for e in history):
             from .execution import execution_context
             context_runs = {event["id"] for event in basis if event["kind"] == "run"}

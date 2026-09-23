@@ -113,3 +113,20 @@ Writable opening аддитивно создаёт таблицу квитанц
 Изменение signature, default или типа action требует новой версии command API с сохранением обработки прежних v1 запросов. Добавлять поля в старый нормализатор незаметно для caller нельзя: это изменит fingerprint при replay. Текущая версия реализует только v1.
 
 Транзакция обеспечивает однократный commit событий при повторной доставке. Внешний запуск, API charge и файловое materialization требуют отдельного outbox/lease протокола M2. При rollback могут остаться неиспользуемые CAS blobs; частичные events и receipt не фиксируются. Actor IDs остаются заявлениями доверенного caller, а hashes/triggers не защищают от владельца всей базы.
+
+
+## Model proposal commands v1
+
+Все пять actions требуют planner role; после admission применяется сохранённый assignee. Это caller metadata, не аутентификация.
+
+| Action | Payload |
+|---|---|
+| `agent.register_budget` | `study_id`, `max_calls` (1–100 admission в одном budget). |
+| `agent.request_hypotheses` | `budget`, `question`, `assignee`, `provider` CAS digest; `wall_seconds=120` (1–600), `max_output_bytes=1048576` (1 KiB–4 MiB). |
+| `agent.dispatch` | `request`, `workspace_token` (32 hex); один dispatch, original authority marker, current question. |
+| `agent.finalize` | `request`, `manifest` CAS digest; original completion и captured bytes проверяются. |
+| `agent.apply_hypotheses` | `request`; proposed response, current question, atomic hypotheses/set/application. |
+
+`episteme agent provider --root <root> --model <model>` сохраняет binary/version/profile descriptor без model call; optional `--reasoning-effort` и `--executable`. Для budget/request используется обычный command envelope. Study metadata сверяется через request/question/budget, включая существующие связи. Replay исходного envelope возвращает исторический результат и не запускает провайдера.
+
+CLI `agent status|work|reconcile|advance <request> --root <root>` использует сохранённое назначение. `work` вызывает модель только после нового dispatch; `reconcile` никогда не запускает её; `advance` дополнительно применяет proposed response. Invalid/abstained/failed не создают hypotheses; unknown не разрешает повтор. Status `applied` не является scientific success. Contracts и границы — [ADR 0007](decisions/0007-model-proposals.md).

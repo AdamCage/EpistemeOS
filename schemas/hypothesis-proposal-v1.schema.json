@@ -1,0 +1,201 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "reason",
+    "candidates",
+    "comparison_plan",
+    "limitations"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "abstained"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "pattern": "\\S"
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statement",
+          "prediction",
+          "falsifier",
+          "kind"
+        ],
+        "properties": {
+          "statement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "pattern": "\\S"
+          },
+          "prediction": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "pattern": "\\S"
+          },
+          "falsifier": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "pattern": "\\S"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "null",
+              "mechanism",
+              "confound",
+              "artifact"
+            ]
+          }
+        }
+      },
+      "uniqueItems": true
+    },
+    "comparison_plan": {
+      "type": "string",
+      "maxLength": 12000
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000,
+        "pattern": "\\S"
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "proposed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "comparison_plan": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 12000,
+            "pattern": "\\S"
+          },
+          "candidates": {
+            "minItems": 2,
+            "allOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "statement",
+                    "prediction",
+                    "falsifier",
+                    "kind"
+                  ],
+                  "properties": {
+                    "statement": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "\\S"
+                    },
+                    "prediction": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "\\S"
+                    },
+                    "falsifier": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "\\S"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "statement",
+                    "prediction",
+                    "falsifier",
+                    "kind"
+                  ],
+                  "properties": {
+                    "statement": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "\\S"
+                    },
+                    "prediction": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "\\S"
+                    },
+                    "falsifier": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "\\S"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "mechanism",
+                        "confound",
+                        "artifact"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "candidates": {
+            "maxItems": 0
+          },
+          "comparison_plan": {
+            "const": ""
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Карта репозитория EpistemeOS
 
-Дата: 21 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
+Дата: 23 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
 
 ## Фактическое ядро v0.1
 
@@ -31,6 +31,11 @@ EpistemeOS/
 │   ├── recovery.py               согласованный backup и verified restore в новый каталог
 │   ├── commands.py               versioned allowlist, type/role admission, normalization
 │   ├── protocols.py              immutable statistical declarations и validation
+│   ├── agents.py                 durable model request/response/application и provenance
+│   ├── agent_controller.py       one-shot dispatch/reconcile/advance вне SQL
+│   ├── agent_profiles.py         append-only version registry
+│   ├── agent_proposals.py        frozen v1 prompt, schemas и semantic validator
+│   ├── codex_provider.py         fingerprinted CLI adapter и frozen wrapper
 │   ├── planning.py               версии ResearchQuestion/ExplanationSet, bindings и ancestry
 │   ├── execution.py              atomic job admission, one-shot dispatch, verified reconciliation
 │   ├── batch.py                  frozen primary/reanalysis roster, attempt ownership и settlement
@@ -46,6 +51,7 @@ EpistemeOS/
 │   ├── domains/afterlife.py      bounded historical inspection/import
 │   └── demo.py                   два фиксированных CPU-приложения
 ├── schemas/                      command, statistical design, question/set, claim link v1; linked review v2
+├── examples/model_hypotheses.py  подготовка одного задания; --execute явно вызывает модель
 └── tests/
     ├── test_kernel.py            инварианты ядра и исторические failure cases
     ├── test_cli.py               реальные CLI/subprocess интеграции
@@ -76,6 +82,7 @@ EpistemeOS/
 
 | Файл | Реальная ответственность | Граница |
 |---|---|---|
+| `agents.py`, `agent_controller.py`, `codex_provider.py` | Frozen proposal request, bounded local CLI, response retention и atomic hypotheses/set application. | Caller-declared actors, trusted OS/account, один proposal task; нет authenticated independence или scientific approval. |
 | `batch.py`, `batch_controller.py` | Полный roster primary/reanalysis для выбранного scientific node, резерв будущих slots, resume без повторного dispatch, полный технический settlement. | Fresh primary policy; стоимость в attempts, без agent reasoning, automatic analysis/review/replanning. |
 | `execution_authority.py` | Локальный token и проверка hash перед изменением execution state batch; DB/CAS restore не получает token. | Не аутентификация и не distributed lease; полное копирование marker владельцем файлов может создать исполняемый clone. |
 | `store.py` | Canonical JSON, CAS, verified chain/receipts, atomic command transaction/replay, additive receipt migration и export. | Нет аутентификации, внешнего checkpoint, общего schema migration или distributed storage. |

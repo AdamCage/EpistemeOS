@@ -1,6 +1,6 @@
 # План реализации EpistemeOS
 
-План: 7 сентября; статус реализации обновлён 21 сентября 2026. Это план разработки и критерии приёмки, а не отчёт о завершённом автономном исследовании. Основания: [архитектура](architecture.md), [аудит afterlife](research/afterlife-audit.md), обзоры [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md) и [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md), [протокол оценки](research/evaluation-plan.md). [Карта репозитория](repository-map.md) связывает этапы с модулями.
+План: 7 сентября; статус реализации обновлён 23 сентября 2026. Это план разработки и критерии приёмки, а не отчёт о завершённом автономном исследовании. Основания: [архитектура](architecture.md), [аудит afterlife](research/afterlife-audit.md), обзоры [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md) и [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md), [протокол оценки](research/evaluation-plan.md). [Карта репозитория](repository-map.md) связывает этапы с модулями.
 
 ## Результат и границы MVP
 
@@ -17,7 +17,7 @@
 | Возможность | Текущее состояние | Что ещё требуется |
 |---|---|---|
 | Persistent state | SQLite WAL, append-only events/receipts, SHA-256 blobs, idempotent command admission, study/correlation/causation metadata, аддитивная receipt migration; typed graph, claim relations, зависимый review context и verified backup/restore. | Study access boundaries, остальные публичные entity schemas, общий schema migration и внешний checkpoint. |
-| Конкурирующие объяснения | Hypotheses с prediction/falsifier/scope; версии ResearchQuestion/ExplanationSet, prior hashes, причины исключения кандидатов, frozen protocol binding и planning ancestry. | Генерация разнообразного pool, научная проверка различимости, literature support, resource/domain/data declarations и явные HypothesisVersion lineages. |
+| Конкурирующие объяснения | Hypotheses с prediction/falsifier/scope; версии ResearchQuestion/ExplanationSet, prior hashes, причины исключения кандидатов, frozen protocol binding и planning ancestry; первый Codex proposal task с atomic application и сохранением failures. | Оценка разнообразия и качества pool, научная проверка различимости, literature support, resource/domain/data declarations и явные HypothesisVersion lineages. |
 | Preregistration | Immutable protocol; typed estimand/unit/metrics/sample-size/uncertainty/stopping/multiplicity/splits, mode и exposure snapshot; typed amendments требуют основание. | Сопоставление деклараций с фактическими outputs, расчёт статистики, authenticated data access, сложные sequential designs. |
 | Runs и provenance | Контракты start/finish; общий trusted local Python runner с atomic job, one-shot dispatch, immutable completion/CAS, reconcile после crash controller, Windows Job Object / POSIX group и bounded logs. | Leases/dispatch recovery policy, multi-file source и environment closure, подписанное attestation, sandbox, фактический resource ledger и domain recomputation. |
 | Mechanical gates | Проверка completeness, hashes, seed coverage, finite primary metric, scope и agreement повторного анализа. | Domain recomputation метрики и статистические проверки; schema/units, planned-versus-observed accounting, объяснимые exemptions. |
@@ -102,6 +102,8 @@ Ledger хранит `reserved/spent/released/unknown` отдельно для st
 Внешний checkpoint и подписанное runner attestation связывают bundle с отдельной доверенной границей. Подпись удостоверяет источник записи при принятой модели доверия, не истинность научного вывода.
 
 ## M3 — гипотезы, tournament и experiment tree
+
+**Инкремент 23 сентября:** [model proposals](decisions/0007-model-proposals.md) реализуют первый provider task: Codex CLI response → verified proposal → atomic hypotheses/root ExplanationSet. Сохраняются budget, prompt/schema/context, original outputs, usage и failure history. Runtime admission механический; scientific experiment design, literature retrieval, model tournament judging и качество гипотез ещё не реализованы/не оценены.
 
 Минимальный provider interface возвращает typed proposals и сохраняет model/version, prompts, tool results и usage. Поведение mocked provider остаётся для CI; реальные actor sessions получают минимально необходимую проекцию состояния. Literature retrieval создаёт Source/LiteratureClaim с DOI/URL/version, локатором подтверждения и статусом проверки. Проверенный DOI не означает проверенную интерпретацию или новизну.
 

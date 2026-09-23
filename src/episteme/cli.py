@@ -79,9 +79,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation = batch_ops.add_parser(name)
         operation.add_argument("batch", help="Recorded batch_plan ID")
         operation.add_argument("--root", type=Path, required=True)
+    agents = subcommands.add_parser("agent", help="Explicit bounded Codex proposals; no scientific approval")
+    agent_ops = agents.add_subparsers(dest="operation", required=True)
+    for name in ("provider", "status", "work", "reconcile", "advance"):
+        operation = agent_ops.add_parser(name)
+        if name == "provider":
+            operation.add_argument("--model", required=True)
+            operation.add_argument("--reasoning-effort", default="low")
+            operation.add_argument("--executable", type=Path)
+        else:
+            operation.add_argument("request", help="Recorded agent_request ID")
+        operation.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "batch":
+        if args.command == "agent":
+            from .agents import agent_state
+            from .agent_controller import work_agent, reconcile_agent, advance_agent
+            from .codex_provider import freeze_provider
+            if args.operation != "provider" and not (args.root / "state.sqlite3").is_file():
+                raise ValueError("existing research state is required")
+            with Store(args.root, read_only=args.operation == "status") as store:
+                if args.operation == "provider":
+                    result = dict(provider=freeze_provider(store, model=args.model,
+                        reasoning_effort=args.reasoning_effort, executable=args.executable),
+                        meaning="frozen local CLI descriptor; no model call")
+                else:
+                    action = {"status": agent_state, "work": work_agent,
+                              "reconcile": reconcile_agent, "advance": advance_agent}[args.operation]
+                    result = action(store, args.request)
+            status = 0
+        elif args.command == "batch":
             from .batch import batch_state
             from .batch_controller import advance_batch
             if not (args.root / "state.sqlite3").is_file():

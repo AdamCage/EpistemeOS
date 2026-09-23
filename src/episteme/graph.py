@@ -39,6 +39,11 @@ class GraphIntegrityError(IntegrityError):
 
 
 class NodeKind(str, Enum):
+    AGENT_BUDGET = "agent_budget"
+    AGENT_REQUEST = "agent_request"
+    AGENT_DISPATCH = "agent_dispatch"
+    AGENT_RESPONSE = "agent_response"
+    AGENT_APPLICATION = "agent_application"
     BATCH_PLAN = "batch_plan"
     BATCH_SLOT = "batch_slot"
     BATCH_SETTLEMENT = "batch_settlement"
@@ -67,6 +72,10 @@ class NodeKind(str, Enum):
 
 
 class Relation(str, Enum):
+    AGENT_REFERENCE = "agent_reference"
+    AGENT_ARTIFACT = "agent_artifact"
+    AGENT_GENERATED = "agent_generated"
+    REVIEW_AGENT = "review_agent"
     BATCH_REFERENCE = "batch_reference"
     BATCH_ARTIFACT = "batch_artifact"
     REVIEW_BATCH = "review_batch"
@@ -317,6 +326,34 @@ class _Projection:
     def project(self) -> None:
         e, p = self.event, self.event["payload"]
         kind = e["kind"]
+        if kind.startswith("agent_"):
+            from .agents import agent_artifacts
+            fields = {
+                "agent_budget": {},
+                "agent_request": {"budget": "agent_budget", "question": "research_question"},
+                "agent_dispatch": {"request": "agent_request"},
+                "agent_response": {"request": "agent_request", "dispatch": "agent_dispatch"},
+                "agent_application": {"request": "agent_request", "response": "agent_response",
+                                      "explanation_set": "explanation_set"},
+            }[kind]
+            for field, target_kind in fields.items():
+                referenced = self.ref(p[field], target_kind, Relation.AGENT_REFERENCE, field)
+                if field + "_hash" in p:
+                    self.hash_ref(referenced, p[field + "_hash"], field + "_hash")
+            if kind == "agent_application":
+                for index, row in enumerate(p["mapping"]):
+                    reference = self.ref(row["hypothesis"], "hypothesis", Relation.AGENT_REFERENCE,
+                                         f"mapping[{index}].hypothesis")
+                    self.hash_ref(reference, row["hash"], f"mapping[{index}].hash")
+                    self.ref(p["response"], "agent_response", Relation.AGENT_GENERATED,
+                             f"mapping[{index}].hypothesis", target=row["hypothesis"],
+                             derivation="resolved_agent_application")
+                self.ref(p["response"], "agent_response", Relation.AGENT_GENERATED,
+                         "explanation_set", target=p["explanation_set"],
+                         derivation="resolved_agent_application")
+            for key in sorted(agent_artifacts(self.store, e)):
+                self.blob(key, Relation.AGENT_ARTIFACT, "agent_provenance")
+            return
         if kind.startswith("batch_"):
             from .batch import batch_artifacts
             fields = ({"selection": "search_selection", "node": "experiment_node",
@@ -487,6 +524,9 @@ class _Projection:
                     elif record["kind"].startswith("execution_"):
                         self.ref(record["id"], record["kind"], Relation.REVIEW_EXECUTION, "basis_hash",
                                  derivation="resolved_execution_provenance")
+                    elif record["kind"].startswith("agent_"):
+                        self.ref(record["id"], record["kind"], Relation.REVIEW_AGENT, "basis_hash",
+                                 derivation="resolved_agent_provenance")
                     elif record["kind"].startswith("batch_") or record["kind"] in {
                             "search_selection", "experiment_node", "search_tree"}:
                         self.ref(record["id"], record["kind"], Relation.REVIEW_BATCH, "basis_hash",
@@ -606,6 +646,12 @@ class _Projection:
                     self.fail("terminal claim does not cite selected run/protocol")
 
     def build(self) -> ResearchGraph:
+        if any(e["kind"].startswith("agent_") for e in self.history):
+            from .agents import agent_context
+            try:
+                agent_context(self.store, self.history, set())
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid agent history: {exc}")
         if any(e["kind"].startswith("batch_") for e in self.history):
             from .batch import batch_context
             try:

@@ -66,6 +66,9 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
     keys: set[str] = set()
     for event in history:
         p = event["payload"]
+        if event["kind"].startswith("agent_"):
+            from .agents import agent_artifacts
+            keys.update(agent_artifacts(store, event))
         if event["kind"].startswith("batch_"):
             from .batch import batch_artifacts
             keys.update(batch_artifacts(store, event))
@@ -100,6 +103,8 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
 
 def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]:
     validate_planning(history)
+    from .agents import agent_context
+    agent_context(store, history, set())
     from .execution import execution_context
     execution_context(store, history, set())
     from .batch import batch_summaries
