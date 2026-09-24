@@ -336,21 +336,41 @@ class _Projection:
                 "agent_application": {"request": "agent_request", "response": "agent_response",
                                       "explanation_set": "explanation_set"},
             }[kind]
+            version = p.get("schema_version")
+            if kind == "agent_request" and version == 2:
+                fields.update(explanation_set="explanation_set", tree="search_tree")
+            elif kind == "agent_application" and version == 2:
+                fields = {"request": "agent_request", "response": "agent_response",
+                          "protocol": "protocol", "experiment_node": "experiment_node"}
             for field, target_kind in fields.items():
                 referenced = self.ref(p[field], target_kind, Relation.AGENT_REFERENCE, field)
                 if field + "_hash" in p:
                     self.hash_ref(referenced, p[field + "_hash"], field + "_hash")
             if kind == "agent_application":
-                for index, row in enumerate(p["mapping"]):
-                    reference = self.ref(row["hypothesis"], "hypothesis", Relation.AGENT_REFERENCE,
-                                         f"mapping[{index}].hypothesis")
-                    self.hash_ref(reference, row["hash"], f"mapping[{index}].hash")
+                if version == 2:
+                    request = self.events[p["request"]]
+                    protocol = self.events[p["protocol"]]
+                    node = self.events[p["experiment_node"]]
+                    if (request["payload"].get("schema_version") != 2
+                            or protocol["payload"].get("planning", {}).get("explanation_set")
+                            != request["payload"]["explanation_set"]
+                            or node["payload"].get("tree") != request["payload"]["tree"]
+                            or node["payload"].get("protocol") != p["protocol"]):
+                        self.fail("agent experiment application differs from its frozen request")
+                    for field in ("protocol", "experiment_node"):
+                        self.ref(p["response"], "agent_response", Relation.AGENT_GENERATED,
+                                 field, target=p[field], derivation="resolved_agent_application")
+                else:
+                    for index, row in enumerate(p["mapping"]):
+                        reference = self.ref(row["hypothesis"], "hypothesis", Relation.AGENT_REFERENCE,
+                                             f"mapping[{index}].hypothesis")
+                        self.hash_ref(reference, row["hash"], f"mapping[{index}].hash")
+                        self.ref(p["response"], "agent_response", Relation.AGENT_GENERATED,
+                                 f"mapping[{index}].hypothesis", target=row["hypothesis"],
+                                 derivation="resolved_agent_application")
                     self.ref(p["response"], "agent_response", Relation.AGENT_GENERATED,
-                             f"mapping[{index}].hypothesis", target=row["hypothesis"],
+                             "explanation_set", target=p["explanation_set"],
                              derivation="resolved_agent_application")
-                self.ref(p["response"], "agent_response", Relation.AGENT_GENERATED,
-                         "explanation_set", target=p["explanation_set"],
-                         derivation="resolved_agent_application")
             for key in sorted(agent_artifacts(self.store, e)):
                 self.blob(key, Relation.AGENT_ARTIFACT, "agent_provenance")
             return

@@ -483,7 +483,7 @@ class Kernel:
             # Legacy protocols still carry generated hypotheses. Planning
             # ancestry also retains excluded candidates and preceding sets.
             entities = {event["id"] for event in basis
-                        if event["kind"] in {"hypothesis", "explanation_set"}}
+                        if event["kind"] in {"hypothesis", "explanation_set", "protocol"}}
             entities.update(id for event in basis if event["kind"] == "protocol"
                             for id in event["payload"]["hypotheses"])
             existing = {event["id"] for event in basis}

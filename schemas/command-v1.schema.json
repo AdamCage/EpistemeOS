@@ -28,8 +28,8 @@
       "properties": {
         "version": {"const": 1},
         "action": {"enum": [
-          "agent.register_budget", "agent.request_hypotheses", "agent.dispatch",
-          "agent.finalize", "agent.apply_hypotheses",
+          "agent.register_budget", "agent.request_hypotheses", "agent.request_experiment",
+          "agent.dispatch", "agent.finalize", "agent.apply_hypotheses", "agent.apply_experiment",
           "execution.enqueue", "execution.dispatch", "execution.finalize",
           "batch.plan", "batch.enqueue_slot", "batch.settle",
           "planning.question", "planning.explanation_set", "kernel.preregister_for_set",

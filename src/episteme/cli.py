@@ -81,28 +81,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation.add_argument("--root", type=Path, required=True)
     agents = subcommands.add_parser("agent", help="Explicit bounded Codex proposals; no scientific approval")
     agent_ops = agents.add_subparsers(dest="operation", required=True)
-    for name in ("provider", "status", "work", "reconcile", "advance"):
+    for name in ("provider", "recipe", "status", "work", "reconcile", "advance"):
         operation = agent_ops.add_parser(name)
         if name == "provider":
             operation.add_argument("--model", required=True)
             operation.add_argument("--reasoning-effort", default="low")
             operation.add_argument("--executable", type=Path)
+        elif name == "recipe":
+            operation.add_argument("--input", type=Path, required=True,
+                                   help="Host-owned synthetic world, seeds and environment JSON")
         else:
             operation.add_argument("request", help="Recorded agent_request ID")
         operation.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "agent":
-            from .agents import agent_state
+            from .agents import agent_state, freeze_recipe_binding
             from .agent_controller import work_agent, reconcile_agent, advance_agent
             from .codex_provider import freeze_provider
-            if args.operation != "provider" and not (args.root / "state.sqlite3").is_file():
+            if args.operation not in {"provider", "recipe"} and not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
             with Store(args.root, read_only=args.operation == "status") as store:
                 if args.operation == "provider":
                     result = dict(provider=freeze_provider(store, model=args.model,
                         reasoning_effort=args.reasoning_effort, executable=args.executable),
                         meaning="frozen local CLI descriptor; no model call")
+                elif args.operation == "recipe":
+                    descriptor = parse_command(args.input.read_text(encoding="utf-8"))
+                    if type(descriptor) is not dict or set(descriptor) != {
+                            "world", "seeds", "environment", "replication_tolerance"}:
+                        raise ValueError("recipe input requires world, seeds, environment, replication_tolerance")
+                    result = dict(recipe_binding=freeze_recipe_binding(store, **descriptor),
+                                  meaning="frozen host recipe; no model call or experiment")
                 else:
                     action = {"status": agent_state, "work": work_agent,
                               "reconcile": reconcile_agent, "advance": advance_agent}[args.operation]

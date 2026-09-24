@@ -1,8 +1,14 @@
 # Проверка текущего прототипа
 
-Дата: 23 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа, инкрементов M1 и local runner/batch M2, не оценка качества научных открытий.
+Дата: 24 сентября 2026. Среда: Windows, Python 3.11.15, локальный virtualenv через uv. Это инженерная проверка первого этапа, инкрементов M1, local runner/batch M2 и proposal tasks M3, не оценка качества научных открытий.
 
 ## Выполненные проверки
+
+После experiment-proposal integration полный `uv run python -m unittest discover -s tests -v` прошёл **406 тестов: 402 успешно, 4 skipped**, 184.912 секунды. Transcript: `.research/experiment-v2-full-tests-20260924.log` (git-ignored). Новые целевые проверки охватывают synthetic causal recipe, строгую schema и порядок hypotheses, оригинальный ответ модели в двух каналах, atomic protocol/node/application, stale evidence и tree frontier, чужое study, environment, rollback, CAS/Graph closure, backup/restore и CLI. Четыре skips — прежние Windows symlink cases; они не превращены в pass.
+
+Отдельный реальный вызов `gpt-6-sol` через Codex CLI выполнен в `.research/experiment-proposal-live-20260924` с одним admission, wall limit 120 секунд и capture limit 1 MiB. Request `agent_request-913f264c69bd42fc` завершился `applied`; output предложил exploratory randomized `synthetic_causal_v1` с 512 synthetic units и `difference_in_means`. Сохранены `protocol-d0c40c2539374de3` и `experiment_node-7577cddaf0504742`. Usage: 8232 input и 340 output tokens. Локальный snapshot содержит 12 events, Graph 28 nodes/42 edges, head `b6c243757f4e3c2fa1353b1caaf501ba97ffbc44857e141f039dab52dd2098ac`. CLI inspect/status/graph и DB/CAS backup/restore сверены: events, receipts, agent state и полный Graph совпали. Нет runs, claims, reviews или paper; `scientific_validity=not_assessed`. Код модели не исполнял эксперимент и не доказал различающую силу предложения.
+
+Подготовительный проход нового [примера](../examples/model_experiment.py) без `--execute` сохранил request без вызова модели. Параметры мира не входят в prompt, но находятся в локальном CAS; provider имеет обычные файловые/сетевые права пользователя. Эти результаты локальные; CI текущего коммита будет указан только после фактического завершения.
 
 После agent integration и финального исправления concurrent application полный `uv run python -m unittest discover -s tests -v` прошёл **369 тестов: 365 успешно, 4 skipped**, 500.967 секунды. Transcript: `.research/agents-tests-release-20260923.log` (git-ignored). Добавлены 57 tests: proposal contracts, provider profiles, durable agent workflow и provenance. Skips — прежние Windows symlink cases. Published command enum и proposal schema совпадают с runtime; обе schemas проверены Draft 2020-12 validator. Независимый read-only code review нашёл гонку второго controller при уже применённом response; regression test и повторный review подтвердили исправление.
 
@@ -22,7 +28,7 @@ Planning increment [`1301083`](https://github.com/AdamCage/EpistemeOS/commit/130
 
 `uv run python -m compileall -q src`, `uv lock --check`, `uv sync` — выполнены успешно. У runtime нет сторонних зависимостей; uv.lock не фиксирует весь Python/OS или build toolchain.
 
-Шесть публичных JSON schemas и содержащиеся в них examples проверены `jsonschema.Draft202012Validator` в отдельном установленном окружении. `jsonschema` не добавлен в runtime. Schema validation проверяет форму; исторические ссылки, bases и условия переходов проверяются Kernel и workflow tests.
+Прежние шесть публичных JSON schemas и содержащиеся в них examples проверены `jsonschema.Draft202012Validator` в отдельном установленном окружении. Новая experiment-proposal schema проверена как Draft 2020-12 целевыми тестами и на точное совпадение с runtime. `jsonschema` не добавлен в runtime. Schema validation проверяет форму; исторические ссылки, bases и условия переходов проверяются Kernel и workflow tests.
 
 | Проверяемая область | Сценарии |
 |---|---|
@@ -73,7 +79,7 @@ Snapshot ID: `66ebe1b365171db89c5b88b2d8d2735aee00f43c397d12a32539e5d2538dea59`.
 
 ## Незавершённое
 
-Общая цель ещё не достигнута: реальных provider agents, аутентифицированных назначений и контекстной/OS изоляции, полного runner с environment reconstruction/resource ledger/leases, автоматического review-driven replanning и полного manuscript pipeline пока нет. Первый trusted local runner восстанавливает результат по completion без повторного исполнения; это часть M2. M1–M6 остаются в [плане](mvp-plan.md); прототип закрывает только указанные сценарии.
+Общая цель ещё не достигнута: реальные proposal tasks существуют, но независимых Executor/Replication/Scientific Reviewer provider agents, аутентифицированных назначений и контекстной/OS изоляции, полного runner с environment reconstruction/resource ledger/leases, автоматического review-driven replanning и полного manuscript pipeline пока нет. Первый trusted local runner восстанавливает результат по completion без повторного исполнения; это часть M2. M1–M6 остаются в [плане](mvp-plan.md); прототип закрывает только указанные сценарии.
 
 Docker CLI обнаружен, но проверка `docker version` не смогла подключиться к Linux engine named pipe; повторная read-only проверка 17 сентября дала тот же результат. Sandbox на этом хосте не проверялся. Новый Windows backend использует Job Object для жизненного цикла процессов, сохраняя обычные права пользователя на файлы/сеть.
 

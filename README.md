@@ -5,7 +5,7 @@ Research harness для вычислительных научных исслед
 **Статус: начальная реализация, не готовый автономный AI Scientist.** Исследованы `llm-semantic-afterlife`, AI Scientist, Kosmos, Virtual Lab, Robin и AI Co-Scientist; спроектирована архитектура и реализовано проверяемое локальное ядро. Публикационное качество и превосходство над другими системами пока не оценены.
 
 
-Первый агентный task реализован через [Codex CLI adapter](docs/decisions/0007-model-proposals.md): сохранённый вопрос → ответ модели → проверенные по форме hypotheses/ExplanationSet. Failed, invalid и abstained responses сохраняются; после неизвестного исхода автоматического повторного вызова нет. Это trusted local execution, без доказанной независимости или научного approval.
+Первый агентный task реализован через [Codex CLI adapter](docs/decisions/0007-model-proposals.md): сохранённый вопрос → ответ модели → проверенные по форме hypotheses/ExplanationSet. Второй [task предложения эксперимента](docs/decisions/0008-experiment-proposals.md) принимает frozen ExplanationSet/tree и создаёт exploratory protocol плюс новый tree node из допустимого ответа. Failed, invalid и abstained responses сохраняются; после неизвестного исхода автоматического повторного вызова нет. Это trusted local execution, без файлового/сетевого sandbox, доказанной независимости или научного approval.
 
 Подготовка одного задания (уже установленный и авторизованный Codex CLI, model указывается явно):
 
@@ -15,6 +15,24 @@ uv run episteme agent advance <agent-request-id> --root .research/model-proposal
 ```
 
 Первая команда делает только version probe и сохраняет задание; вторая вызывает модель и применяет допустимое предложение. `agent work` сохраняет response без application; `agent status` читает состояние; `agent reconcile` импортирует исходный completion без нового вызова. Пример ограничен одним admission и 120 секундами; это не hard token/денежный budget. Реальные результаты и ограничения — в [validation.md](docs/validation.md).
+
+Для второго task после создания вопроса, ExplanationSet и Search tree с `cost_unit="enqueued_attempt"` host замораживает synthetic recipe. `recipe.json` содержит ровно `world`, `seeds`, `environment` и `replication_tolerance`; environment digest получают через `execution environment`:
+
+```json
+{"world":{"treatment_effect":1.0,"confounding_strength":0.5,"noise_std":1.0},"seeds":[7,11],"environment":"<environment-digest>","replication_tolerance":0.1}
+```
+
+Затем versioned command `agent.request_experiment` связывает budget, ExplanationSet, tree, recipe binding, assignee и provider; `agent advance` применяет допустимый ответ через `agent.apply_experiment`.
+
+```powershell
+uv run episteme execution environment --root .research/study
+uv run episteme agent recipe --input recipe.json --root .research/study
+uv run episteme agent provider --model <model-id> --root .research/study
+uv run episteme command --input request-experiment.json --root .research/study
+uv run episteme agent advance <agent-request-id> --root .research/study
+```
+
+Первые две команды только сохраняют host-owned descriptors, без model call или научных событий. В `recipe.json` `environment` — digest из первой команды; в `request-experiment.json` используется [command envelope](docs/command-api.md) и IDs, возвращённые предыдущими шагами. [Публичная schema ответа](schemas/experiment-proposal-v1.schema.json) дополняется проверкой полного порядка frozen hypotheses. Значения `world` не входят в prompt модели, но сохраняются в локальном CAS; это не секретный sandbox. Применение не выбирает узел, не исполняет его и не создаёт evidence, review или paper. Новый task проверен synthetic transport/CLI fixtures и одним реальным model call; детали и ограничения — в [validation.md](docs/validation.md).
 
 ## Начать с документов
 
@@ -30,6 +48,7 @@ uv run episteme agent advance <agent-request-id> --root .research/model-proposal
 - [Версии исследовательского вопроса и explanation sets](docs/decisions/0004-planning-lineage.md).
 - [Локальный runner, однократный dispatch и восстановление результата](docs/decisions/0005-local-runner.md).
 - [Выбранный эксперимент, полный набор запусков и восстановление controller](docs/decisions/0006-execution-batches.md).
+- [Модельное предложение эксперимента и host-owned synthetic recipe](docs/decisions/0008-experiment-proposals.md).
 
 ## Локальный запуск
 
@@ -124,6 +143,7 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 - Immutable `supports/contradicts/limits/supersedes` links, транзитивный evidence context, review v2 и сохранение прежних claims/замечаний.
 - Snapshot-consistent export, актуальность evidence для review, veto отрицательного review и блокировка premature paper.
 - Persistent tournament/tree, воспроизводимый replay решений, проверка актуальности frontier и общий лимит технических retries.
+- Два versioned model proposal tasks: hypotheses/ExplanationSet и exploratory protocol/tree node, с original response, receipts и provenance.
 
 ## Граф и исторический импорт
 
@@ -138,6 +158,6 @@ uv run episteme afterlife import C:\Projects\llm-semantic-afterlife --root .rese
 
 Afterlife importer сохраняет immutable исторический снимок, статусы и ограничения проверки. Повторный импорт того же снимка идемпотентен. По умолчанию копируются metadata, а большие outputs только проверяются по hashes в пределах лимита; непроверенные ссылки остаются явными. Импорт не создаёт preregistered protocols, reviews или accepted claims и не меняет исходный checkout. Это начало domain adapter; перенос исполнения/анализа afterlife остаётся в плане.
 
-Actor IDs пока назначает доверенный вызывающий процесс. Разные ID и source hashes не доказывают независимость рассуждения или clean-room реализацию. SQLite/hash chain не защищает от владельца файлов. Generic kernel проверяет наличие и согласованность метрик и статистических деклараций; соответствие фактических данных, вычисление uncertainty и научную корректность метода должен проверять domain adapter и независимая реализация. Полноценные агенты, sandbox и durable execution/replanning перечислены в MVP-плане.
+Actor IDs пока назначает доверенный вызывающий процесс. Разные ID и source hashes не доказывают независимость рассуждения или clean-room реализацию. SQLite/hash chain не защищает от владельца файлов. Generic kernel проверяет наличие и согласованность метрик и статистических деклараций; соответствие фактических данных, вычисление uncertainty и научную корректность метода должен проверять domain adapter и независимая реализация. Независимые Executor, Replication и Scientific Reviewer агенты, sandbox и review-driven replanning перечислены в MVP-плане.
 
 Сохранённый исходный [objective.md](objective.md) остаётся контекстом проекта. Прямое сравнительное утверждение «лучше существующих AI Scientist систем» будет допустимо только после контролируемой оценки.

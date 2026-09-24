@@ -96,9 +96,11 @@ class CommandContext:
 _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "agent.register_budget": (Agents, Agents.register_budget, frozenset({"planner"})),
     "agent.request_hypotheses": (Agents, Agents.request_hypotheses, frozenset({"planner"})),
+    "agent.request_experiment": (Agents, Agents.request_experiment, frozenset({"planner"})),
     "agent.dispatch": (Agents, Agents.dispatch, frozenset({"planner"})),
     "agent.finalize": (Agents, Agents.finalize, frozenset({"planner"})),
     "agent.apply_hypotheses": (Agents, Agents.apply_hypotheses, frozenset({"planner"})),
+    "agent.apply_experiment": (Agents, Agents.apply_experiment, frozenset({"planner"})),
     "batch.plan": (Batch, Batch.plan, frozenset({"planner"})),
     "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),
     "batch.settle": (Batch, Batch.settle, frozenset({"planner"})),
@@ -139,7 +141,8 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
         raise ValueError("command study_id differs from the research question")
     events = {event["id"]: event for event in history}
     refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
-                                    "claim", "source", "target", "selection", "tree", "job", "batch", "request", "budget")
+                                    "claim", "source", "target", "selection", "tree", "experiment_node",
+                                    "job", "batch", "request", "budget")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -161,8 +164,11 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "search_selection": ("node", "tree"), "search_terminal": ("selection",),
             "execution_job": ("run",), "execution_dispatch": ("job",), "execution_finalized": ("job",),
             "batch_plan": ("protocol", "selection"), "batch_slot": ("batch",), "batch_settlement": ("batch",),
-            "agent_request": ("question", "budget"), "agent_dispatch": ("request",),
-            "agent_response": ("request",), "agent_application": ("request",),
+            "agent_request": (("question", "budget", "explanation_set", "tree")
+                              if p.get("schema_version") == 2 else ("question", "budget")),
+            "agent_dispatch": ("request",), "agent_response": ("request",),
+            "agent_application": (("request", "protocol", "experiment_node")
+                                  if p.get("schema_version") == 2 else ("request",)),
         }.get(kind, ())
         refs.extend(p[field] for field in fields if isinstance(p.get(field), str))
         if kind == "paper":

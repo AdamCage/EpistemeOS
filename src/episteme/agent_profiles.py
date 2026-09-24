@@ -9,10 +9,16 @@ from copy import deepcopy
 from types import MappingProxyType
 
 from . import agent_proposals as v1
+from . import experiment_proposals as experiment_v1
 
 DEFAULT_PROFILE = "hypothesis-proposal-v1"
-_PROFILES = MappingProxyType({"hypothesis-proposal-v1": (
-    v1.SYSTEM_PROMPT, deepcopy(v1.STRUCTURED_OUTPUT_SCHEMA), v1.validate_proposal)})
+_PROFILES = MappingProxyType({
+    "hypothesis-proposal-v1": (
+        v1.SYSTEM_PROMPT, deepcopy(v1.STRUCTURED_OUTPUT_SCHEMA), v1.validate_proposal),
+    "experiment-proposal-v1": (
+        experiment_v1.SYSTEM_PROMPT, deepcopy(experiment_v1.STRUCTURED_OUTPUT_SCHEMA),
+        experiment_v1.validate_proposal),
+})
 
 
 def profile(version: str):

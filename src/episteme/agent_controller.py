@@ -121,7 +121,9 @@ def advance_agent(store: Store, request: str) -> dict[str, Any]:
     if state["application"] is not None:
         return agent_state(store, request)
     try:
-        _command(store, state, revision, "agent.apply_hypotheses", dict(request=request))
+        action = ("agent.apply_experiment" if state["request"]["payload"]["schema_version"] == 2
+                  else "agent.apply_hypotheses")
+        _command(store, state, revision, action, dict(request=request))
     except ConflictError:
         pass
     return agent_state(store, request)
