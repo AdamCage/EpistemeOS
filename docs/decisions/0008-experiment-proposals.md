@@ -1,6 +1,6 @@
 # ADR 0008: предложение эксперимента из замороженного набора объяснений
 
-Дата: 24 сентября 2026. Статус: реализованный локальный срез M3; целевые проверки, полный набор 406 тестов и один реальный model call прошли, CI для этого коммита ещё ожидается. Полный автономный цикл остаётся [в плане](../mvp-plan.md).
+Дата: 24 сентября 2026. Статус: реализованный локальный срез M3; целевые проверки, полный набор 406 тестов, один реальный model call и [CI кода реализации](https://github.com/AdamCage/EpistemeOS/actions/runs/36003409069) прошли. Полный автономный цикл остаётся [в плане](../mvp-plan.md).
 
 ## Решение
 
@@ -28,7 +28,7 @@ Application сохраняет версию compilation manifest и ссылки
 
 Публичная форма ответа — [JSON schema v1](../../schemas/experiment-proposal-v1.schema.json); runtime validator дополнительно сверяет порядок frozen hypotheses и статусные правила. CLI `episteme agent recipe --input recipe.json --root <study-root>` сохраняет host-owned binding в CAS. Файл содержит ровно `world`, `seeds`, `environment` и `replication_tolerance`; команда не создаёт исследовательского события и не вызывает модель. `agent.request_experiment` принимает IDs бюджета, ExplanationSet, дерева и binding плюс assignee/provider. `episteme agent advance <request-id>` использует общий controller: сохраняет dispatch/response и применяет `agent.apply_experiment` только для допустимого ответа. Вызов через `episteme command` и повторная доставка сохраняют versioned receipt semantics.
 
-Локальные целевые тесты проверили strict proposal validation, компиляцию fixture, CLI recipe, atomic application, Graph/CAS closure и восстановление/replay. Они используют synthetic transport. Отдельный реальный вызов `gpt-6-sol` применил одно допустимое предложение; [проверка](../validation.md) фиксирует точные IDs, usage, экспорт и восстановление. Научная оценка выбранного теста не проводилась; CI должен быть записан отдельно по фактическому результату.
+Локальные целевые тесты проверили strict proposal validation, компиляцию fixture, CLI recipe, atomic application, Graph/CAS closure и восстановление/replay. Они используют synthetic transport. Отдельный реальный вызов `gpt-6-sol` применил одно допустимое предложение; [проверка](../validation.md) фиксирует точные IDs, usage, экспорт и восстановление. Научная оценка выбранного теста не проводилась; четыре [CI jobs](https://github.com/AdamCage/EpistemeOS/actions/runs/36003409069) прошли.
 
 ## Доменная граница и ограничения
 
