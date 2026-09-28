@@ -1,6 +1,6 @@
 # EpistemeOS: архитектура исследовательского harness
 
-Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 24 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
+Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 28 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
 
 ## 1. Решение
 
@@ -84,9 +84,13 @@ Authoritative scientific state — append-only события. Ключевые 
 
 Инкремент 21 сентября связывает выбранный Search node с runner через [frozen execution batch](decisions/0006-execution-batches.md). Planner резервирует primary/reanalysis для всех seeds; controller сохраняет каждую slot binding, повторно использует исходный completion после сбоя и закрывает selection только по полному набору результатов. Стоимость пока измеряется в `enqueued_attempt`; unknown удерживает резерв. Completed batch ожидает анализа, без автоматического scientific verdict. Локальный marker блокирует новый dispatch batch из DB/CAS-only restore; это не распределённый lease или защита от полного копирования файлов владельцем.
 
-[ADR 0008](decisions/0008-experiment-proposals.md) реализует отдельный переход от frozen ExplanationSet и Search tree к модельному предложению теста. Ответ модели проходит versioned validation; host-owned synthetic adapter превращает допустимые параметры в exploratory preregistered protocol и новый tree node одной транзакцией. Действие дерева и предсказания модели не являются результатами или научным одобрением. Выбор узла, резерв attempts и запуск остаются следующими отдельными шагами.
+[ADR 0008](decisions/0008-experiment-proposals.md) реализует отдельный переход от frozen ExplanationSet и Search tree к модельному предложению теста. Ответ модели проходит versioned validation; host-owned synthetic adapter превращает допустимые параметры в exploratory preregistered protocol и новый tree node одной транзакцией. Действие дерева и предсказания модели не являются результатами или научным одобрением. [ADR 0009](decisions/0009-proposal-review-replanning.md) добавляет `proposal.prepare_next`: выбор очередного узла, если его источник — применённое proposal schema v2, и полный frozen batch фиксируются одной командой. Следующий отдельный шаг — запуск batch controller; само планирование не создаёт evidence.
+
+Отрицательный review теперь может сохранять typed `review_obligation` вместе с исходным review. Для `discriminating_experiment` planner может связать одно открытое obligation с дочерним protocol/node через `followup.apply`; текущий basis, completed parent, study/scope и бюджет перепроверяются при записи. Это сохраняемый **план**, а не закрытие замечания: `next_action` остаётся `replan`, paper gate блокирует открытые obligations проверяемого claim и связанного контекста, новый узел нужно выбрать, исполнить и проверить отдельно. Роли reviewer/planner остаются caller-declared, без доказанной независимости.
 
 Нужно разделять техническое состояние `queued/running/completed/failed/cancelled` и научный исход `supports/refutes/inconclusive/invalid`. Отрицательный научный результат с корректным выполнением — полноценный результат. Сбой исполнения не является опровержением гипотезы.
+
+Открытое obligation также блокирует черновик claim на протоколе дочернего follow-up даже без явной claim-связи.
 
 | Переход | Механическое условие | Научная проверка |
 |---|---|---|
@@ -149,7 +153,7 @@ TMLR и ICLR получают разные review profiles. TMLR акценти�
 
 Реализовано: immutable event history, content-addressed artifacts, frozen protocols, competing-hypothesis references, parent protocol links, run/result/claim references, run-count budget, seed coverage, reanalysis agreement, role checks, scoped claims, актуальность review basis, veto незакрытого отрицательного review и вычисление next action. `Search` сохраняет tournament ballots/ranking, bounded best-first frontier, выбор/резерв и terminal records; выбор повторно проверяет актуальность протокола, retries считаются по всей технической lineage. `PaperBuilder` создаёт внутренний evidence-linked Markdown/JSON scaffold из claims с актуальным approval и перепроверяет basis перед сохранением.
 
-Не реализовано: независимые agents для execution/replication/scientific review, authenticated assignments, общий schema migration framework, leases/outbox, sandbox, полное environment reconstruction, generic metric recomputation, сопоставление statistical design с фактическими данными, литературный retrieval, полный manuscript/venue pipeline и автоматическое исполнение replanning. Они имеют отдельные milestones в [MVP-плане](mvp-plan.md). Начальный CLI demo подтверждает работу контрактов на синтетическом случае, не научную эффективность framework.
+Не реализовано: независимые agents для execution/replication/scientific review, authenticated assignments, общий schema migration framework, leases/outbox, sandbox, полное environment reconstruction, generic metric recomputation, сопоставление statistical design с фактическими данными, литературный retrieval, полный manuscript/venue pipeline и автоматическое исполнение replanning после review. Typed obligations и сохранённый дочерний follow-up не доказывают scientific resolution. Они имеют отдельные milestones в [MVP-плане](mvp-plan.md). Начальный CLI demo подтверждает работу контрактов на синтетическом случае, не научную эффективность framework.
 
 `episteme demo --with-search` исполняет выбранный из двух зафиксированных вариантов, сохраняет альтернативу и бюджетную остановку. Баллы и ballots в нём заданы fixture-кодом. Реальные агенты не оценивают гипотезы, а scientific review остаётся открытым; это интеграционная проверка search → execution → evidence, не доказательство качества научного выбора.
 

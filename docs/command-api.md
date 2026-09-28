@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Дата: 21 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
+Статус обновлён 28 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/Replanning/Followup/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
 
 ## Использование
 
@@ -35,6 +35,7 @@ with Store(".research/command-example") as store:
 | Action | Допустимая роль | Результат |
 |---|---|---|
 | `batch.plan` | planner | Frozen roster primary/reanalysis, назначенные actors, recipe и резерв `enqueued_attempt` |
+| `proposal.prepare_next` | planner | Выбор winning applied experiment proposal и полный frozen batch одной receipt; без worker dispatch |
 | `batch.enqueue_slot` | Назначенный executor / replicator | Atomic run + job + уникальная slot binding |
 | `batch.settle` | Автор batch, planner | Atomic полный batch settlement + search terminal; claim/review не создаются |
 | `execution.enqueue` | executor / replicator | Atomic новый run + frozen job, занятый protocol attempt slot |
@@ -49,6 +50,8 @@ with Store(".research/command-example") as store:
 | `kernel.review` | reviewer | Review ID на immutable basis |
 | `kernel.link_claims` | planner, analyst | Immutable proposal связи двух claims на ожидаемых bases |
 | `kernel.review_with_links` | reviewer | Review v2 с явной оценкой каждой связи в evidence context |
+| `replanning.record_review` | reviewer | Negative review и typed открытые `review_obligation` в одной receipt |
+| `followup.apply` | planner | Frozen дочерний protocol/node и binding к одному obligation; не закрывает его |
 | `kernel.expose_data` | planner, executor, replicator, analyst, reviewer | ID заявленного просмотра bytes |
 | `search.register_tournament`, `search.register_tree`, `search.add_node`, `search.finish_selection` | planner | Event ID |
 | `search.ballot` | judge, reviewer | Ballot ID; приоритет, не истинность |
@@ -117,16 +120,30 @@ Writable opening аддитивно создаёт таблицу квитанц
 
 ## Model proposal commands v1
 
-Все пять actions требуют planner role; после admission применяется сохранённый assignee. Это caller metadata, не аутентификация.
+Все actions требуют planner role; после admission применяется сохранённый assignee. Это caller metadata, не аутентификация.
 
 | Action | Payload |
 |---|---|
 | `agent.register_budget` | `study_id`, `max_calls` (1–100 admission в одном budget). |
 | `agent.request_hypotheses` | `budget`, `question`, `assignee`, `provider` CAS digest; `wall_seconds=120` (1–600), `max_output_bytes=1048576` (1 KiB–4 MiB). |
+| `agent.request_experiment` | `budget`, `explanation_set`, `tree`, `recipe_binding`, `assignee`, `provider` CAS digest; те же optional лимиты. |
 | `agent.dispatch` | `request`, `workspace_token` (32 hex); один dispatch, original authority marker, current question. |
 | `agent.finalize` | `request`, `manifest` CAS digest; original completion и captured bytes проверяются. |
 | `agent.apply_hypotheses` | `request`; proposed response, current question, atomic hypotheses/set/application. |
+| `agent.apply_experiment` | `request`; proposed response, current ExplanationSet/tree/recipe, atomic protocol/node/application. |
 
 `episteme agent provider --root <root> --model <model>` сохраняет binary/version/profile descriptor без model call; optional `--reasoning-effort` и `--executable`. Для budget/request используется обычный command envelope. Study metadata сверяется через request/question/budget, включая существующие связи. Replay исходного envelope возвращает исторический результат и не запускает провайдера.
 
 CLI `agent status|work|reconcile|advance <request> --root <root>` использует сохранённое назначение. `work` вызывает модель только после нового dispatch; `reconcile` никогда не запускает её; `advance` дополнительно применяет proposed response. Invalid/abstained/failed не создают hypotheses; unknown не разрешает повтор. Status `applied` не является scientific success. Contracts и границы — [ADR 0007](decisions/0007-model-proposals.md).
+
+## Proposal selection и review-driven follow-up
+
+`proposal.prepare_next` принимает `tree`, `executor`, `replicator`; optional `wall_seconds=120`, `max_output_bytes=1048576`, `required_capabilities=null`. Текущий best-first winner должен быть узлом ровно одного применённого experiment proposal schema v2. Команда атомарно фиксирует `[search_selection, batch_plan]`, используя замороженные reanalysis source/environment/outputs из исходного application. Если дерево даёт wait/stop или выигрывает другой узел, запись откатывается. Возвращаемый batch ID — подготовка полного roster, а не разрешение считать эксперимент выполненным. Исполнение отдельно начинает `episteme batch advance <batch-id> --root <root>`.
+
+`replanning.record_review` принимает `claim`, отрицательный `verdict` (`request_changes`/`reject`), `rationale`, `expected_basis`, список `findings` и optional `link_assessments=null`. Каждый finding содержит ровно `kind`, `action`, `closure_criterion` и `evidence_refs` (уникальные IDs из текущего review context). Доступные виды: `discriminating_experiment`, `independent_reanalysis`, `narrow_claim`, `request_data`, `stop_inconclusive`. На текущем mechanically qualified basis команда сохраняет `[review, review_obligation...]` и возвращает `{review, obligations}`. Если context содержит связи claims, нужны полные `link_assessments` по контракту review v2. Reviewer ID проверяется на конфликт с contributors, но не аутентифицируется.
+
+`followup.apply` принимает `obligation`, `parent_node`, текущий `explanation_set`, `protocol_spec`, `node_spec`, `expected_basis`. Первая policy поддерживает только `discriminating_experiment`; specs должен подготовить planner. Команда ещё раз проверяет исходный claim/review/basis, завершённый parent, study/scope, вместимость и бюджет дерева, затем фиксирует `[protocol, experiment_node, replan_followup]` одной receipt. `protocol_spec` содержит поля обычной preregistration без hypotheses/scope/parent — они выводятся из ExplanationSet и source protocol; `node_spec` содержит `action`, `components`, `estimated_cost`, `rationale`. Результат — ID `replan_followup`. Повтор того же obligation не создаёт второй план. Обязательство остаётся открытым, `scientific_validity=not_assessed`; текущий `next_action` и paper gate не пропускают его как закрытое. Подробные ограничения — [ADR 0009](decisions/0009-proposal-review-replanning.md).
+
+`episteme followup status <obligation-id> --root <root>` читает связанный план без записи и явно показывает `obligation_resolution="open"`. Открытое обязательство в связанном claim context блокирует paper и для successor claim, даже если его собственный review одобрил текст.
+
+Тот же запрет распространяется на claim, чей protocol является созданным follow-up или его потомком, даже если явной связи `supersedes` ещё нет.

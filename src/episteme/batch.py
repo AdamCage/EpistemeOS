@@ -171,7 +171,16 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
         if kind == "batch_plan":
             require(event["role"] == "planner", "batch planning requires a planner")
             _validate_plan(store, history[:offset], p)
-            receipt([event], "batch.plan")
+            original = next((row for row in receipts if event["id"] in row["event_ids"]), None)
+            require(original is not None, "batch plan lacks its original command receipt")
+            if original["request"]["action"] == "proposal.prepare_next":
+                require(offset > 0 and original["event_ids"] == [history[offset-1]["id"], event["id"]],
+                        "prepared batch must include its immediately preceding selection")
+                from .proposal_execution import validate_prepared
+                validate_prepared(store, history[:offset-1], history[offset-1], event)
+                receipt([history[offset-1], event], "proposal.prepare_next")
+            else:
+                receipt([event], "batch.plan")
             states[event["id"]] = dict(plan=event, bindings={}, settlement=None, terminal=None)
         elif kind in {"batch_slot", "batch_settlement"}:
             require(p.get("batch") in states, "batch event requires a prior plan")

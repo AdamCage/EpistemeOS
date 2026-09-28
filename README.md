@@ -32,7 +32,7 @@ uv run episteme command --input request-experiment.json --root .research/study
 uv run episteme agent advance <agent-request-id> --root .research/study
 ```
 
-Первые две команды только сохраняют host-owned descriptors, без model call или научных событий. В `recipe.json` `environment` — digest из первой команды; в `request-experiment.json` используется [command envelope](docs/command-api.md) и IDs, возвращённые предыдущими шагами. [Публичная schema ответа](schemas/experiment-proposal-v1.schema.json) дополняется проверкой полного порядка frozen hypotheses. Значения `world` не входят в prompt модели, но сохраняются в локальном CAS; это не секретный sandbox. Применение не выбирает узел, не исполняет его и не создаёт evidence, review или paper. Новый task проверен synthetic transport/CLI fixtures и одним реальным model call; детали и ограничения — в [validation.md](docs/validation.md).
+Первые две команды только сохраняют host-owned descriptors, без model call или научных событий. В `recipe.json` `environment` — digest из первой команды; в `request-experiment.json` используется [command envelope](docs/command-api.md) и IDs, возвращённые предыдущими шагами. [Публичная schema ответа](schemas/experiment-proposal-v1.schema.json) дополняется проверкой полного порядка frozen hypotheses. Значения `world` не входят в prompt модели, но сохраняются в локальном CAS; это не секретный sandbox. Применение не выбирает узел, не исполняет его и не создаёт evidence, review или paper. Следующая команда `proposal.prepare_next` через [command API](docs/command-api.md) атомарно выбирает winning applied proposal и готовит полный batch primary/reanalysis; она не запускает worker. Локально после реального model call этот batch исполнил четыре маленькие synthetic попытки и остановился на `awaiting_analysis`, без claim или scientific verdict. Контракт и ограничения — [ADR 0009](docs/decisions/0009-proposal-review-replanning.md), точная проверка — в [validation.md](docs/validation.md).
 
 ## Начать с документов
 
@@ -49,6 +49,7 @@ uv run episteme agent advance <agent-request-id> --root .research/study
 - [Локальный runner, однократный dispatch и восстановление результата](docs/decisions/0005-local-runner.md).
 - [Выбранный эксперимент, полный набор запусков и восстановление controller](docs/decisions/0006-execution-batches.md).
 - [Модельное предложение эксперимента и host-owned synthetic recipe](docs/decisions/0008-experiment-proposals.md).
+- [Подготовка batch и сохраняемый follow-up по отрицательному review](docs/decisions/0009-proposal-review-replanning.md).
 
 ## Локальный запуск
 
@@ -122,6 +123,10 @@ uv run episteme review <claim-id> --root .research/demo --input review.json
 
 Verdicts: `approve`, `request_changes`, `reject`. `approve` требует пустого списка незакрытых actions. Reviewer с ID участника evidence context, включая авторов гипотез и связей, не допускается. Отрицательное мнение одного reviewer не отменяется одобрением другого или изменением basis. Новое evidence инвалидирует прежний review basis. Для claims со связями нужен action `kernel.review_with_links` через [command API](docs/command-api.md), с явной оценкой каждой связи и открытых замечаний связанного контекста.
 
+Новый `replanning.record_review` принимает отрицательный verdict и typed findings с точными `evidence_refs` и `closure_criterion`. Он сохраняет review и открытые obligations одной command receipt. Planner может применить `followup.apply` к одному `discriminating_experiment` obligation: создать дочерний frozen protocol/tree node на актуальном basis. Это план нового теста; obligation остаётся открытым, а paper gate блокирует также связанные successor claims до отдельного evidence-backed closure, которого пока нет. ID reviewer и planner задаёт доверенный caller; независимый Scientific Reviewer agent здесь ещё не реализован.
+
+Открытый finding также блокирует черновик claim на протоколе дочернего follow-up даже при положительном review этого нового claim.
+
 После актуального approval можно собрать **внутренний черновик**:
 
 ```powershell
@@ -144,6 +149,7 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 - Snapshot-consistent export, актуальность evidence для review, veto отрицательного review и блокировка premature paper.
 - Persistent tournament/tree, воспроизводимый replay решений, проверка актуальности frontier и общий лимит технических retries.
 - Два versioned model proposal tasks: hypotheses/ExplanationSet и exploratory protocol/tree node, с original response, receipts и provenance.
+- Атомарная подготовка полного batch для выбранного applied proposal; typed отрицательные reviewer obligations и сохраняемый дочерний follow-up без ложного закрытия finding.
 
 ## Граф и исторический импорт
 
@@ -158,6 +164,6 @@ uv run episteme afterlife import C:\Projects\llm-semantic-afterlife --root .rese
 
 Afterlife importer сохраняет immutable исторический снимок, статусы и ограничения проверки. Повторный импорт того же снимка идемпотентен. По умолчанию копируются metadata, а большие outputs только проверяются по hashes в пределах лимита; непроверенные ссылки остаются явными. Импорт не создаёт preregistered protocols, reviews или accepted claims и не меняет исходный checkout. Это начало domain adapter; перенос исполнения/анализа afterlife остаётся в плане.
 
-Actor IDs пока назначает доверенный вызывающий процесс. Разные ID и source hashes не доказывают независимость рассуждения или clean-room реализацию. SQLite/hash chain не защищает от владельца файлов. Generic kernel проверяет наличие и согласованность метрик и статистических деклараций; соответствие фактических данных, вычисление uncertainty и научную корректность метода должен проверять domain adapter и независимая реализация. Независимые Executor, Replication и Scientific Reviewer агенты, sandbox и review-driven replanning перечислены в MVP-плане.
+Actor IDs пока назначает доверенный вызывающий процесс. Разные ID и source hashes не доказывают независимость рассуждения или clean-room реализацию. SQLite/hash chain не защищает от владельца файлов. Generic kernel проверяет наличие и согласованность метрик и статистических деклараций; соответствие фактических данных, вычисление uncertainty и научную корректность метода должен проверять domain adapter и независимая реализация. Независимые Executor, Replication и Scientific Reviewer агенты, sandbox, автоматическое исполнение follow-up и evidence-backed closure перечислены в MVP-плане.
 
 Сохранённый исходный [objective.md](objective.md) остаётся контекстом проекта. Прямое сравнительное утверждение «лучше существующих AI Scientist систем» будет допустимо только после контролируемой оценки.

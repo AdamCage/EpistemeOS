@@ -19,6 +19,9 @@ from .planning import Planning
 from .execution import Execution
 from .batch import Batch
 from .agents import Agents
+from .proposal_execution import ProposalExecution
+from .replanning import Replanning
+from .followup import Followup
 from .reporting import PaperBuilder
 from .search import Search
 from .store import Store, canonical
@@ -102,6 +105,9 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "agent.apply_hypotheses": (Agents, Agents.apply_hypotheses, frozenset({"planner"})),
     "agent.apply_experiment": (Agents, Agents.apply_experiment, frozenset({"planner"})),
     "batch.plan": (Batch, Batch.plan, frozenset({"planner"})),
+    "proposal.prepare_next": (ProposalExecution, ProposalExecution.prepare_next, frozenset({"planner"})),
+    "replanning.record_review": (Replanning, Replanning.record_review, frozenset({"reviewer"})),
+    "followup.apply": (Followup, Followup.apply, frozenset({"planner"})),
     "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),
     "batch.settle": (Batch, Batch.settle, frozenset({"planner"})),
     "execution.enqueue": (Execution, Execution.enqueue, frozenset({"executor", "replicator"})),
@@ -142,7 +148,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
     events = {event["id"]: event for event in history}
     refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
                                     "claim", "source", "target", "selection", "tree", "experiment_node",
-                                    "job", "batch", "request", "budget")
+                                    "job", "batch", "request", "budget", "obligation", "parent_node")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -160,6 +166,9 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             raise ValueError("command study_id differs from its planning-bound references")
         fields = {
             "run": ("protocol",), "result": ("run",), "claim": ("protocol",), "review": ("claim",),
+            "review_obligation": ("review", "claim"),
+            "replan_followup": ("obligation", "review", "claim", "tree", "parent_node",
+                                "explanation_set", "protocol", "experiment_node"),
             "claim_link": ("source", "target"), "experiment_node": ("protocol", "tree"),
             "search_selection": ("node", "tree"), "search_terminal": ("selection",),
             "execution_job": ("run",), "execution_dispatch": ("job",), "execution_finalized": ("job",),

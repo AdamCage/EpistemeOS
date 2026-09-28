@@ -59,6 +59,8 @@ class NodeKind(str, Enum):
     CLAIM = "claim"
     CLAIM_LINK = "claim_link"
     REVIEW = "review"
+    REVIEW_OBLIGATION = "review_obligation"
+    REPLAN_FOLLOWUP = "replan_followup"
     PAPER = "paper"
     TOURNAMENT = "tournament"
     BALLOT = "tournament_ballot"
@@ -104,6 +106,11 @@ class Relation(str, Enum):
     EVIDENCE_RESULT = "evidence_result_reference"
     EVIDENCE_ARTIFACT = "evidence_artifact_reference"
     REVIEW_TARGET = "review_target"
+    OBLIGATION_REVIEW = "obligation_review"
+    OBLIGATION_CLAIM = "obligation_claim"
+    OBLIGATION_EVIDENCE = "obligation_evidence"
+    FOLLOWUP_REFERENCE = "followup_reference"
+    FOLLOWUP_ARTIFACT = "followup_artifact"
     PAPER_CLAIM = "paper_claim"
     PAPER_ARTIFACT = "paper_artifact"
     SHARED_REVIEW_BASIS = "shared_review_basis"
@@ -580,6 +587,33 @@ class _Projection:
                     self.ref(id, "claim_link", Relation.REVIEW_LINK, f"link_assessments.{id}")
                     self.refs(assessment["evidence"], None, Relation.ASSESSMENT_EVIDENCE,
                               f"link_assessments.{id}.evidence")
+        elif kind == "review_obligation":
+            review = self.ref(p["review"], "review", Relation.OBLIGATION_REVIEW, "review")
+            claim = self.ref(p["claim"], "claim", Relation.OBLIGATION_CLAIM, "claim")
+            self.hash_ref(review, p["review_hash"], "review_hash")
+            self.hash_ref(claim, p["claim_hash"], "claim_hash")
+            if review["payload"]["claim"] != claim["id"] or review["payload"]["basis_hash"] != p["basis_hash"]:
+                self.fail("obligation review, claim and evidence basis differ")
+            for index, citation in enumerate(p["evidence_refs"]):
+                cited = self.ref(citation["id"], None, Relation.OBLIGATION_EVIDENCE,
+                                 f"evidence_refs[{index}]")
+                self.hash_ref(cited, citation["hash"], f"evidence_refs[{index}].hash")
+        elif kind == "replan_followup":
+            from .followup import followup_artifacts
+            fields = {"obligation": "review_obligation", "review": "review", "claim": "claim",
+                      "tree": "search_tree", "parent_node": "experiment_node",
+                      "explanation_set": "explanation_set", "protocol": "protocol",
+                      "experiment_node": "experiment_node"}
+            for field, target_kind in fields.items():
+                reference = self.ref(p[field], target_kind, Relation.FOLLOWUP_REFERENCE, field)
+                self.hash_ref(reference, p[field + "_hash"], field + "_hash")
+            if (self.events[p["obligation"]]["payload"]["review"] != p["review"]
+                    or self.events[p["obligation"]]["payload"]["claim"] != p["claim"]
+                    or self.events[p["experiment_node"]]["payload"]["parent"] != p["parent_node"]
+                    or self.events[p["experiment_node"]]["payload"]["protocol"] != p["protocol"]):
+                self.fail("follow-up binding differs from its obligation or child experiment")
+            for key in sorted(followup_artifacts(e)):
+                self.blob(key, Relation.FOLLOWUP_ARTIFACT, "specification")
         elif kind == "paper":
             self.refs(p["claims"], "claim", Relation.PAPER_CLAIM, "claims")
             if set(p["reviewed_bases"]) != set(p["claims"]):
@@ -666,6 +700,18 @@ class _Projection:
                     self.fail("terminal claim does not cite selected run/protocol")
 
     def build(self) -> ResearchGraph:
+        if any(e["kind"] == "replan_followup" for e in self.history):
+            from .followup import _index as followup_index
+            try:
+                followup_index(self.store, self.history)
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid follow-up history: {exc}")
+        if any(e["kind"] == "review_obligation" for e in self.history):
+            from .replanning import _index as replanning_index
+            try:
+                replanning_index(self.store, self.history)
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid replanning history: {exc}")
         if any(e["kind"].startswith("agent_") for e in self.history):
             from .agents import agent_context
             try:

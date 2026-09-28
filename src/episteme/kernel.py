@@ -781,6 +781,25 @@ class Kernel:
         gate = self._gate(history, claim)
         if not gate["passed"]:
             return dict(action="repair_evidence", reasons=gate["failures"])
+        if any(event["kind"] == "review_obligation" for event in history):
+            from .replanning import _index as obligation_index
+            context_claims = set(resolve_context(history, claim).claim_ids)
+            protocol = self._get(history, claim, "claim")["payload"]["protocol"]
+            protocol_lineage: set[str] = set()
+            while protocol is not None:
+                require(protocol not in protocol_lineage, "protocol parent cycle in paper eligibility")
+                protocol_lineage.add(protocol)
+                protocol = self._get(history, protocol, "protocol")["payload"]["parent"]
+            followup_obligations = {event["payload"]["obligation"] for event in history
+                                    if event["kind"] == "replan_followup"
+                                    and event["payload"]["protocol"] in protocol_lineage}
+            obligations = [event for state in obligation_index(self.store, history).values()
+                           for event in state["obligations"]
+                           if event["payload"]["claim"] in context_claims
+                           or event["id"] in followup_obligations]
+            if obligations:
+                return dict(action="replan", obligations=[event["id"] for event in obligations],
+                            reasons=[event["payload"]["action"] for event in obligations])
         all_reviews = [e for e in history if e["kind"] == "review" and e["payload"]["claim"] == claim]
         reviews = [e for e in all_reviews if e["payload"]["basis_hash"] == gate["basis_hash"]]
         # Latest opinion per reviewer; an unresolved negative opinion is a veto.

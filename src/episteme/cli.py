@@ -79,6 +79,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation = batch_ops.add_parser(name)
         operation.add_argument("batch", help="Recorded batch_plan ID")
         operation.add_argument("--root", type=Path, required=True)
+    followups = subcommands.add_parser("followup", help="Inspect an open review obligation and its child plan")
+    followup_ops = followups.add_subparsers(dest="operation", required=True)
+    followup_status = followup_ops.add_parser("status")
+    followup_status.add_argument("obligation", help="Recorded review_obligation ID")
+    followup_status.add_argument("--root", type=Path, required=True)
     agents = subcommands.add_parser("agent", help="Explicit bounded Codex proposals; no scientific approval")
     agent_ops = agents.add_subparsers(dest="operation", required=True)
     for name in ("provider", "recipe", "status", "work", "reconcile", "advance"):
@@ -95,7 +100,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "agent":
+        if args.command == "followup":
+            from .followup import followup_state
+            if not (args.root / "state.sqlite3").is_file():
+                raise ValueError("existing research state is required")
+            with Store(args.root, read_only=True) as store:
+                result = followup_state(store, args.obligation)
+            status = 0
+        elif args.command == "agent":
             from .agents import agent_state, freeze_recipe_binding
             from .agent_controller import work_agent, reconcile_agent, advance_agent
             from .codex_provider import freeze_provider
