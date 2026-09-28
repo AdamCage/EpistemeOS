@@ -108,6 +108,8 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "batch.plan": (Batch, Batch.plan, frozenset({"planner"})),
     "proposal.prepare_next": (ProposalExecution, ProposalExecution.prepare_next, frozenset({"planner"})),
     "replanning.record_review": (Replanning, Replanning.record_review, frozenset({"reviewer"})),
+    "replanning.resolve_obligation": (Replanning, Replanning.resolve_obligation,
+                                       frozenset({"reviewer"})),
     "followup.apply": (Followup, Followup.apply, frozenset({"planner"})),
     "followup.prepare_next": (FollowupExecution, FollowupExecution.prepare_next, frozenset({"planner"})),
     "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),
@@ -150,7 +152,8 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
     events = {event["id"]: event for event in history}
     refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
                                     "claim", "source", "target", "selection", "tree", "experiment_node",
-                                    "job", "batch", "request", "budget", "obligation", "parent_node")
+                                    "job", "batch", "request", "budget", "obligation", "parent_node",
+                                    "followup", "review", "terminal")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -169,6 +172,8 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
         fields = {
             "run": ("protocol",), "result": ("run",), "claim": ("protocol",), "review": ("claim",),
             "review_obligation": ("review", "claim"),
+            "review_obligation_resolution": ("obligation", "followup", "source_review",
+                                             "source_claim", "claim", "review", "terminal"),
             "replan_followup": ("obligation", "review", "claim", "tree", "parent_node",
                                 "explanation_set", "protocol", "experiment_node"),
             "claim_link": ("source", "target"), "experiment_node": ("protocol", "tree"),

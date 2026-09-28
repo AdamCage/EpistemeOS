@@ -782,7 +782,7 @@ class Kernel:
         if not gate["passed"]:
             return dict(action="repair_evidence", reasons=gate["failures"])
         if any(event["kind"] == "review_obligation" for event in history):
-            from .replanning import _index as obligation_index
+            from .replanning import open_obligations
             context_claims = set(resolve_context(history, claim).claim_ids)
             protocol = self._get(history, claim, "claim")["payload"]["protocol"]
             protocol_lineage: set[str] = set()
@@ -790,16 +790,16 @@ class Kernel:
                 require(protocol not in protocol_lineage, "protocol parent cycle in paper eligibility")
                 protocol_lineage.add(protocol)
                 protocol = self._get(history, protocol, "protocol")["payload"]["parent"]
-            indexed_obligations = [event for state in obligation_index(self.store, history).values()
-                                   for event in state["obligations"]]
-            obligations_by_id = {event["id"]: event for event in indexed_obligations}
             followup_source_claims = {
-                obligations_by_id[event["payload"]["obligation"]]["payload"]["claim"]
+                self._get(history, event["payload"]["obligation"],
+                          "review_obligation")["payload"]["claim"]
                 for event in history if event["kind"] == "replan_followup"
                 and event["payload"]["protocol"] in protocol_lineage
             }
-            obligations = [event for event in indexed_obligations
-                           if event["payload"]["claim"] in context_claims | followup_source_claims]
+            open_ids = {event["id"] for source in context_claims | followup_source_claims
+                        for event in open_obligations(self.store, history, source)}
+            obligations = [event for event in history
+                           if event["kind"] == "review_obligation" and event["id"] in open_ids]
             if obligations:
                 return dict(action="replan", obligations=[event["id"] for event in obligations],
                             reasons=[event["payload"]["action"] for event in obligations])

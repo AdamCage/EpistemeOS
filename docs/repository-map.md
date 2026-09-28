@@ -43,6 +43,7 @@ EpistemeOS/
 │   ├── batch_controller.py       последовательный resume по сохранённым slots
 │   ├── proposal_execution.py     applied proposal → selected frozen batch в одной receipt
 │   ├── replanning.py             negative review → typed открытые obligations
+│   ├── resolution.py             reviewer opinion → evidence-bound obligation resolution
 │   ├── followup.py               obligation → frozen дочерний protocol/node/binding
 │   ├── followup_execution.py     winning follow-up node → selected frozen batch
 │   ├── execution_authority.py    локальный marker вне backup/CAS, запрет запуска restored batch
@@ -86,6 +87,7 @@ EpistemeOS/
     ├── test_experiment_agents.py atomic proposal application, stale/replay/recovery
     ├── test_proposal_execution.py atomic selection/batch, replay и rollback
     ├── test_replanning.py       review/obligation basis, replay и paper veto
+    ├── test_resolution.py       exact review/resolution receipt, stale basis и sibling veto
     ├── test_followup.py         дочерний protocol/node, stale source, budget и no closure
     ├── test_followup_execution.py atomic selection/batch, stale basis, receipt replay и restore
     ├── test_experiment_graph.py  typed refs, schema export и tamper rejection
@@ -103,7 +105,7 @@ EpistemeOS/
 | `domains/synthetic_causal.py` | Синтетический causal recipe, отдельные source для primary/reanalysis и typed exploratory design. | Известный генератор и общие наблюдения для повторного анализа; нет внешнего scientific evidence или доказанной независимости второго анализа. |
 | `batch.py`, `batch_controller.py` | Полный roster primary/reanalysis для выбранного scientific node, резерв будущих slots, resume без повторного dispatch, полный технический settlement. | Fresh primary policy; стоимость в attempts, без agent reasoning, automatic analysis/review/replanning. |
 | `proposal_execution.py` | Одной planner receipt связывает текущий winning applied model experiment node с selection и полным frozen batch из первоначальной compilation. | Не выбирает узел вопреки priority, не запускает worker и не оценивает научную состоятельность дизайна. |
-| `replanning.py` | Отрицательное мнение reviewer и typed obligations на исходном evidence basis; проверяет citations и полную historical receipt. | Роль/ID заявлены caller; finding не становится научным фактом, закрытия по evidence пока нет. |
+| `replanning.py`, `resolution.py` | Отрицательное мнение reviewer и typed obligations; затем адресное удовлетворение одного `discriminating_experiment` finding новым reviewed claim на неизменённом evidence basis. Historical receipt и текущий effective status проверяются отдельно. | Роль/ID заявлены caller; решение reviewer не доказывает научную истину или независимость, остальные findings остаются открытыми. |
 | `followup.py` | Один открытый запрос различающего эксперимента → frozen дочерний protocol/node/binding с проверкой текущего source basis и бюджета. | Planner-authored план, не запуск, научное подтверждение, независимое review или закрытие obligation. |
 | `followup_execution.py` | Повторно проверяет source review/basis и planning, связывает текущий winning follow-up node с frozen batch и exact receipt. | Recipe подаёт planner; selection и резерв не запускают worker и не закрывают научное замечание. |
 | `execution_authority.py` | Локальный token и проверка hash перед изменением execution state batch; DB/CAS restore не получает token. | Не аутентификация и не distributed lease; полное копирование marker владельцем файлов может создать исполняемый clone. |

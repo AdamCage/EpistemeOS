@@ -264,17 +264,21 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
 
 
 def followup_state(store: Store, obligation: str) -> dict[str, Any]:
-    """Report a recorded plan without inferring execution or obligation closure."""
+    """Report the plan and any currently effective reviewer resolution separately."""
     history = store.events()
     obligations = _obligations(store, history)
     require(obligation in obligations, "unknown review obligation")
     state = _index(store, history).get(obligation)
+    from .resolution import resolution_states
+    resolution = resolution_states(store, history).get(obligation)
     return dict(obligation=obligation, revision=len(history),
                 status="planned" if state else "open",
                 followup=state["followup"]["id"] if state else None,
                 protocol=state["protocol"]["id"] if state else None,
                 experiment_node=state["node"]["id"] if state else None,
-                obligation_resolution="open", scientific_validity="not_assessed")
+                obligation_resolution=resolution["status"] if resolution else "open",
+                resolution=resolution["resolution"]["id"] if resolution else None,
+                scientific_validity="not_assessed")
 
 
 def followup_artifacts(event: dict[str, Any]) -> set[str]:

@@ -2,8 +2,8 @@
 
 This is a local, caller-identified reviewer transition. Role separation and a
 mechanically qualified evidence basis do not attest independent reasoning or
-scientific correctness. A later experiment, batch or approval never closes an
-obligation in this version; closure requires a separately designed transition.
+scientific correctness. A later experiment, batch or approval alone never closes
+an obligation; resolution requires an explicit evidence-bound reviewer decision.
 """
 
 from __future__ import annotations
@@ -131,14 +131,13 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
 
 def open_obligations(store: Store, history: list[dict[str, Any]], claim: str
                      ) -> list[dict[str, Any]]:
-    """Return replay-validated, still-open declarations for one claim.
-
-    There is no closure vocabulary yet. A positive review or follow-up experiment
-    does not silently erase a negative reviewer's requested work.
-    """
+    """Return obligations without an effective, evidence-current reviewer resolution."""
+    from .resolution import resolution_states
     states = _index(store, history)
+    resolutions = resolution_states(store, history)
     return [event for state in states.values() for event in state["obligations"]
-            if event["payload"]["claim"] == claim]
+            if event["payload"]["claim"] == claim
+            and resolutions.get(event["id"], {}).get("status") != "reviewer_satisfied"]
 
 
 class Replanning:
@@ -175,3 +174,14 @@ class Replanning:
                               basis_hash=expected_basis, finding_index=index, **finding)
             ids.append(kernel._write(self.store.events(), "review_obligation", obligation, {"reviewer"}))
         return dict(review=review_id, obligations=ids)
+
+    def resolve_obligation(self, *, obligation: str, claim: str, expected_basis: str,
+                           review_rationale: str, resolution_rationale: str,
+                           evidence_refs: list[str],
+                           link_assessments: dict[str, dict[str, Any]] | None = None) -> str:
+        """Record an original reviewer's evidence-bound assessment of a follow-up."""
+        from .resolution import Resolution
+        return Resolution(self.store, self.actor).resolve_obligation(
+            obligation=obligation, claim=claim, expected_basis=expected_basis,
+            review_rationale=review_rationale, resolution_rationale=resolution_rationale,
+            evidence_refs=evidence_refs, link_assessments=link_assessments)

@@ -60,6 +60,7 @@ class NodeKind(str, Enum):
     CLAIM_LINK = "claim_link"
     REVIEW = "review"
     REVIEW_OBLIGATION = "review_obligation"
+    REVIEW_OBLIGATION_RESOLUTION = "review_obligation_resolution"
     REPLAN_FOLLOWUP = "replan_followup"
     PAPER = "paper"
     TOURNAMENT = "tournament"
@@ -109,6 +110,8 @@ class Relation(str, Enum):
     OBLIGATION_REVIEW = "obligation_review"
     OBLIGATION_CLAIM = "obligation_claim"
     OBLIGATION_EVIDENCE = "obligation_evidence"
+    RESOLUTION_REFERENCE = "resolution_reference"
+    RESOLUTION_EVIDENCE = "resolution_evidence"
     FOLLOWUP_REFERENCE = "followup_reference"
     FOLLOWUP_ARTIFACT = "followup_artifact"
     PAPER_CLAIM = "paper_claim"
@@ -614,6 +617,23 @@ class _Projection:
                 self.fail("follow-up binding differs from its obligation or child experiment")
             for key in sorted(followup_artifacts(e)):
                 self.blob(key, Relation.FOLLOWUP_ARTIFACT, "specification")
+        elif kind == "review_obligation_resolution":
+            fields = {"obligation": "review_obligation", "followup": "replan_followup",
+                      "source_review": "review", "source_claim": "claim", "claim": "claim",
+                      "review": "review", "terminal": "search_terminal"}
+            for field, target_kind in fields.items():
+                reference = self.ref(p[field], target_kind, Relation.RESOLUTION_REFERENCE, field)
+                self.hash_ref(reference, p[field + "_hash"], field + "_hash")
+            if (self.events[p["followup"]]["payload"]["obligation"] != p["obligation"]
+                    or self.events[p["obligation"]]["payload"]["review"] != p["source_review"]
+                    or self.events[p["obligation"]]["payload"]["claim"] != p["source_claim"]
+                    or self.events[p["review"]]["payload"]["claim"] != p["claim"]
+                    or self.events[p["review"]]["payload"]["basis_hash"] != p["basis_hash"]):
+                self.fail("resolution references disagree with the source finding or child review")
+            for index, citation in enumerate(p["evidence_refs"]):
+                cited = self.ref(citation["id"], None, Relation.RESOLUTION_EVIDENCE,
+                                 f"evidence_refs[{index}]")
+                self.hash_ref(cited, citation["hash"], f"evidence_refs[{index}].hash")
         elif kind == "paper":
             self.refs(p["claims"], "claim", Relation.PAPER_CLAIM, "claims")
             if set(p["reviewed_bases"]) != set(p["claims"]):
@@ -700,6 +720,12 @@ class _Projection:
                     self.fail("terminal claim does not cite selected run/protocol")
 
     def build(self) -> ResearchGraph:
+        if any(e["kind"] == "review_obligation_resolution" for e in self.history):
+            from .resolution import _index as resolution_index
+            try:
+                resolution_index(self.store, self.history)
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid review obligation resolution history: {exc}")
         if any(e["kind"] == "replan_followup" for e in self.history):
             from .followup import _index as followup_index
             try:

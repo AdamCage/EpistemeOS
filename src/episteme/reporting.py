@@ -110,6 +110,8 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     from .followup import _index as followup_index
     replanning_index(store, history)
     followup_index(store, history)
+    from .resolution import resolution_states
+    resolutions = resolution_states(store, history)
     from .agents import agent_context
     agent_context(store, history, set())
     from .execution import execution_context
@@ -122,6 +124,11 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
                 artifacts=artifact_inventory(store, history),
                 claim_relations=[event for event in history if event["kind"] == "claim_link"],
                 review_obligations=[event for event in history if event["kind"] == "review_obligation"],
+                review_obligation_resolutions=[event for event in history
+                                               if event["kind"] == "review_obligation_resolution"],
+                obligation_resolution_status={
+                    event["id"]: resolutions.get(event["id"], {}).get("status", "open")
+                    for event in history if event["kind"] == "review_obligation"},
                 replan_followups=[event for event in history if event["kind"] == "replan_followup"],
                 research_questions=[event for event in history if event["kind"] == "research_question"],
                 explanation_sets=[event for event in history if event["kind"] == "explanation_set"],
