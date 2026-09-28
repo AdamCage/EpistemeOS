@@ -22,6 +22,7 @@ from .agents import Agents
 from .proposal_execution import ProposalExecution
 from .replanning import Replanning
 from .followup import Followup
+from .followup_execution import FollowupExecution
 from .reporting import PaperBuilder
 from .search import Search
 from .store import Store, canonical
@@ -108,6 +109,7 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "proposal.prepare_next": (ProposalExecution, ProposalExecution.prepare_next, frozenset({"planner"})),
     "replanning.record_review": (Replanning, Replanning.record_review, frozenset({"reviewer"})),
     "followup.apply": (Followup, Followup.apply, frozenset({"planner"})),
+    "followup.prepare_next": (FollowupExecution, FollowupExecution.prepare_next, frozenset({"planner"})),
     "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),
     "batch.settle": (Batch, Batch.settle, frozenset({"planner"})),
     "execution.enqueue": (Execution, Execution.enqueue, frozenset({"executor", "replicator"})),

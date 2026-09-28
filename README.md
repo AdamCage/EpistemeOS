@@ -123,9 +123,9 @@ uv run episteme review <claim-id> --root .research/demo --input review.json
 
 Verdicts: `approve`, `request_changes`, `reject`. `approve` требует пустого списка незакрытых actions. Reviewer с ID участника evidence context, включая авторов гипотез и связей, не допускается. Отрицательное мнение одного reviewer не отменяется одобрением другого или изменением basis. Новое evidence инвалидирует прежний review basis. Для claims со связями нужен action `kernel.review_with_links` через [command API](docs/command-api.md), с явной оценкой каждой связи и открытых замечаний связанного контекста.
 
-Новый `replanning.record_review` принимает отрицательный verdict и typed findings с точными `evidence_refs` и `closure_criterion`. Он сохраняет review и открытые obligations одной command receipt. Planner может применить `followup.apply` к одному `discriminating_experiment` obligation: создать дочерний frozen protocol/tree node на актуальном basis. Это план нового теста; obligation остаётся открытым, а paper gate блокирует также связанные successor claims до отдельного evidence-backed closure, которого пока нет. ID reviewer и planner задаёт доверенный caller; независимый Scientific Reviewer agent здесь ещё не реализован.
+Новый `replanning.record_review` принимает отрицательный verdict и typed findings с точными `evidence_refs` и `closure_criterion`. Он сохраняет review и открытые obligations одной command receipt. Planner может применить `followup.apply` к одному `discriminating_experiment` obligation: создать дочерний frozen protocol/tree node на актуальном basis. Затем `followup.prepare_next` атомарно выбирает этот узел, если он выигрывает текущий tree search, и готовит batch по явному frozen recipe. Это план и резерв нового теста; obligations остаются открытыми, а paper gate блокирует также successor claims до отдельного evidence-backed closure, которого пока нет. ID reviewer и planner задаёт доверенный caller; независимый Scientific Reviewer agent здесь ещё не реализован.
 
-Открытый finding также блокирует черновик claim на протоколе дочернего follow-up даже при положительном review этого нового claim.
+Все открытые findings исходного claim также блокируют черновик claim на протоколе дочернего follow-up даже при положительном review этого нового claim.
 
 После актуального approval можно собрать **внутренний черновик**:
 

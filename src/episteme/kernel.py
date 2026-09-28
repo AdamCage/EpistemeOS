@@ -790,13 +790,16 @@ class Kernel:
                 require(protocol not in protocol_lineage, "protocol parent cycle in paper eligibility")
                 protocol_lineage.add(protocol)
                 protocol = self._get(history, protocol, "protocol")["payload"]["parent"]
-            followup_obligations = {event["payload"]["obligation"] for event in history
-                                    if event["kind"] == "replan_followup"
-                                    and event["payload"]["protocol"] in protocol_lineage}
-            obligations = [event for state in obligation_index(self.store, history).values()
-                           for event in state["obligations"]
-                           if event["payload"]["claim"] in context_claims
-                           or event["id"] in followup_obligations]
+            indexed_obligations = [event for state in obligation_index(self.store, history).values()
+                                   for event in state["obligations"]]
+            obligations_by_id = {event["id"]: event for event in indexed_obligations}
+            followup_source_claims = {
+                obligations_by_id[event["payload"]["obligation"]]["payload"]["claim"]
+                for event in history if event["kind"] == "replan_followup"
+                and event["payload"]["protocol"] in protocol_lineage
+            }
+            obligations = [event for event in indexed_obligations
+                           if event["payload"]["claim"] in context_claims | followup_source_claims]
             if obligations:
                 return dict(action="replan", obligations=[event["id"] for event in obligations],
                             reasons=[event["payload"]["action"] for event in obligations])

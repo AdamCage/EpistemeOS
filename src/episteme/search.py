@@ -355,21 +355,16 @@ class Search:
             return "replication_requires_completed_primary"
         return "eligible"
 
-    def select_next(self, tree: str) -> dict[str, Any]:
-        """Atomically record a best-first decision and reserve its estimated cost.
-
-        Returns decision ID, node/protocol/action or a durable wait/stop reason.
-        No automatic retry is safe after a conflict: reload and make a new decision.
-        Ineligible proposals remain in the frontier with their current reason.
-        """
-        history = self._history()
-        state = self._projection(history, tree)
+    @staticmethod
+    def _decision(history: list[dict[str, Any]], tree: str) -> dict[str, Any]:
+        """Reconstruct the next selection from one immutable event prefix."""
+        state = Search._projection(history, tree)
         policy, nodes = state["policy"], state["nodes"]
         pending = sorted((n for n in nodes.values() if n["state"] == "pending"), key=lambda n: (
             -n["score"], digest(canonical([policy["seed"], n["id"]]))))
         frontier = []
         for node in pending:
-            eligibility = self._selection_eligibility(history, node)
+            eligibility = Search._selection_eligibility(history, node)
             if eligibility == "eligible" and _amount(node["estimated_cost"]) > state["remaining"]:
                 eligibility = "insufficient_budget"
             frontier.append(dict(node=node["id"], score=node["score"],
@@ -392,6 +387,17 @@ class Search:
                        reserved_cost=selected["estimated_cost"] if selected else 0,
                        remaining_before=_cost_text(state["remaining"]), frontier=frontier,
                        policy="bounded_best_first_v1", scientific_validity="not_assessed")
+        return payload
+
+    def select_next(self, tree: str) -> dict[str, Any]:
+        """Atomically record a best-first decision and reserve its estimated cost.
+
+        Returns decision ID, node/protocol/action or a durable wait/stop reason.
+        No automatic retry is safe after a conflict: reload and make a new decision.
+        Ineligible proposals remain in the frontier with their current reason.
+        """
+        history = self._history()
+        payload = self._decision(history, tree)
         id = self._write(history, "search_selection", payload)
         return dict(id=id, **payload)
 

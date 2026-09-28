@@ -81,11 +81,15 @@ class FollowupTests(unittest.TestCase):
             verdict="request_changes", rationale="Potential confounding in the source design",
             findings=[dict(kind="discriminating_experiment", action="Add a control",
                 closure_criterion="A new reviewed comparison addresses the confound",
+                evidence_refs=[self.claim]),
+                dict(kind="narrow_claim", action="Limit the original claim's scope",
+                closure_criterion="The revised statement excludes unsupported scope",
                 evidence_refs=[self.claim])], expected_basis=self.basis,
             link_assessments=None), self.reviewer,
             lambda p: Replanning(self.store, self.reviewer).record_review(**p))
         self.review = recorded["review"]
         self.obligation = recorded["obligations"][0]
+        self.other_obligation = recorded["obligations"][1]
         self.new_implementation = self.store.put(b"follow-up fixture computation")
 
     @staticmethod
@@ -290,6 +294,7 @@ class FollowupTests(unittest.TestCase):
         decision = reviewer.next_action(successor)
         self.assertEqual(decision["action"], "replan")
         self.assertIn(self.obligation, decision["obligations"])
+        self.assertIn(self.other_obligation, decision["obligations"])
         with self.assertRaisesRegex(ValueError, "not eligible for paper"):
             PaperBuilder(self.store, Actor("fixture-writer", "writer")).build(
                 title="Premature successor draft", claims=[successor],

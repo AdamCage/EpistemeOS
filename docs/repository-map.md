@@ -44,6 +44,7 @@ EpistemeOS/
 │   ├── proposal_execution.py     applied proposal → selected frozen batch в одной receipt
 │   ├── replanning.py             negative review → typed открытые obligations
 │   ├── followup.py               obligation → frozen дочерний protocol/node/binding
+│   ├── followup_execution.py     winning follow-up node → selected frozen batch
 │   ├── execution_authority.py    локальный marker вне backup/CAS, запрет запуска restored batch
 │   ├── runner_backend.py         trusted local Python process supervisor, bounded logs и completion
 │   ├── claims.py                 типизированный immutable ClaimLink
@@ -86,6 +87,7 @@ EpistemeOS/
     ├── test_proposal_execution.py atomic selection/batch, replay и rollback
     ├── test_replanning.py       review/obligation basis, replay и paper veto
     ├── test_followup.py         дочерний protocol/node, stale source, budget и no closure
+    ├── test_followup_execution.py atomic selection/batch, stale basis, receipt replay и restore
     ├── test_experiment_graph.py  typed refs, schema export и tamper rejection
     ├── test_experiment_proposals.py strict schema и frozen hypothesis order
     ├── test_synthetic_causal.py  fixture recipe, estimates и real runner
@@ -103,6 +105,7 @@ EpistemeOS/
 | `proposal_execution.py` | Одной planner receipt связывает текущий winning applied model experiment node с selection и полным frozen batch из первоначальной compilation. | Не выбирает узел вопреки priority, не запускает worker и не оценивает научную состоятельность дизайна. |
 | `replanning.py` | Отрицательное мнение reviewer и typed obligations на исходном evidence basis; проверяет citations и полную historical receipt. | Роль/ID заявлены caller; finding не становится научным фактом, закрытия по evidence пока нет. |
 | `followup.py` | Один открытый запрос различающего эксперимента → frozen дочерний protocol/node/binding с проверкой текущего source basis и бюджета. | Planner-authored план, не запуск, научное подтверждение, независимое review или закрытие obligation. |
+| `followup_execution.py` | Повторно проверяет source review/basis и planning, связывает текущий winning follow-up node с frozen batch и exact receipt. | Recipe подаёт planner; selection и резерв не запускают worker и не закрывают научное замечание. |
 | `execution_authority.py` | Локальный token и проверка hash перед изменением execution state batch; DB/CAS restore не получает token. | Не аутентификация и не distributed lease; полное копирование marker владельцем файлов может создать исполняемый clone. |
 | `store.py` | Canonical JSON, CAS, verified chain/receipts, atomic command transaction/replay, additive receipt migration и export. | Нет аутентификации, внешнего checkpoint, общего schema migration или distributed storage. |
 | `recovery.py` | SQLite online backup, полный наблюдаемый CAS, manifest, semantic closure и restore с точной историей/receipts; эксклюзивный новый destination. | Не переносит процессы/внешнюю среду; filesystem доверенный, нет внешней аутентификации или атомарной видимости всего каталога. |

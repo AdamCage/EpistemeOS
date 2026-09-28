@@ -179,6 +179,13 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
                 from .proposal_execution import validate_prepared
                 validate_prepared(store, history[:offset-1], history[offset-1], event)
                 receipt([history[offset-1], event], "proposal.prepare_next")
+            elif original["request"]["action"] == "followup.prepare_next":
+                require(offset > 0 and original["event_ids"] == [history[offset-1]["id"], event["id"]],
+                        "prepared follow-up batch must include its immediately preceding selection")
+                from .followup_execution import validate_prepared
+                validate_prepared(store, history[:offset-1], history[offset-1], event,
+                                  original["request"]["payload"], original["context"]["study_id"])
+                receipt([history[offset-1], event], "followup.prepare_next")
             else:
                 receipt([event], "batch.plan")
             states[event["id"]] = dict(plan=event, bindings={}, settlement=None, terminal=None)
@@ -307,9 +314,11 @@ def _summary(batch: str, state: dict[str, Any], revision: int) -> dict[str, Any]
 def validate_dispatch(store: Store, history: list[dict[str, Any]], job: str) -> None:
     """The persisted launch boundary must enforce batch ownership too."""
     from .execution_authority import require_authority
+    from .followup_execution import require_current_for_batch
     states = _index(store, history)
     for state in states.values():
         if any(binding["payload"]["job"] == job for binding in state["bindings"].values()):
+            require_current_for_batch(store, history, state["plan"])
             require_authority(store, state["plan"]["payload"]["execution_authority"])
             return
 
@@ -372,12 +381,14 @@ class Batch:
 
     def enqueue_slot(self, *, batch: str, slot: str) -> str:
         from .execution_authority import require_authority
+        from .followup_execution import require_current_for_batch
         history = self._history()
         states = _index(self.store, history)
         require(batch in states, "unknown batch")
         state = states[batch]
         plan = state["plan"]
         p = plan["payload"]
+        require_current_for_batch(self.store, history, plan)
         require_authority(self.store, p["execution_authority"])
         require(state["settlement"] is None, "batch already settled")
         spec = next((item for item in p["slots"] if item["slot"] == slot), None)
