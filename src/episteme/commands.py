@@ -21,6 +21,7 @@ from .batch import Batch
 from .agents import Agents
 from .proposal_execution import ProposalExecution
 from .replanning import Replanning
+from .review_assignment import ReviewAssignment
 from .followup import Followup
 from .followup_execution import FollowupExecution
 from .reporting import PaperBuilder
@@ -110,6 +111,7 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "replanning.record_review": (Replanning, Replanning.record_review, frozenset({"reviewer"})),
     "replanning.resolve_obligation": (Replanning, Replanning.resolve_obligation,
                                        frozenset({"reviewer"})),
+    "review.assign": (ReviewAssignment, ReviewAssignment.assign, frozenset({"planner"})),
     "followup.apply": (Followup, Followup.apply, frozenset({"planner"})),
     "followup.prepare_next": (FollowupExecution, FollowupExecution.prepare_next, frozenset({"planner"})),
     "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),

@@ -214,6 +214,115 @@ def _planning_table(records: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _paper_followup_lineage(history: list[dict[str, Any]], claim: str,
+                           resolutions: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Trace reviewer findings through protocol ancestry at the paper snapshot.
+
+    Claim links are optional for a follow-up. The frozen protocol parent chain,
+    rather than a statement match, identifies the relevant negative review.
+    """
+    by_id = {event["id"]: event for event in history}
+    protocol = Kernel._get(history, claim, "claim")["payload"]["protocol"]
+    ancestors: list[str] = []
+    while protocol is not None:
+        require(protocol not in ancestors, "protocol parent cycle in paper lineage")
+        ancestors.append(protocol)
+        protocol = Kernel._get(history, protocol, "protocol")["payload"]["parent"]
+    followups = {event["payload"]["protocol"]: event for event in history
+                 if event["kind"] == "replan_followup"}
+    lineage = []
+    for protocol in reversed(ancestors):
+        followup = followups.get(protocol)
+        if followup is None:
+            continue
+        fp = followup["payload"]
+        obligation = Kernel._get(history, fp["obligation"], "review_obligation")
+        op = obligation["payload"]
+        source_review = Kernel._get(history, op["review"], "review")
+        source_claim = Kernel._get(history, op["claim"], "claim")
+        state = resolutions.get(obligation["id"])
+        status = state["status"] if state is not None else "open"
+        # PaperBuilder has already checked next_action. Keep this projection
+        # fail-closed if its coverage ever diverges from the paper gate.
+        require(status == "reviewer_satisfied",
+                f"unresolved follow-up obligation in paper lineage: {obligation['id']}")
+        decision = state["resolution"]
+        dp = decision["payload"]
+        require(dp["followup"] == followup["id"]
+                and dp["obligation"] == obligation["id"],
+                "paper lineage resolution differs from its frozen follow-up")
+        citations = []
+        for ref in dp["evidence_refs"]:
+            event = by_id[ref["id"]]
+            require(event["hash"] == ref["hash"],
+                    "paper lineage citation differs from its recorded event revision")
+            citation = dict(id=event["id"], hash=event["hash"], kind=event["kind"])
+            if event["kind"] == "result":
+                citation["run"] = event["payload"]["run"]
+            elif event["kind"] == "claim":
+                citation["protocol"] = event["payload"]["protocol"]
+            citations.append(citation)
+        lineage.append(dict(
+            source_claim=dict(id=source_claim["id"], hash=source_claim["hash"],
+                              protocol=source_claim["payload"]["protocol"],
+                              statement=source_claim["payload"]["statement"]),
+            source_review=dict(id=source_review["id"], hash=source_review["hash"],
+                               actor=source_review["actor"],
+                               verdict=source_review["payload"]["verdict"],
+                               rationale=source_review["payload"]["rationale"],
+                               basis_hash=source_review["payload"]["basis_hash"]),
+            obligation=dict(id=obligation["id"], hash=obligation["hash"],
+                            kind=op["kind"], action=op["action"],
+                            closure_criterion=op["closure_criterion"],
+                            evidence_refs=op["evidence_refs"]),
+            followup=dict(id=followup["id"], hash=followup["hash"],
+                          protocol=fp["protocol"], protocol_hash=fp["protocol_hash"],
+                          experiment_node=fp["experiment_node"],
+                          experiment_node_hash=fp["experiment_node_hash"]),
+            resolution=dict(id=decision["id"], hash=decision["hash"],
+                            review=dp["review"], review_hash=dp["review_hash"],
+                            claim=dp["claim"], basis_hash=dp["basis_hash"],
+                            rationale=dp["resolution_rationale"],
+                            recorded_disposition=dp["disposition"],
+                            effective_status=status, evidence_refs=citations)))
+    return lineage
+
+
+def _followup_manuscript(claim: str, lineage: list[dict[str, Any]]) -> list[str]:
+    if not lineage:
+        return []
+    lines = [f"### Review-driven follow-up lineage for `{claim}`", "",
+             "Recorded source findings and the original reviewer's evidence-bound opinions "
+             "for this claim's protocol ancestry. `reviewer_satisfied` is effective at "
+             "the source snapshot; it does not establish independent scientific validity. "
+             "This section traces bound follow-ups; sibling findings remain in the full review "
+             "bundle and continue to gate paper eligibility.", ""]
+    for step in lineage:
+        source, review = step["source_claim"], step["source_review"]
+        obligation, followup, decision = (step["obligation"], step["followup"], step["resolution"])
+        lines.extend([
+            f"- Source claim `{source['id']}` (event `{source['hash']}`): {_cell(source['statement'])}",
+            f"  - Negative review `{review['id']}` (event `{review['hash']}`), "
+            f"reviewer `{_cell(review['actor'])}`, verdict `{review['verdict']}`: "
+            f"{_cell(review['rationale'])}",
+            f"  - Obligation `{obligation['id']}` (event `{obligation['hash']}`), "
+            f"`{obligation['kind']}`: {_cell(obligation['action'])} "
+            f"Closure criterion: {_cell(obligation['closure_criterion'])}",
+            "  - Original finding citations: " + "; ".join(
+                f"`{ref['id']}` (event `{ref['hash']}`)"
+                for ref in obligation["evidence_refs"]),
+            f"  - Frozen follow-up `{followup['id']}` (event `{followup['hash']}`), "
+            f"protocol `{followup['protocol']}` (event `{followup['protocol_hash']}`), "
+            f"node `{followup['experiment_node']}` (event `{followup['experiment_node_hash']}`).",
+            f"  - Reviewer resolution `{decision['id']}` (event `{decision['hash']}`) "
+            f"for bounded claim `{decision['claim']}`: recorded `{decision['recorded_disposition']}`; "
+            f"effective `{decision['effective_status']}`. {_cell(decision['rationale'])}",
+            "  - Cited new evidence: " + "; ".join(
+                f"`{ref['id']}` ({ref['kind']}, event `{ref['hash']}`)"
+                for ref in decision["evidence_refs"]), ""])
+    return lines
+
+
 def export_store(store: Store) -> dict[str, str]:
     # All files refer to precisely this verified history, even if another writer
     # appends while the export is materialized. Each file is atomically replaced.
@@ -277,9 +386,17 @@ class PaperBuilder:
         contexts = [resolve_context(history, id) for id in claims]
         context_claims = {id for context in contexts for id in context.claim_ids}
         context_links = {id for context in contexts for id in context.link_ids}
+        # review_bundle has replay-checked these decisions and calculated their
+        # effective status on precisely the same history snapshot.
+        resolutions = {event["payload"]["obligation"]: dict(
+            resolution=event,
+            status=bundle["obligation_resolution_status"][event["payload"]["obligation"]])
+            for event in bundle["review_obligation_resolutions"]}
+        followup_lineage = {id: _paper_followup_lineage(history, id, resolutions) for id in claims}
         bundle.update(selected_claims=claims, reviewed_bases=expected_bases,
                       selected_context=dict(claims=[e["id"] for e in history if e["id"] in context_claims],
-                                            links=[e["id"] for e in history if e["id"] in context_links]),
+                                            links=[e["id"] for e in history if e["id"] in context_links],
+                                            followup_lineage=followup_lineage),
                       paper_status="internal evidence-linked scaffold; human release pending")
         lines = [f"# {_cell(title)}", "", "**Internal evidence-linked draft.** "
                  "This scaffold records reviewed claims and computations. It is not a submission-ready paper.", "",
@@ -296,6 +413,7 @@ class PaperBuilder:
                           f"Stopping rule: {p['stopping_rule']}", "", "### Evidence", ""])
             runs = [e for e in history if e["kind"] == "run" and e["payload"]["protocol"] == c["protocol"]]
             lines.extend(_run_table(self.store, history, runs))
+            lines.extend(["", *_followup_manuscript(id, followup_lineage[id])])
             lines.extend(["", "### Limitations", "", *(f"- {item}" for item in c["limitations"]), ""])
         links = [e for e in history if e["id"] in context_links]
         lines.extend(_relation_table(links))

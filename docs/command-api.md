@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Статус обновлён 28 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/Replanning/Followup/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
+Статус обновлён 28 сентября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/Replanning/Followup/ReviewAssignment/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
 
 ## Использование
 
@@ -50,6 +50,7 @@ with Store(".research/command-example") as store:
 | `kernel.review` | reviewer | Review ID на immutable basis |
 | `kernel.link_claims` | planner, analyst | Immutable proposal связи двух claims на ожидаемых bases |
 | `kernel.review_with_links` | reviewer | Review v2 с явной оценкой каждой связи в evidence context |
+| `review.assign` | planner | Frozen manifest предполагаемого начального reviewer context и assignment event одной receipt; без права доступа или verdict |
 | `replanning.record_review` | reviewer | Negative review и typed открытые `review_obligation` в одной receipt |
 | `replanning.resolve_obligation` | reviewer | Новый bounded claim review и адресное evidence-bound решение одного finding в одной receipt |
 | `followup.apply` | planner | Frozen дочерний protocol/node и binding к одному obligation; не закрывает его |
@@ -106,6 +107,12 @@ Capabilities: `separate_cwd`, `python_isolated_mode`, `bounded_output_capture`, 
 Для accepted supports/limits/contradicts source должен проходить локальный gate на момент создания своего claim. В принятой цепочке supersession текущий gate требуется от источников, которые ещё не заменены другой accepted supersedes-связью в этом assessment. Внутренние звенья проверяются исторически: последовательные версии одного protocol могут сохранять правомерную историю при росте evidence. Все текущие bytes связанных попыток, включая failures, по-прежнему обязательны; новая версия проходит собственный текущий gate и отдельный review.
 
 Новый action не меняет signature/defaults прежнего `kernel.review`: сохранённые v1 command receipts продолжают replay исходного ID. Старое review после добавления связи становится историческим и не покрывает новый context.
+
+## Назначение reviewer и граница контекста
+
+`review.assign` принимает ровно `claim`, `reviewer_actor`, `expected_basis`. Роль команды — `planner`; её `context.study_id` должен совпадать с bound planning study, если такой binding есть. На момент записи claim обязан пройти mechanical gate с этим basis, а reviewer ID не должен входить в авторов его evidence context. Результат `{ "assignment": "review_assignment-...", "bundle": "<sha256>" }` ссылается на одно событие и CAS JSON. Replay исходного command ID возвращает ту же историческую receipt, а не утверждение, что basis всё ещё актуален.
+
+Manifest policy `blind_initial_review_v1` перечисляет разрешённые `raw_data`/`metrics` digests наблюдённых results и явные exclusions. Он содержит только выбранные поля planning, claim, protocol, run и result records; прямые implementation/environment/log/unobserved-data digests и прежние review verdicts исключены. Исторический replay сверяет manifest на исходном префиксе, exact event и receipt. Поля `identity_assurance=caller_declared` и `read_isolation=not_enforced` означают, что это **спецификация контекста**, а не защита файлов или проверка личности: reviewer, имеющий обычный доступ к тому же Store, может прочитать больше. `kernel.review`, `kernel.review_with_links` и `replanning.record_review` пока не требуют assignment. Подробности — [ADR 0011](decisions/0011-review-assignment-context.md).
 
 `gate.open_context_reviews` содержит открытые отрицательные reviews связанных claims. Для `approve` каждый такой ID должен быть явно указан в `evidence` хотя бы одной оценки связи; rationale объясняет совместимость с текущим ограниченным выводом. Это acknowledgement не закрывает исходное veto связанного claim. Его отрицательный verdict сохраняется между evidence revisions и меняется только новым approval того же reviewer. Эпизоды отрицательного review и первое закрывающее решение входят в зависимый basis; повторные обычные approvals не создают бесконечной взаимной инвалидации. Проверка ссылок не доказывает достаточность научного ответа; адресный переход для одного вида typed finding описан ниже и в [ADR 0010](decisions/0010-evidence-bound-obligation-resolution.md).
 
