@@ -52,14 +52,16 @@ def _findings(history: list[dict[str, Any]], claim: str, findings: Any,
     return normalized
 
 
-def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _index(store: Store, history: list[dict[str, Any]], *,
+           receipts: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Replay-verify complete review/obligation commands at historical boundaries.
 
     Current evidence changes cannot retroactively validate or invalidate the
     admission decision. Event/receipt chain verification remains Store's job.
     """
     obligations = {event["id"]: event for event in history if event["kind"] == "review_obligation"}
-    receipts = [receipt for receipt in store.receipts()
+    source = store.receipts() if receipts is None else receipts
+    receipts = [receipt for receipt in source
                 if receipt["request"]["action"] == "replanning.record_review"
                 and receipt["after_revision"] <= len(history)]
     if not obligations and not receipts:
@@ -125,6 +127,12 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
                                           obligations=[event["id"] for event in created]),
                 "replanning receipt result differs from committed events")
         states[review["id"]] = dict(review=review, obligations=created)
+    from .review_submission import _index as submitted_index
+    for state in submitted_index(store, history, receipts=source).values():
+        review = state["review"]
+        require(review["id"] not in states, "review has multiple obligation sources")
+        states[review["id"]] = dict(review=review, obligations=state["obligations"])
+        seen.update(event["id"] for event in state["obligations"])
     require(seen == set(obligations), "review obligation lacks its original command receipt")
     return states
 

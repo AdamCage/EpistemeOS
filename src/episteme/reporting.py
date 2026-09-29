@@ -78,6 +78,12 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
         if event["kind"] == "replan_followup":
             from .followup import followup_artifacts
             keys.update(followup_artifacts(event))
+        if event["kind"] == "review_assignment":
+            keys.add(p["bundle"])
+        if event["kind"] == "review_dispatch":
+            keys.add(p["request"])
+        if event["kind"] == "review_response" and p["response"] is not None:
+            keys.add(p["response"])
         if event["kind"] == "protocol":
             keys.update(p[key] for key in ("implementation", "environment", "data"))
             if p.get("statistical_design") is not None:
@@ -107,6 +113,12 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
 def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]:
     validate_planning(history)
     from .replanning import _index as replanning_index
+    from .review_assignment import _index as assignment_index
+    from .reviewer_controller import _index as delivery_index
+    from .review_submission import _index as submission_index
+    assignment_index(store, history)
+    delivery_index(store, history)
+    submission_index(store, history)
     from .followup import _index as followup_index
     replanning_index(store, history)
     followup_index(store, history)

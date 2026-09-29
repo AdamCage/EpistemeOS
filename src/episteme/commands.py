@@ -22,6 +22,8 @@ from .agents import Agents
 from .proposal_execution import ProposalExecution
 from .replanning import Replanning
 from .review_assignment import ReviewAssignment
+from .reviewer_controller import ReviewSession
+from .review_submission import ReviewSubmission
 from .followup import Followup
 from .followup_execution import FollowupExecution
 from .reporting import PaperBuilder
@@ -112,6 +114,9 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "replanning.resolve_obligation": (Replanning, Replanning.resolve_obligation,
                                        frozenset({"reviewer"})),
     "review.assign": (ReviewAssignment, ReviewAssignment.assign, frozenset({"planner"})),
+    "review.dispatch": (ReviewSession, ReviewSession.dispatch, frozenset({"planner"})),
+    "review.finalize": (ReviewSession, ReviewSession.finalize, frozenset({"planner"})),
+    "review.submit": (ReviewSubmission, ReviewSubmission.submit, frozenset({"reviewer"})),
     "followup.apply": (Followup, Followup.apply, frozenset({"planner"})),
     "followup.prepare_next": (FollowupExecution, FollowupExecution.prepare_next, frozenset({"planner"})),
     "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),
@@ -155,7 +160,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
     refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
                                     "claim", "source", "target", "selection", "tree", "experiment_node",
                                     "job", "batch", "request", "budget", "obligation", "parent_node",
-                                    "followup", "review", "terminal")
+                                    "followup", "review", "terminal", "assignment")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -187,6 +192,10 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "agent_dispatch": ("request",), "agent_response": ("request",),
             "agent_application": (("request", "protocol", "experiment_node")
                                   if p.get("schema_version") == 2 else ("request",)),
+            "review_assignment": ("claim",),
+            "review_dispatch": ("assignment", "claim"),
+            "review_response": ("assignment", "dispatch", "claim"),
+            "review_submission": ("assignment", "dispatch", "response_event", "claim", "review"),
         }.get(kind, ())
         refs.extend(p[field] for field in fields if isinstance(p.get(field), str))
         if kind == "paper":

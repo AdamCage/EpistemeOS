@@ -60,6 +60,9 @@ class NodeKind(str, Enum):
     CLAIM_LINK = "claim_link"
     REVIEW = "review"
     REVIEW_ASSIGNMENT = "review_assignment"
+    REVIEW_DISPATCH = "review_dispatch"
+    REVIEW_RESPONSE = "review_response"
+    REVIEW_SUBMISSION = "review_submission"
     REVIEW_OBLIGATION = "review_obligation"
     REVIEW_OBLIGATION_RESOLUTION = "review_obligation_resolution"
     REPLAN_FOLLOWUP = "replan_followup"
@@ -111,6 +114,8 @@ class Relation(str, Enum):
     REVIEW_ASSIGNMENT_TARGET = "review_assignment_target"
     REVIEW_ASSIGNMENT_CONTEXT = "review_assignment_context"
     REVIEW_ASSIGNMENT_ARTIFACT = "review_assignment_allowed_artifact"
+    REVIEW_DELIVERY_REFERENCE = "review_delivery_reference"
+    REVIEW_DELIVERY_ARTIFACT = "review_delivery_artifact"
     OBLIGATION_REVIEW = "obligation_review"
     OBLIGATION_CLAIM = "obligation_claim"
     OBLIGATION_EVIDENCE = "obligation_evidence"
@@ -566,6 +571,38 @@ class _Projection:
             for index, key in enumerate(manifest["allowed_artifact_digests"]):
                 self.blob(key, Relation.REVIEW_ASSIGNMENT_ARTIFACT,
                           f"bundle.allowed_artifact_digests[{index}]")
+        elif kind == "review_dispatch":
+            assignment = self.ref(p["assignment"], "review_assignment",
+                                  Relation.REVIEW_DELIVERY_REFERENCE, "assignment")
+            self.hash_ref(assignment, p["assignment_hash"], "assignment_hash")
+            self.ref(p["claim"], "claim", Relation.REVIEW_DELIVERY_REFERENCE, "claim")
+            self.blob(p["request"], Relation.REVIEW_DELIVERY_ARTIFACT, "request")
+        elif kind == "review_response":
+            self.ref(p["assignment"], "review_assignment",
+                     Relation.REVIEW_DELIVERY_REFERENCE, "assignment")
+            dispatch = self.ref(p["dispatch"], "review_dispatch",
+                                Relation.REVIEW_DELIVERY_REFERENCE, "dispatch")
+            self.hash_ref(dispatch, p["dispatch_hash"], "dispatch_hash")
+            self.ref(p["claim"], "claim", Relation.REVIEW_DELIVERY_REFERENCE, "claim")
+            if p["response"] is not None:
+                self.blob(p["response"], Relation.REVIEW_DELIVERY_ARTIFACT, "response")
+        elif kind == "review_submission":
+            assignment = self.ref(p["assignment"], "review_assignment",
+                                  Relation.REVIEW_DELIVERY_REFERENCE, "assignment")
+            self.hash_ref(assignment, p["assignment_hash"], "assignment_hash")
+            dispatch = self.ref(p["dispatch"], "review_dispatch",
+                                Relation.REVIEW_DELIVERY_REFERENCE, "dispatch")
+            self.hash_ref(dispatch, p["dispatch_hash"], "dispatch_hash")
+            completed = self.ref(p["response_event"], "review_response",
+                                 Relation.REVIEW_DELIVERY_REFERENCE, "response_event")
+            self.hash_ref(completed, p["response_event_hash"], "response_event_hash")
+            review = self.ref(p["review"], "review",
+                              Relation.REVIEW_DELIVERY_REFERENCE, "review")
+            self.hash_ref(review, p["review_hash"], "review_hash")
+            self.ref(p["claim"], "claim", Relation.REVIEW_DELIVERY_REFERENCE, "claim")
+            self.refs(p["obligations"], "review_obligation",
+                      Relation.REVIEW_DELIVERY_REFERENCE, "obligations")
+            self.blob(p["response"], Relation.REVIEW_DELIVERY_ARTIFACT, "response")
         elif kind == "review":
             claim = self.ref(p["claim"], "claim", Relation.REVIEW_TARGET, "claim")
             if self.basis(claim, e["seq"]) != p["basis_hash"]:
@@ -754,11 +791,21 @@ class _Projection:
         # A forged review.assign receipt can point to another supported event
         # kind; checking only for assignment events would silently skip it.
         from .review_assignment import _index as assignment_index
+        from .reviewer_controller import _index as delivery_index
+        from .review_submission import _index as submission_index
+        receipts = self.store._verified_receipts(self.history)
         try:
-            assignment_index(self.store, self.history,
-                             receipts=self.store._verified_receipts(self.history))
+            assignment_index(self.store, self.history, receipts=receipts)
         except (ValueError, KeyError, TypeError) as exc:
             self.fail(f"invalid review assignment history: {exc}")
+        try:
+            delivery_index(self.store, self.history, receipts=receipts)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.fail(f"invalid review delivery history: {exc}")
+        try:
+            submission_index(self.store, self.history, receipts=receipts)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.fail(f"invalid review submission history: {exc}")
         if any(e["kind"] == "review_obligation_resolution" for e in self.history):
             from .resolution import _index as resolution_index
             try:
@@ -774,7 +821,7 @@ class _Projection:
         if any(e["kind"] == "review_obligation" for e in self.history):
             from .replanning import _index as replanning_index
             try:
-                replanning_index(self.store, self.history)
+                replanning_index(self.store, self.history, receipts=receipts)
             except (ValueError, KeyError, TypeError) as exc:
                 self.fail(f"invalid replanning history: {exc}")
         if any(e["kind"].startswith("agent_") for e in self.history):

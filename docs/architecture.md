@@ -1,6 +1,6 @@
 # EpistemeOS: архитектура исследовательского harness
 
-Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 28 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
+Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 29 сентября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
 
 ## 1. Решение
 
@@ -92,6 +92,8 @@ Authoritative scientific state — append-only события. Ключевые 
 
 [ADR 0011](decisions/0011-review-assignment-context.md) добавляет `review.assign`: planner на текущем mechanically passed basis сохраняет назначение reviewer и точный CAS manifest его предполагаемого начального контекста. Из manifest исключены прямые ссылки на source/environment/logs и прежние verdicts; разрешены только наблюдённые `raw_data` и `metrics`. Исторический replay сверяет контекст, event и receipt. Это спецификация выдачи, а не ограничение чтения или удостоверение identity: существующие review commands ещё не требуют назначения.
 
+[ADR 0012](decisions/0012-review-delivery-and-submission.md) добавляет сохранённые `review.dispatch`/`review.finalize` и `review.submit`. Локальный controller передаёт provider только спроецированные разрешённые bytes, фиксирует запрос до вызова и не повторяет неизвестный исход. Reviewer command привязывает положительное или отрицательное мнение к завершённому ответу, assignment и текущему basis; отрицательное мнение порождает typed открытые obligations. Role ID и completion остаются заявлениями доверенного caller, без принудительной OS изоляции и аутентификации.
+
 Нужно разделять техническое состояние `queued/running/completed/failed/cancelled` и научный исход `supports/refutes/inconclusive/invalid`. Отрицательный научный результат с корректным выполнением — полноценный результат. Сбой исполнения не является опровержением гипотезы.
 
 Все открытые obligations исходного claim также блокируют черновик claim на протоколе дочернего follow-up даже без явной claim-связи.
@@ -129,6 +131,8 @@ Exploratory trials сохраняются с search history и использо�
 
 `review.assign` фиксирует предполагаемый blind initial context на конкретном evidence basis и отклоняет ID автора evidence context. Событие честно помечает `identity_assurance=caller_declared` и `read_isolation=not_enforced`; другой ID или CAS manifest не создаёт новой OS identity, sandbox либо независимого научного verdict.
 
+Выдача через `ReviewerController` и связанный `review.submit` не меняют этих гарантий: ограниченный аргумент Python-функции не запрещает коду провайдера читать Store через ту же OS identity. Legacy review commands без assignment остаются доступными и не получают provenance задним числом.
+
 Replication modes: `exact_rerun` (те же code/data), `seed_replicate` (новая случайность), `independent_reanalysis` (другая реализация, те же raw data), `new_data_replication` (новая выборка/среда). Независимый автор кода и новые данные — разные свойства. v0.1 поддерживает только контракт reanalysis; сравнивает primary metric по preregistered absolute tolerance. Такая проверка не доказывает causal validity или устойчивость на новой выборке.
 
 ## 8. Турнир и experiment tree search
@@ -159,7 +163,7 @@ TMLR и ICLR получают разные review profiles. TMLR акценти�
 
 Реализовано: immutable event history, content-addressed artifacts, frozen protocols, competing-hypothesis references, parent protocol links, run/result/claim references, run-count budget, seed coverage, reanalysis agreement, role checks, scoped claims, актуальность review basis, veto незакрытого отрицательного review и вычисление next action. `Search` сохраняет tournament ballots/ranking, bounded best-first frontier, выбор/резерв и terminal records; выбор повторно проверяет актуальность протокола, retries считаются по всей технической lineage. `PaperBuilder` создаёт внутренний evidence-linked Markdown/JSON scaffold из claims с актуальным approval, показывает в выбранном контексте цепочку отрицательный review → follow-up → evidence-bound resolution и перепроверяет basis перед сохранением.
 
-Не реализовано: независимые agents для execution/replication/scientific review, authenticated assignments и принудительная выдача ограниченного контекста, общий schema migration framework, leases/outbox, sandbox, полное environment reconstruction, generic metric recomputation, сопоставление statistical design с фактическими данными, литературный retrieval, полный manuscript/venue pipeline и автоматическое исполнение replanning после review. Typed obligations, дочерний follow-up и локальное evidence-bound мнение reviewer не доказывают scientific resolution. Они имеют отдельные milestones в [MVP-плане](mvp-plan.md). Начальный CLI demo подтверждает работу контрактов на синтетическом случае, не научную эффективность framework.
+Не реализовано: независимые agents для execution/replication/scientific review, authenticated assignments и принудительная изоляция доступа к ограниченному контексту, общий schema migration framework, leases/outbox, sandbox, полное environment reconstruction, generic metric recomputation, сопоставление statistical design с фактическими данными, литературный retrieval, полный manuscript/venue pipeline и автоматическое исполнение replanning после review. Typed obligations, дочерний follow-up и локальное evidence-bound мнение reviewer не доказывают scientific resolution. Они имеют отдельные milestones в [MVP-плане](mvp-plan.md). Начальный CLI demo подтверждает работу контрактов на синтетическом случае, не научную эффективность framework.
 
 `episteme demo --with-search` исполняет выбранный из двух зафиксированных вариантов, сохраняет альтернативу и бюджетную остановку. Баллы и ballots в нём заданы fixture-кодом. Реальные агенты не оценивают гипотезы, а scientific review остаётся открытым; это интеграционная проверка search → execution → evidence, не доказательство качества научного выбора.
 

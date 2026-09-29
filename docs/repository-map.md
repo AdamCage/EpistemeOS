@@ -1,6 +1,6 @@
 # Карта репозитория EpistemeOS
 
-Дата: 28 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
+Дата: 29 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
 
 ## Фактическое ядро v0.1
 
@@ -45,6 +45,8 @@ EpistemeOS/
 │   ├── replanning.py             negative review → typed открытые obligations
 │   ├── resolution.py             reviewer opinion → evidence-bound obligation resolution
 │   ├── review_assignment.py      frozen контекст назначения без identity/read isolation
+│   ├── reviewer_controller.py    durable projected выдача, raw ответ и unknown/reconcile
+│   ├── review_submission.py      verdict из delivered response → review/obligations/provenance
 │   ├── followup.py               obligation → frozen дочерний protocol/node/binding
 │   ├── followup_execution.py     winning follow-up node → selected frozen batch
 │   ├── execution_authority.py    локальный marker вне backup/CAS, запрет запуска restored batch
@@ -90,6 +92,7 @@ EpistemeOS/
     ├── test_replanning.py       review/obligation basis, replay и paper veto
     ├── test_resolution.py       exact review/resolution receipt, stale basis и sibling veto
     ├── test_review_assignment.py context policy, conflict, replay, Graph и restore
+    ├── test_reviewer_controller.py доставка, submission, unknown, replay и CLI
     ├── test_reporting_followup.py paper lineage и stale/sibling veto
     ├── test_followup.py         дочерний protocol/node, stale source, budget и no closure
     ├── test_followup_execution.py atomic selection/batch, stale basis, receipt replay и restore
@@ -109,7 +112,8 @@ EpistemeOS/
 | `batch.py`, `batch_controller.py` | Полный roster primary/reanalysis для выбранного scientific node, резерв будущих slots, resume без повторного dispatch, полный технический settlement. | Fresh primary policy; стоимость в attempts, без agent reasoning, automatic analysis/review/replanning. |
 | `proposal_execution.py` | Одной planner receipt связывает текущий winning applied model experiment node с selection и полным frozen batch из первоначальной compilation. | Не выбирает узел вопреки priority, не запускает worker и не оценивает научную состоятельность дизайна. |
 | `replanning.py`, `resolution.py` | Отрицательное мнение reviewer и typed obligations; затем адресное удовлетворение одного `discriminating_experiment` finding новым reviewed claim на неизменённом evidence basis. Historical receipt и текущий effective status проверяются отдельно. | Роль/ID заявлены caller; решение reviewer не доказывает научную истину или независимость, остальные findings остаются открытыми. |
-| `review_assignment.py` | На текущем mechanically passed basis сохраняет одну receipt, reviewer ID и curated CAS manifest предполагаемого initial context. Historical replay пересчитывает bytes и проверяет contributor conflict. | `caller_declared` identity и `not_enforced` read isolation; review пока не требует назначения. Manifest не закрывает доступ к Store или утечку смысла через свободный текст. |
+| `review_assignment.py` | На текущем mechanically passed basis сохраняет одну receipt, reviewer ID и curated CAS manifest предполагаемого initial context. Historical replay пересчитывает bytes и проверяет contributor conflict. | `caller_declared` identity и `not_enforced` read isolation; legacy review commands не требуют назначения. Manifest не закрывает доступ к Store или утечку смысла через свободный текст. |
+| `reviewer_controller.py`, `review_submission.py` | Durable projected request до внешнего вызова, raw response/status, unknown без повтора; затем reviewer opinion/typed obligations, привязанные к assignment и текущему evidence basis одной receipt. | Provider выполняется в доверенном локальном процессе, может читать Store; `review.finalize` и actor ID не аутентифицированы. Synthetic response не является научной экспертизой. |
 | `followup.py` | Один открытый запрос различающего эксперимента → frozen дочерний protocol/node/binding с проверкой текущего source basis и бюджета. | Planner-authored план, не запуск, научное подтверждение, независимое review или закрытие obligation. |
 | `followup_execution.py` | Повторно проверяет source review/basis и planning, связывает текущий winning follow-up node с frozen batch и exact receipt. | Recipe подаёт planner; selection и резерв не запускают worker и не закрывают научное замечание. |
 | `execution_authority.py` | Локальный token и проверка hash перед изменением execution state batch; DB/CAS restore не получает token. | Не аутентификация и не distributed lease; полное копирование marker владельцем файлов может создать исполняемый clone. |
