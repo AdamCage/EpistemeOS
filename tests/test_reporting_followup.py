@@ -5,6 +5,7 @@ evidence of an independent Scientific Reviewer or a publication-ready paper.
 """
 
 import json
+from pathlib import Path
 import unittest
 
 from episteme.kernel import Actor, Kernel
@@ -85,8 +86,8 @@ class PaperFollowupProvenanceTests(unittest.TestCase):
         self.assertEqual(bundle["selected_context"]["followup_lineage"][child][0]
                          ["followup"]["protocol"],
                          Kernel._get(self.store.events(), child, "claim")["payload"]["protocol"])
-        self.assertEqual(self.writer.materialize(paper)["manuscript"],
-                         str(self.root / f"{paper}.md"))
+        self.assertTrue(Path(self.writer.materialize(paper)["manuscript"]).samefile(
+            self.root / f"{paper}.md"))
 
     def test_descendant_protocol_paper_keeps_ancestral_review_lineage(self):
         child, basis, results = self.complete_child()
