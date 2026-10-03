@@ -56,6 +56,7 @@ EpistemeOS/
 │   ├── claims.py                 типизированный immutable ClaimLink
 │   ├── claim_context.py          scope/циклы связей и транзитивный review context
 │   ├── kernel.py                 валидируемые научные команды и gates
+│   ├── domain_binding.py         receipt-backed manual frozen domain recipe
 │   ├── search.py                 persistent tournament и bounded tree policy
 │   ├── reporting.py              snapshot export и внутренний paper scaffold
 │   ├── graph.py                  типизированная read-only проекция и queries
@@ -81,6 +82,7 @@ EpistemeOS/
     ├── test_execution.py         реальные jobs, controller crash, concurrency, Graph/CAS/backup
     ├── test_batch.py             полный roster, failures/unknown, atomicity, restore guard и CLI
     ├── test_batch_analysis.py    полный batch → claim → assignment, replay, CLI и restore
+    ├── test_domain_binding.py    manual recipe → batch → analysis, drift, CLI и restore
     ├── test_synthetic_batch_analysis.py  пересчёт raw metrics, frozen parameters и oracle boundary
     ├── test_execution_authority.py atomic marker, concurrency, corruption и restore
     ├── test_runner_backend.py    реальные descendants, timeout, capture cap и duplicate delivery
@@ -133,6 +135,7 @@ EpistemeOS/
 | `claims.py`, `claim_context.py` | Immutable proposals отношений, validation порядка/scope/циклов; review context из incoming supports/limits и symmetric contradictions/supersession. | Не доказывают научную связь; binding evidence basis и bytes проверяет Kernel/Graph. |
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
 | `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; общий runner и metric recomputation не перенесены. |
+| `domain_binding.py` | Ручная receipt-backed привязка planning-bound protocol к CAS recipe/adapter source и точным параметрам batch до исполнения; replay и Graph проверяют исходный префикс. | Доменный смысл recipe проверяет адаптер; actor ID и code digest не доказывают независимость или исполнение именно этих bytes в изолированной среде. |
 | `kernel.py` | Hypothesis/protocol/run/result/claim/review commands, правила ролей, binding digests/scope, seeds и run limit, review basis и `next_action`; открытые typed obligations удерживают `replan` и paper gate. | Python caller доверенный. Проверка finite metric не пересчитывает науку. `next_action` возвращает решение, не job. |
 | `search.py` | `register_tournament`, `pairings`, `ballot`, `ranking`; `register_tree`, `add_node`, `select_next`, `tree_state`, `finish_selection`. Сохраняются policy, ballots, nodes, решения и резервы объявленной стоимости. | Нет LLM judge, worker dispatch/lease или независимого измерения расходов. Priority не продвигает claim и допускает неполное сравнение pool. |
 | `demo.py` | Генерация синтетических CSV и два способа OLS в реальных subprocess, локальные actors; завершение перед review. | Только фиксированные программы, без LLM и независимого scientific review. Runtime record не восстанавливает произвольную среду. |

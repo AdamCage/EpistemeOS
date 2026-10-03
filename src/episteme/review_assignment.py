@@ -85,6 +85,10 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
                      and event["payload"]["claim"] in context.claim_ids
                      for key in (event["payload"]["proposal_digest"],
                                  event["payload"]["adapter_source_digest"]))
+    forbidden.update(key for event in history if event["kind"] == "domain_binding"
+                     and event["payload"]["protocol"] in protocols
+                     for key in (event["payload"]["recipe_digest"],
+                                 event["payload"]["adapter_source_digest"]))
     observed = []
     for run in runs:
         result = results.get(run["id"])

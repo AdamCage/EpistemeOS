@@ -48,6 +48,7 @@ class NodeKind(str, Enum):
     BATCH_SLOT = "batch_slot"
     BATCH_SETTLEMENT = "batch_settlement"
     BATCH_ANALYSIS = "batch_analysis"
+    DOMAIN_BINDING = "domain_binding"
     EXECUTION_JOB = "execution_job"
     EXECUTION_DISPATCH = "execution_dispatch"
     EXECUTION_FINALIZED = "execution_finalized"
@@ -88,6 +89,8 @@ class Relation(str, Enum):
     BATCH_ARTIFACT = "batch_artifact"
     BATCH_ANALYSIS_REFERENCE = "batch_analysis_reference"
     BATCH_ANALYSIS_ARTIFACT = "batch_analysis_artifact"
+    DOMAIN_REFERENCE = "domain_binding_reference"
+    DOMAIN_ARTIFACT = "domain_binding_artifact"
     REVIEW_BATCH = "review_batch"
     EXECUTION_RUN = "execution_run"
     EXECUTION_JOB = "execution_job"
@@ -395,6 +398,13 @@ class _Projection:
                              derivation="resolved_agent_application")
             for key in sorted(agent_artifacts(self.store, e)):
                 self.blob(key, Relation.AGENT_ARTIFACT, "agent_provenance")
+            return
+        if kind == "domain_binding":
+            from .domain_binding import binding_artifacts
+            protocol = self.ref(p["protocol"], "protocol", Relation.DOMAIN_REFERENCE, "protocol")
+            self.hash_ref(protocol, p["protocol_hash"], "protocol_hash")
+            for key in sorted(binding_artifacts(e)):
+                self.blob(key, Relation.DOMAIN_ARTIFACT, "frozen_domain_recipe")
             return
         if kind == "batch_analysis":
             fields = {"batch": "batch_plan", "settlement": "batch_settlement",
@@ -810,9 +820,14 @@ class _Projection:
         # kind; checking only for assignment events would silently skip it.
         from .review_assignment import _index as assignment_index
         from .batch_analysis import _index as analysis_index
+        from .domain_binding import _index as binding_index
         from .reviewer_controller import _index as delivery_index
         from .review_submission import _index as submission_index
         receipts = self.store._verified_receipts(self.history)
+        try:
+            binding_index(self.store, self.history, receipts=receipts)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.fail(f"invalid domain binding history: {exc}")
         try:
             analysis_index(self.store, self.history, receipts=receipts)
         except (ValueError, KeyError, TypeError) as exc:

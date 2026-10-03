@@ -105,6 +105,14 @@ def _validate_plan(store: Store, history: list[dict[str, Any]], p: dict[str, Any
     require(type(p["execution_authority"]) is str and re.fullmatch(r"[0-9a-f]{64}", p["execution_authority"]),
             "invalid batch execution authority digest")
     _recipe(store, p, plan)
+    from .domain_binding import _index as binding_index
+    binding = binding_index(store, history).get(protocol["id"])
+    if binding is not None:
+        frozen = binding["payload"]
+        require(all(p[field] == frozen[field] for field in
+                    ("reanalysis_implementation", "reanalysis_environment", "outputs",
+                     "wall_seconds", "max_output_bytes", "required_capabilities")),
+                "batch execution differs from the frozen domain binding")
 
 
 def _cells(state: dict[str, Any], executions: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:

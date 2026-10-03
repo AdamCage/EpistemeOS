@@ -121,13 +121,25 @@ def _metric(store: Store, digest: str) -> float:
 def _frozen_parameters(store: Store, history: list[dict[str, Any]], protocol: str) -> dict[str, Any]:
     applications = [event for event in history if event["kind"] == "agent_application"
                     and event["payload"].get("protocol") == protocol]
-    require(len(applications) == 1, "synthetic analysis requires one frozen experiment application")
-    manifest = _object(store.read(applications[0]["payload"]["compilation"]),
-                       "frozen experiment compilation")
-    require(type(manifest.get("compiled")) is dict
-            and type(manifest["compiled"].get("parameters")) is dict,
-            "synthetic compilation lacks registered parameters")
-    return manifest["compiled"]["parameters"]
+    from ..domain_binding import _index as binding_index
+    binding = binding_index(store, history).get(protocol)
+    require(len(applications) + (binding is not None) == 1,
+            "synthetic analysis requires one frozen experiment recipe")
+    if applications:
+        manifest = _object(store.read(applications[0]["payload"]["compilation"]),
+                           "frozen experiment compilation")
+        require(type(manifest.get("compiled")) is dict
+                and type(manifest["compiled"].get("parameters")) is dict,
+                "synthetic compilation lacks registered parameters")
+        return manifest["compiled"]["parameters"]
+    assert binding is not None
+    recipe = _object(store.read(binding["payload"]["recipe_digest"]),
+                     "frozen manual synthetic recipe")
+    require(recipe.get("schema_version") == 1 and recipe.get("domain") == ADAPTER_ID
+            and type(recipe.get("parameters")) is dict
+            and recipe.get("data") == Kernel._get(history, protocol, "protocol")["payload"]["data"],
+            "manual synthetic recipe differs from registered data and domain")
+    return recipe["parameters"]
 
 
 class SyntheticCausalBatchAnalysisAdapter:

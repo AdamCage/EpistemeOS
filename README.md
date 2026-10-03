@@ -42,6 +42,8 @@ uv run episteme analysis advance <batch-id> --root .research/study --planner pla
 
 `analysis advance` пересчитывает метрику из наблюдённых raw data, сохраняет bounded exploratory claim и назначает reviewer на текущем evidence basis. Повтор после перезапуска не создаёт второй claim или assignment. Статус `awaiting_review` не означает научное подтверждение; demo и CLI не создают reviewer verdict. Контракт — [ADR 0013](docs/decisions/0013-batch-analysis-admission.md), фактические проверки — в [validation.md](docs/validation.md).
 
+Ручной `domain.bind` через `episteme command` фиксирует domain recipe, исходник адаптера и параметры batch до исполнения planning-bound protocol. Он позволяет провести manual synthetic batch через тот же анализ и служит контрактом для будущего Afterlife pack; сам historical import пока не создаёт анализируемые runs или claim. Контракт — [ADR 0014](docs/decisions/0014-manual-domain-binding.md).
+
 ## Начать с документов
 
 - [Архитектура и границы гарантий](docs/architecture.md).
@@ -59,6 +61,7 @@ uv run episteme analysis advance <batch-id> --root .research/study --planner pla
 - [Модельное предложение эксперимента и host-owned synthetic recipe](docs/decisions/0008-experiment-proposals.md).
 - [Подготовка batch и сохраняемый follow-up по отрицательному review](docs/decisions/0009-proposal-review-replanning.md).
 - [Анализ завершённого batch и назначение reviewer](docs/decisions/0013-batch-analysis-admission.md).
+- [Ручная привязка frozen domain recipe до batch](docs/decisions/0014-manual-domain-binding.md).
 
 ## Локальный запуск
 

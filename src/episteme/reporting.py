@@ -74,6 +74,9 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
             keys.update(batch_artifacts(store, event))
         if event["kind"] == "batch_analysis":
             keys.update((p["proposal_digest"], p["adapter_source_digest"]))
+        if event["kind"] == "domain_binding":
+            from .domain_binding import binding_artifacts
+            keys.update(binding_artifacts(event))
         if event["kind"].startswith("execution_"):
             from .execution import execution_artifacts
             keys.update(execution_artifacts(store, event))
@@ -116,10 +119,12 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     validate_planning(history)
     from .replanning import _index as replanning_index
     from .batch_analysis import _index as analysis_index
+    from .domain_binding import _index as binding_index
     from .review_assignment import _index as assignment_index
     from .reviewer_controller import _index as delivery_index
     from .review_submission import _index as submission_index
     analysis_index(store, history)
+    binding_index(store, history)
     assignment_index(store, history)
     delivery_index(store, history)
     submission_index(store, history)
@@ -138,6 +143,7 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     return dict(bundle_version=1, summary=summary, events=history,
                 execution_batches=batches,
                 batch_analyses=[event for event in history if event["kind"] == "batch_analysis"],
+                domain_bindings=[event for event in history if event["kind"] == "domain_binding"],
                 artifacts=artifact_inventory(store, history),
                 claim_relations=[event for event in history if event["kind"] == "claim_link"],
                 review_obligations=[event for event in history if event["kind"] == "review_obligation"],

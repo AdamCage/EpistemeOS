@@ -12,6 +12,7 @@ from typing import Any
 
 from .agents import _index as agent_index
 from .batch import _index as batch_index
+from .domain_binding import _index as binding_index
 from .kernel import Actor, Kernel, require
 from .store import Store, canonical, digest
 
@@ -53,17 +54,41 @@ def _proposal(value: Any) -> dict[str, Any]:
     return value
 
 
-def _origin(store: Store, history: list[dict[str, Any]], protocol: str,
-            adapter_id: str) -> None:
-    """Require an applied, frozen domain recipe; manual batches have no binding."""
+def _origin(store: Store, history: list[dict[str, Any]], plan: dict[str, Any],
+            adapter_id: str, adapter_version: str, adapter_source_digest: str,
+            study_id: str) -> None:
+    """Require exactly one replay-verified domain recipe source for this batch."""
+    protocol = plan["payload"]["protocol"]
     applications = agent_index(store, history)
     matches = [state["application"] for state in applications.values()
                if state["application"] is not None
                and state["application"]["payload"].get("protocol") == protocol]
-    require(len(matches) == 1, "analysis requires one frozen applied domain recipe")
-    manifest = store.read(matches[0]["payload"]["compilation"])
-    compiled = json.loads(manifest)["compiled"]
-    require(compiled["domain"] == adapter_id, "analysis adapter differs from frozen domain")
+    binding = binding_index(store, history).get(protocol)
+    require(len(matches) + (binding is not None) == 1,
+            "analysis requires exactly one frozen applied or manually bound domain recipe")
+    if matches:
+        manifest = store.read(matches[0]["payload"]["compilation"])
+        compiled = json.loads(manifest)["compiled"]
+        require(compiled["domain"] == adapter_id,
+                "analysis adapter differs from frozen model domain")
+        return
+    require(binding is not None and binding["seq"] < plan["seq"],
+            "manual domain binding must precede the batch plan")
+    p, batch = binding["payload"], plan["payload"]
+    protocol_event = Kernel._get(history, protocol, "protocol")
+    require(p["study_id"] == study_id and p["protocol_hash"] == protocol_event["hash"],
+            "manual domain binding differs from the analysis study or protocol")
+    require((p["adapter_id"], p["adapter_version"], p["adapter_source_digest"])
+            == (adapter_id, adapter_version, adapter_source_digest),
+            "analysis adapter identity or source differs from frozen domain binding")
+    require(all(batch[field] == p[field] for field in
+                ("reanalysis_implementation", "reanalysis_environment", "outputs",
+                 "wall_seconds", "max_output_bytes", "required_capabilities")),
+            "batch execution recipe differs from frozen domain binding")
+    require(all(protocol_event["payload"][field] == p[target] for field, target in
+                (("implementation", "primary_implementation"),
+                 ("environment", "primary_environment"), ("data", "data"))),
+            "primary execution source differs from frozen domain binding")
 
 
 def _context(store: Store, history: list[dict[str, Any]], *, batch: str,
@@ -85,7 +110,8 @@ def _context(store: Store, history: list[dict[str, Any]], *, batch: str,
             "analysis study differs from batch planning study")
     p = _proposal(proposal)
     protocol = plan["payload"]["protocol"]
-    _origin(store, history, protocol, p["adapter_id"])
+    _origin(store, history, plan, p["adapter_id"], p["adapter_version"],
+            adapter_source_digest, study_id)
     require(type(adapter_source_digest) is str and re.fullmatch(r"[0-9a-f]{64}", adapter_source_digest),
             "invalid analysis adapter source digest")
     require(0 < len(store.read(adapter_source_digest)) <= 1024 * 1024,
@@ -101,6 +127,10 @@ def _context(store: Store, history: list[dict[str, Any]], *, batch: str,
                           for key in Kernel._get(history, result_id, "result")["payload"]["outputs"].values()}
     require(not {proposal_digest, adapter_source_digest} & observed_artifacts,
             "analysis proposal/source cannot alias observed output artifacts")
+    binding = binding_index(store, history).get(protocol)
+    if binding is not None:
+        require(binding["payload"]["recipe_digest"] not in observed_artifacts,
+                "domain recipe cannot alias observed output artifacts")
     task_id = digest(canonical(dict(batch=batch, settlement=expected_settlement,
                                     adapter_id=p["adapter_id"], adapter_version=p["adapter_version"],
                                     adapter_source_digest=adapter_source_digest,
