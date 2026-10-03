@@ -26,6 +26,7 @@ _EXCLUSIONS = [
     "execution_commands_and_environment_artifacts",
     "execution_logs_and_unselected_outputs",
     "author_reports_and_agent_responses",
+    "analysis_proposals_and_adapter_source",
     "prior_review_verdicts_and_rationales",
     "unobserved_protocol_data_and_split_digests",
 ]
@@ -43,6 +44,9 @@ def _safe_design(design: dict[str, Any]) -> dict[str, Any]:
 
 def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
               reviewer_actor: str, expected_basis: str, study_id: str) -> dict[str, Any]:
+    if any(event["kind"] == "batch_analysis" for event in history):
+        from .batch_analysis import _index as analysis_index
+        analysis_index(store, history)
     require(type(reviewer_actor) is str and bool(reviewer_actor.strip()),
             "reviewer actor must be a nonempty caller-declared ID")
     require(type(study_id) is str and bool(study_id.strip()), "assignment study_id is required")
@@ -77,6 +81,10 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
     allowed: set[str] = set()
     forbidden = {key for event in protocol_events
                  for key in (event["payload"]["implementation"], event["payload"]["environment"])}
+    forbidden.update(key for event in history if event["kind"] == "batch_analysis"
+                     and event["payload"]["claim"] in context.claim_ids
+                     for key in (event["payload"]["proposal_digest"],
+                                 event["payload"]["adapter_source_digest"]))
     observed = []
     for run in runs:
         result = results.get(run["id"])

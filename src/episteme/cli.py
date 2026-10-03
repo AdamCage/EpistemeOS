@@ -79,6 +79,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation = batch_ops.add_parser(name)
         operation.add_argument("batch", help="Recorded batch_plan ID")
         operation.add_argument("--root", type=Path, required=True)
+    analyses = subcommands.add_parser("analysis", help="Admit a batch claim and assign review; no verdict")
+    analysis_ops = analyses.add_subparsers(dest="operation", required=True)
+    for name in ("status", "advance"):
+        operation = analysis_ops.add_parser(name)
+        operation.add_argument("batch", help="Completed batch_plan ID")
+        operation.add_argument("--root", type=Path, required=True)
+        if name == "advance":
+            operation.add_argument("--planner", required=True, help="Caller-declared batch planner ID")
+            operation.add_argument("--analyst", required=True, help="Caller-declared analyst ID")
+            operation.add_argument("--reviewer", required=True, help="Caller-declared reviewer ID")
     followups = subcommands.add_parser("followup", help="Inspect an open review obligation and its child plan")
     followup_ops = followups.add_subparsers(dest="operation", required=True)
     followup_status = followup_ops.add_parser("status")
@@ -129,6 +139,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     action = {"status": agent_state, "work": work_agent,
                               "reconcile": reconcile_agent, "advance": advance_agent}[args.operation]
                     result = action(store, args.request)
+            status = 0
+        elif args.command == "analysis":
+            from .analysis_controller import advance_batch_analysis, analysis_state
+            from .domains.synthetic_batch_analysis import SyntheticCausalBatchAnalysisAdapter
+            if not (args.root / "state.sqlite3").is_file():
+                raise ValueError("existing research state is required")
+            with Store(args.root, read_only=args.operation == "status") as store:
+                result = (analysis_state(store, args.batch) if args.operation == "status" else
+                          advance_batch_analysis(store, args.batch,
+                              planner=Actor(args.planner, "planner"),
+                              analyst=Actor(args.analyst, "analyst"), reviewer_actor=args.reviewer,
+                              adapter=SyntheticCausalBatchAnalysisAdapter()))
             status = 0
         elif args.command == "batch":
             from .batch import batch_state

@@ -32,7 +32,15 @@ uv run episteme command --input request-experiment.json --root .research/study
 uv run episteme agent advance <agent-request-id> --root .research/study
 ```
 
-Первые две команды только сохраняют host-owned descriptors, без model call или научных событий. В `recipe.json` `environment` — digest из первой команды; в `request-experiment.json` используется [command envelope](docs/command-api.md) и IDs, возвращённые предыдущими шагами. [Публичная schema ответа](schemas/experiment-proposal-v1.schema.json) дополняется проверкой полного порядка frozen hypotheses. Значения `world` не входят в prompt модели, но сохраняются в локальном CAS; это не секретный sandbox. Применение не выбирает узел, не исполняет его и не создаёт evidence, review или paper. Следующая команда `proposal.prepare_next` через [command API](docs/command-api.md) атомарно выбирает winning applied proposal и готовит полный batch primary/reanalysis; она не запускает worker. Локально после реального model call этот batch исполнил четыре маленькие synthetic попытки и остановился на `awaiting_analysis`, без claim или scientific verdict. Контракт и ограничения — [ADR 0009](docs/decisions/0009-proposal-review-replanning.md), точная проверка — в [validation.md](docs/validation.md).
+Первые две команды только сохраняют host-owned descriptors, без model call или научных событий. В `recipe.json` `environment` — digest из первой команды; в `request-experiment.json` используется [command envelope](docs/command-api.md) и IDs, возвращённые предыдущими шагами. [Публичная schema ответа](schemas/experiment-proposal-v1.schema.json) дополняется проверкой полного порядка frozen hypotheses. Значения `world` не входят в prompt модели, но сохраняются в локальном CAS; это не секретный sandbox. Применение не выбирает узел, не исполняет его и не создаёт evidence, review или paper. Следующая команда `proposal.prepare_next` через [command API](docs/command-api.md) атомарно выбирает winning applied proposal и готовит полный batch primary/reanalysis; она не запускает worker. После сохранения batch ID можно продолжить локальный synthetic pilot:
+
+```powershell
+uv run episteme batch advance <batch-id> --root .research/study
+uv run episteme analysis status <batch-id> --root .research/study
+uv run episteme analysis advance <batch-id> --root .research/study --planner planner-1 --analyst analyst-1 --reviewer reviewer-1
+```
+
+`analysis advance` пересчитывает метрику из наблюдённых raw data, сохраняет bounded exploratory claim и назначает reviewer на текущем evidence basis. Повтор после перезапуска не создаёт второй claim или assignment. Статус `awaiting_review` не означает научное подтверждение; demo и CLI не создают reviewer verdict. Контракт — [ADR 0013](docs/decisions/0013-batch-analysis-admission.md), фактические проверки — в [validation.md](docs/validation.md).
 
 ## Начать с документов
 
@@ -50,6 +58,7 @@ uv run episteme agent advance <agent-request-id> --root .research/study
 - [Выбранный эксперимент, полный набор запусков и восстановление controller](docs/decisions/0006-execution-batches.md).
 - [Модельное предложение эксперимента и host-owned synthetic recipe](docs/decisions/0008-experiment-proposals.md).
 - [Подготовка batch и сохраняемый follow-up по отрицательному review](docs/decisions/0009-proposal-review-replanning.md).
+- [Анализ завершённого batch и назначение reviewer](docs/decisions/0013-batch-analysis-admission.md).
 
 ## Локальный запуск
 
@@ -154,6 +163,7 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 - Persistent tournament/tree, воспроизводимый replay решений, проверка актуальности frontier и общий лимит технических retries.
 - Два versioned model proposal tasks: hypotheses/ExplanationSet и exploratory protocol/tree node, с original response, receipts и provenance.
 - Атомарная подготовка полного batch для выбранного applied proposal; typed отрицательные reviewer obligations и сохраняемый дочерний follow-up без ложного закрытия finding.
+- Receipt-backed анализ завершённого synthetic batch до ограниченного claim и назначение reviewer на frozen basis; scientific verdict не создаётся.
 
 ## Граф и исторический импорт
 

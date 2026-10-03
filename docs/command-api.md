@@ -38,6 +38,7 @@ with Store(".research/command-example") as store:
 | `proposal.prepare_next` | planner | Выбор winning applied experiment proposal и полный frozen batch одной receipt; без worker dispatch |
 | `batch.enqueue_slot` | Назначенный executor / replicator | Atomic run + job + уникальная slot binding |
 | `batch.settle` | Автор batch, planner | Atomic полный batch settlement + search terminal; claim/review не создаются |
+| `analysis.apply` | analyst | Frozen proposal + полный bounded claim одной receipt после mechanical gate; не verdict |
 | `execution.enqueue` | executor / replicator | Atomic новый run + frozen job, занятый protocol attempt slot |
 | `execution.dispatch` | Назначенный executor / replicator | Durable намерение однократного запуска; handler не запускает процесс |
 | `execution.finalize` | Назначенный executor / replicator | Atomic проверенные result + execution_finalized |
@@ -111,6 +112,8 @@ Capabilities: `separate_cwd`, `python_isolated_mode`, `bounded_output_capture`, 
 Новый action не меняет signature/defaults прежнего `kernel.review`: сохранённые v1 command receipts продолжают replay исходного ID. Старое review после добавления связи становится историческим и не покрывает новый context.
 
 ## Назначение reviewer и граница контекста
+
+`analysis.apply` принимает `batch`, exact `expected_settlement`, proposal schema v1, CAS `adapter_source_digest` и предполагаемый `reviewer_actor`. Оно доступно analyst только после полного технического settlement batch, созданного из frozen applied domain recipe. Атомарная receipt связывает `[claim, batch_analysis]`; proposal/code сохранены в CAS, каждый завершённый run входит в claim evidence, mechanical gate и отсутствие reviewer среди contributors перепроверяются перед commit. Результат содержит claim, analysis event, proposal digest, task ID и evidence `basis_hash`; `scientific_validity` остаётся `not_assessed`. `episteme analysis advance BATCH --root ROOT --planner PLANNER_ID --analyst ID --reviewer ID` после перезапуска продолжает этот переход и отдельную `review.assign`; переданный planner ID должен совпасть с автором batch plan. `analysis status` читает сохранённое состояние. Пока CLI использует только synthetic causal adapter. [ADR 0013](decisions/0013-batch-analysis-admission.md) описывает replay, ограничения и границу доверия.
 
 `review.assign` принимает ровно `claim`, `reviewer_actor`, `expected_basis`. Роль команды — `planner`; её `context.study_id` должен совпадать с bound planning study, если такой binding есть. На момент записи claim обязан пройти mechanical gate с этим basis, а reviewer ID не должен входить в авторов его evidence context. Результат `{ "assignment": "review_assignment-...", "bundle": "<sha256>" }` ссылается на одно событие и CAS JSON. Replay исходного command ID возвращает ту же историческую receipt, а не утверждение, что basis всё ещё актуален.
 

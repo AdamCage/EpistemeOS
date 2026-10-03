@@ -69,9 +69,11 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
         if event["kind"].startswith("agent_"):
             from .agents import agent_artifacts
             keys.update(agent_artifacts(store, event))
-        if event["kind"].startswith("batch_"):
+        if event["kind"] in {"batch_plan", "batch_slot", "batch_settlement"}:
             from .batch import batch_artifacts
             keys.update(batch_artifacts(store, event))
+        if event["kind"] == "batch_analysis":
+            keys.update((p["proposal_digest"], p["adapter_source_digest"]))
         if event["kind"].startswith("execution_"):
             from .execution import execution_artifacts
             keys.update(execution_artifacts(store, event))
@@ -113,9 +115,11 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
 def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]:
     validate_planning(history)
     from .replanning import _index as replanning_index
+    from .batch_analysis import _index as analysis_index
     from .review_assignment import _index as assignment_index
     from .reviewer_controller import _index as delivery_index
     from .review_submission import _index as submission_index
+    analysis_index(store, history)
     assignment_index(store, history)
     delivery_index(store, history)
     submission_index(store, history)
@@ -133,6 +137,7 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     summary = _summary(store, history)
     return dict(bundle_version=1, summary=summary, events=history,
                 execution_batches=batches,
+                batch_analyses=[event for event in history if event["kind"] == "batch_analysis"],
                 artifacts=artifact_inventory(store, history),
                 claim_relations=[event for event in history if event["kind"] == "claim_link"],
                 review_obligations=[event for event in history if event["kind"] == "review_obligation"],
@@ -355,12 +360,21 @@ def export_store(store: Store) -> dict[str, str]:
     report.extend(_relation_table(bundle["claim_relations"]))
     if bundle["execution_batches"]:
         report.extend(["## Execution batches", "",
-            "Technical execution only; completed batches still require analysis and scientific review.", "",
+            "Technical execution alone does not establish a claim or scientific review.", "",
             "| Batch | Status | Enqueued / planned attempts | Next action |",
             "| --- | --- | --- | --- |"])
         report.extend(f"| {_cell(row['batch'])} | {_cell(row['status'])} | "
                       f"{row['enqueued_attempts']} / {row['plan']['reserved_cost']} | {_cell(row['next_action'])} |"
                       for row in bundle["execution_batches"])
+        report.append("")
+    if bundle["batch_analyses"]:
+        report.extend(["## Batch analyses", "",
+            "Adapter proposals are recorded interpretations. Scientific validity remains not_assessed; reviewer opinions and mechanical gates are separate records.", "",
+            "| Batch | Claim | Adapter | Intended reviewer |",
+            "| --- | --- | --- | --- |"])
+        report.extend(f"| {_cell(row['payload']['batch'])} | {_cell(row['payload']['claim'])} | "
+                      f"{_cell(row['payload']['adapter_id'])} | {_cell(row['payload']['reviewer_actor'])} |"
+                      for row in bundle["batch_analyses"])
         report.append("")
     planning_ids = {record["id"] for event in history if event["kind"] == "protocol"
                     and "planning" in event["payload"]

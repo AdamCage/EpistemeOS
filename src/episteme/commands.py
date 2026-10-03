@@ -18,6 +18,7 @@ from .kernel import Actor, Kernel
 from .planning import Planning
 from .execution import Execution
 from .batch import Batch
+from .batch_analysis import BatchAnalysis
 from .agents import Agents
 from .proposal_execution import ProposalExecution
 from .replanning import Replanning
@@ -121,6 +122,7 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "followup.prepare_next": (FollowupExecution, FollowupExecution.prepare_next, frozenset({"planner"})),
     "batch.enqueue_slot": (Batch, Batch.enqueue_slot, frozenset({"executor", "replicator"})),
     "batch.settle": (Batch, Batch.settle, frozenset({"planner"})),
+    "analysis.apply": (BatchAnalysis, BatchAnalysis.apply, frozenset({"analyst"})),
     "execution.enqueue": (Execution, Execution.enqueue, frozenset({"executor", "replicator"})),
     "execution.dispatch": (Execution, Execution.dispatch, frozenset({"executor", "replicator"})),
     "execution.finalize": (Execution, Execution.finalize, frozenset({"executor", "replicator"})),
@@ -187,6 +189,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "search_selection": ("node", "tree"), "search_terminal": ("selection",),
             "execution_job": ("run",), "execution_dispatch": ("job",), "execution_finalized": ("job",),
             "batch_plan": ("protocol", "selection"), "batch_slot": ("batch",), "batch_settlement": ("batch",),
+            "batch_analysis": ("batch", "settlement", "terminal", "protocol", "claim"),
             "agent_request": (("question", "budget", "explanation_set", "tree")
                               if p.get("schema_version") == 2 else ("question", "budget")),
             "agent_dispatch": ("request",), "agent_response": ("request",),

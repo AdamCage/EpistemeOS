@@ -47,6 +47,7 @@ class NodeKind(str, Enum):
     BATCH_PLAN = "batch_plan"
     BATCH_SLOT = "batch_slot"
     BATCH_SETTLEMENT = "batch_settlement"
+    BATCH_ANALYSIS = "batch_analysis"
     EXECUTION_JOB = "execution_job"
     EXECUTION_DISPATCH = "execution_dispatch"
     EXECUTION_FINALIZED = "execution_finalized"
@@ -85,6 +86,8 @@ class Relation(str, Enum):
     REVIEW_AGENT = "review_agent"
     BATCH_REFERENCE = "batch_reference"
     BATCH_ARTIFACT = "batch_artifact"
+    BATCH_ANALYSIS_REFERENCE = "batch_analysis_reference"
+    BATCH_ANALYSIS_ARTIFACT = "batch_analysis_artifact"
     REVIEW_BATCH = "review_batch"
     EXECUTION_RUN = "execution_run"
     EXECUTION_JOB = "execution_job"
@@ -393,7 +396,22 @@ class _Projection:
             for key in sorted(agent_artifacts(self.store, e)):
                 self.blob(key, Relation.AGENT_ARTIFACT, "agent_provenance")
             return
-        if kind.startswith("batch_"):
+        if kind == "batch_analysis":
+            fields = {"batch": "batch_plan", "settlement": "batch_settlement",
+                      "terminal": "search_terminal", "protocol": "protocol",
+                      "claim": "claim"}
+            for field, target_kind in fields.items():
+                reference = self.ref(p[field], target_kind,
+                                     Relation.BATCH_ANALYSIS_REFERENCE, field)
+                self.hash_ref(reference, p[field + "_hash"], field + "_hash")
+            self.refs(p["runs"], "run", Relation.BATCH_ANALYSIS_REFERENCE, "runs")
+            self.refs(p["results"], "result", Relation.BATCH_ANALYSIS_REFERENCE, "results")
+            self.blob(p["proposal_digest"], Relation.BATCH_ANALYSIS_ARTIFACT,
+                      "proposal_digest")
+            self.blob(p["adapter_source_digest"], Relation.BATCH_ANALYSIS_ARTIFACT,
+                      "adapter_source_digest")
+            return
+        if kind in {"batch_plan", "batch_slot", "batch_settlement"}:
             from .batch import batch_artifacts
             fields = ({"selection": "search_selection", "node": "experiment_node",
                        "tree": "search_tree", "protocol": "protocol"} if kind == "batch_plan"
@@ -791,9 +809,14 @@ class _Projection:
         # A forged review.assign receipt can point to another supported event
         # kind; checking only for assignment events would silently skip it.
         from .review_assignment import _index as assignment_index
+        from .batch_analysis import _index as analysis_index
         from .reviewer_controller import _index as delivery_index
         from .review_submission import _index as submission_index
         receipts = self.store._verified_receipts(self.history)
+        try:
+            analysis_index(self.store, self.history, receipts=receipts)
+        except (ValueError, KeyError, TypeError) as exc:
+            self.fail(f"invalid batch analysis history: {exc}")
         try:
             assignment_index(self.store, self.history, receipts=receipts)
         except (ValueError, KeyError, TypeError) as exc:

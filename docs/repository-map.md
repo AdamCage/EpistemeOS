@@ -1,6 +1,6 @@
 # Карта репозитория EpistemeOS
 
-Дата: 29 сентября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
+Дата: 3 октября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
 
 ## Фактическое ядро v0.1
 
@@ -26,7 +26,7 @@ EpistemeOS/
 ├── src/episteme/
 │   ├── __init__.py
 │   ├── __main__.py               python -m episteme
-│   ├── cli.py                    demo / inspect / agent / execution / batch / graph / command / backup / restore
+│   ├── cli.py                    demo / inspect / agent / execution / batch / analysis / graph / command / backup / restore
 │   ├── store.py                  SQLite events/receipts и content-addressed blobs
 │   ├── recovery.py               согласованный backup и verified restore в новый каталог
 │   ├── commands.py               versioned allowlist, type/role admission, normalization
@@ -41,6 +41,8 @@ EpistemeOS/
 │   ├── execution.py              atomic job admission, one-shot dispatch, verified reconciliation
 │   ├── batch.py                  frozen primary/reanalysis roster, attempt ownership и settlement
 │   ├── batch_controller.py       последовательный resume по сохранённым slots
+│   ├── batch_analysis.py         claim + analysis provenance одной receipt
+│   ├── analysis_controller.py    resume analysis → review assignment
 │   ├── proposal_execution.py     applied proposal → selected frozen batch в одной receipt
 │   ├── replanning.py             negative review → typed открытые obligations
 │   ├── resolution.py             reviewer opinion → evidence-bound obligation resolution
@@ -59,6 +61,7 @@ EpistemeOS/
 │   ├── graph.py                  типизированная read-only проекция и queries
 │   ├── domains/afterlife.py      bounded historical inspection/import
 │   ├── domains/synthetic_causal.py  synthetic fixture recipe и runner sources
+│   ├── domains/synthetic_batch_analysis.py  пересчёт synthetic metric из raw data
 │   └── demo.py                   два фиксированных CPU-приложения
 ├── schemas/                      command, statistical design, question/set, claim link, review и experiment proposal
 ├── examples/model_hypotheses.py  подготовка одного задания; --execute явно вызывает модель
@@ -77,6 +80,8 @@ EpistemeOS/
     ├── test_planning_workflow.py protocol/review/study/graph binding, CLI и recovery
     ├── test_execution.py         реальные jobs, controller crash, concurrency, Graph/CAS/backup
     ├── test_batch.py             полный roster, failures/unknown, atomicity, restore guard и CLI
+    ├── test_batch_analysis.py    полный batch → claim → assignment, replay, CLI и restore
+    ├── test_synthetic_batch_analysis.py  пересчёт raw metrics, frozen parameters и oracle boundary
     ├── test_execution_authority.py atomic marker, concurrency, corruption и restore
     ├── test_runner_backend.py    реальные descendants, timeout, capture cap и duplicate delivery
     ├── test_claims.py            shape и hashes immutable claim links
@@ -109,7 +114,8 @@ EpistemeOS/
 | `agents.py`, `agent_controller.py`, `codex_provider.py` | Frozen hypothesis/experiment requests, bounded local CLI, response retention, atomic hypotheses/set или protocol/tree node application. | Caller-declared actors и trusted OS/account; нет authenticated independence, model-science approval или автоматического запуска предложенного эксперимента. |
 | `experiment_proposals.py` | Frozen prompt, provider schema и strict semantic validator для experiment proposal по исходному порядку hypotheses. | Валидный JSON не доказывает различающую силу эксперимента или реальное исполнение. |
 | `domains/synthetic_causal.py` | Синтетический causal recipe, отдельные source для primary/reanalysis и typed exploratory design. | Известный генератор и общие наблюдения для повторного анализа; нет внешнего scientific evidence или доказанной независимости второго анализа. |
-| `batch.py`, `batch_controller.py` | Полный roster primary/reanalysis для выбранного scientific node, резерв будущих slots, resume без повторного dispatch, полный технический settlement. | Fresh primary policy; стоимость в attempts, без agent reasoning, automatic analysis/review/replanning. |
+| `batch.py`, `batch_controller.py` | Полный roster primary/reanalysis для выбранного scientific node, резерв будущих slots, resume без повторного dispatch, полный технический settlement. | Fresh primary policy; стоимость в attempts, без agent reasoning или научной оценки. |
+| `batch_analysis.py`, `analysis_controller.py`, `domains/synthetic_batch_analysis.py` | На frozen synthetic recipe пересчитывают observed point estimates, фиксируют proposal/code CAS, полный claim и отдельно reviewer assignment с resume после сбоя. | Тот же OS actor может прочитать world; source digest не attestation. Нет verdict, универсального анализа или второго domain pack. |
 | `proposal_execution.py` | Одной planner receipt связывает текущий winning applied model experiment node с selection и полным frozen batch из первоначальной compilation. | Не выбирает узел вопреки priority, не запускает worker и не оценивает научную состоятельность дизайна. |
 | `replanning.py`, `resolution.py` | Отрицательное мнение reviewer и typed obligations; затем адресное удовлетворение одного `discriminating_experiment` finding новым reviewed claim на неизменённом evidence basis. Historical receipt и текущий effective status проверяются отдельно. | Роль/ID заявлены caller; решение reviewer не доказывает научную истину или независимость, остальные findings остаются открытыми. |
 | `review_assignment.py` | На текущем mechanically passed basis сохраняет одну receipt, reviewer ID и curated CAS manifest предполагаемого initial context. Historical replay пересчитывает bytes и проверяет contributor conflict. | `caller_declared` identity и `not_enforced` read isolation; legacy review commands не требуют назначения. Manifest не закрывает доступ к Store или утечку смысла через свободный текст. |
@@ -131,7 +137,7 @@ EpistemeOS/
 | `search.py` | `register_tournament`, `pairings`, `ballot`, `ranking`; `register_tree`, `add_node`, `select_next`, `tree_state`, `finish_selection`. Сохраняются policy, ballots, nodes, решения и резервы объявленной стоимости. | Нет LLM judge, worker dispatch/lease или независимого измерения расходов. Priority не продвигает claim и допускает неполное сравнение pool. |
 | `demo.py` | Генерация синтетических CSV и два способа OLS в реальных subprocess, локальные actors; завершение перед review. | Только фиксированные программы, без LLM и независимого scientific review. Runtime record не восстанавливает произвольную среду. |
 | `reporting.py` | Один snapshot для inspect/export; `PaperBuilder.build` проверяет текущую eligibility и записывает immutable Markdown/JSON+paper event с трассировкой привязанного review-driven follow-up; `materialize` повторно проверяет basis и bytes. | Внутренний scaffold, без полноценного literature/figures/Methods validation или venue formatting; свободный claim text не сертифицируется. |
-| `cli.py` | Demo/inspection/gates/export, review JSON, paper scaffold; `agent recipe --input` замораживает host-owned binding, `agent advance` продолжает оба proposal tasks; новые переходы принимаются через `episteme command`. | Actor ID задаётся доверенным caller; recipe command не вызывает модель, а proposal application и batch preparation не исполняют experiment node; sandbox и независимого scientific review нет. |
+| `cli.py` | Demo/inspection/gates/export, review JSON, paper scaffold; `agent recipe --input` замораживает host-owned binding, `agent advance` продолжает оба proposal tasks; `analysis status/advance` обрабатывает завершённый synthetic batch. Остальные переходы принимаются через `episteme command`. | Actor ID задаётся доверенным caller; sandbox и независимого scientific review нет. |
 | `tests/test_kernel.py` | Протокол до run, источники evidence, scope, budgets при конфликте writers, retention failures, stale review, self-review, integrity. | Unit tests не доказывают clean-room, sandbox, научную правильность или публикационное качество. |
 | `tests/test_search.py`, `tests/test_reporting.py`, `tests/test_cli.py` | Поиск и cost reservations, snapshot consistency и paper eligibility, входные review JSON и запускаемые CLI/subprocess сценарии. | Покрытие конкретных failure cases не означает общего доказательства безопасности либо работы независимых научных агентов. |
 | `docs/research/*` | Проверяемые основания решений и заранее предлагаемый evaluation design. | Литературный обзор и локальный code audit не означают независимого запуска внешних систем. |

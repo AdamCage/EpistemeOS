@@ -31,7 +31,7 @@
           "agent.register_budget", "agent.request_hypotheses", "agent.request_experiment",
           "agent.dispatch", "agent.finalize", "agent.apply_hypotheses", "agent.apply_experiment",
           "execution.enqueue", "execution.dispatch", "execution.finalize",
-          "batch.plan", "batch.enqueue_slot", "batch.settle", "proposal.prepare_next",
+          "batch.plan", "batch.enqueue_slot", "batch.settle", "analysis.apply", "proposal.prepare_next",
           "replanning.record_review", "replanning.resolve_obligation",
           "review.assign", "review.dispatch", "review.finalize", "review.submit",
           "followup.apply", "followup.prepare_next",

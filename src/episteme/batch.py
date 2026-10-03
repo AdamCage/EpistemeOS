@@ -337,7 +337,11 @@ def batch_context(store: Store, history: list[dict[str, Any]], run_ids: set[str]
 
 def batch_artifacts(store: Store, event: dict[str, Any]) -> set[str]:
     p = event["payload"]
-    return {p["reanalysis_implementation"], p["reanalysis_environment"]} if event["kind"] == "batch_plan" else set()
+    if event["kind"] == "batch_plan":
+        return {p["reanalysis_implementation"], p["reanalysis_environment"]}
+    if event["kind"] == "batch_analysis":
+        return {p["proposal_digest"], p["adapter_source_digest"]}
+    return set()
 
 
 class Batch:

@@ -103,7 +103,7 @@ def exposure_artifacts(event: dict[str, Any], store: Store | None = None) -> set
         from .agents import agent_artifacts
         require(store is not None, "agent provenance requires its artifact store")
         return agent_artifacts(store, event)
-    if event["kind"].startswith("batch_"):
+    if event["kind"] in {"batch_plan", "batch_slot", "batch_settlement", "batch_analysis"}:
         from .batch import batch_artifacts
         require(store is not None, "batch artifact context requires a store")
         return batch_artifacts(store, event)
@@ -497,6 +497,10 @@ class Kernel:
             from .batch import batch_context
             context_runs = {event["id"] for event in basis if event["kind"] == "run"}
             basis.extend(batch_context(self.store, history, context_runs))
+        # A frozen domain proposal is part of the evidence revision reviewed
+        # later. Its event follows the claim, so it cannot be added by claim().
+        basis.extend(event for event in history if event["kind"] == "batch_analysis"
+                     and event["payload"].get("claim") == claim)
         return basis, runs
 
     def _basis(self, history: list[dict[str, Any]], claim: str) -> tuple[str, list[dict[str, Any]]]:
@@ -630,6 +634,14 @@ class Kernel:
                 self.store.read(key)
             except IntegrityError as exc:
                 failures.append(str(exc))
+        for event in evidence:
+            if event["kind"] != "batch_analysis":
+                continue
+            for key in exposure_artifacts(event, self.store):
+                try:
+                    self.store.read(key)
+                except IntegrityError as exc:
+                    failures.append(str(exc))
         for run in runs:
             r = run["payload"]
             if not r["replicate_of"]:

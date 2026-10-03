@@ -1,0 +1,19 @@
+# ADR 0013 — анализ завершённого batch и возобновляемое назначение review
+
+Дата: 3 октября 2026. Статус: реализовано и локально проверено; результат публичного CI фиксируется в [validation.md](../validation.md).
+
+## Проблема
+
+Технический `batch_settlement.status=completed` подтверждает полноту запланированного roster, но не создаёт claim и не удостоверяет смысл метрики. Прямой `kernel.claim` проверяет ссылки и scope, однако не требует успешного mechanical gate до записи. Если следующий шаг назначает reviewer без сохранённой версии интерпретации, пакет review не охватывает аналитический код и кандидат вывода.
+
+## Решение
+
+`analysis.apply` исполняется только через `CommandService` с ролью analyst. Оно требует точный `expected_settlement`, завершённые все primary/reanalysis slots, исходную study и прикладной протокол с одним frozen `agent_application` domain binding. Для ручного batch без такой привязки переход пока закрыт. У предложения фиксированная schema v1: ID и версия адаптера, текст ограниченного claim, limitations, outcome, inference mode и предметные details. Доменный отчёт и bytes кода адаптера сохраняются в CAS; receipt создаёт `[claim, batch_analysis]` атомарно. Claim обязан перечислять **все** завершённые runs из settlement. Перед commit повторно вычисляются mechanical gate и конфликт назначенного reviewer с авторами evidence context. Провал откатывает оба события. `batch_analysis` входит в evidence basis claim, поэтому изменение предложения или исходника делает последующие решения недействительными.
+
+Ключ конкретной аналитической задачи связывает batch, settlement, adapter ID/version/source и digest предложения. Повтор той же задачи не создаёт второй claim; другой bounded кандидат может существовать отдельно. Historical replay проверяет исходную receipt, claim payload, roster, CAS, gate и reviewer conflict на исходном префиксе событий. Graph и export включают provenance. Текущий `advance_batch_analysis` выбирает одну задачу batch, после сбоя восстанавливает её из receipt только для того же adapter ID/version и затем отдельной planner-командой делает `review.assign` на заново проверенном basis. Caller явно передаёт planner actor, совпадающий с автором batch plan; это всё ещё заявление без аутентификации. Действуют две разные транзакции, потому что actor/role в одной receipt должны совпадать. После первой команды без второй состояние честно остаётся `awaiting_assignment`; после назначения — `awaiting_review`, не scientific approval.
+
+Первый предметный адаптер `synthetic_causal_v1` пересчитывает `treatment_effect` из наблюдённых `raw.json` для каждого seed, сверяет параметры наблюдённых данных с frozen `compiled.parameters` и primary/independent-reanalysis metrics с численным допуском 1e-9. Он возвращает только `inconclusive`/`exploratory` и не читает скрытый world из protocol data. Это синтетическая fixture и пересчёт тех же данных, не new-data replication и не каузальное открытие.
+
+## Ограничения
+
+Адаптер и planner работают под одной локальной OS identity; записанный source digest — provenance, не attestation того, что конкретно эти bytes были исполнены в изолированном процессе. Reviewer ID задаёт caller, а assignment manifest ограничивает только передаваемый аргумент: прямое чтение Store не заблокировано. Доменная интерпретация текста proposal не сертифицируется универсальным ядром; успешный gate означает механическую полноту и согласие метрик. Reviewer verdict, обязательства, новый эксперимент и paper требуют следующих отдельных переходов. При нескольких аналитических задачах текущий controller требует явного выбора и не выбирает научный вывод сам.
