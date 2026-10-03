@@ -67,6 +67,7 @@ EpistemeOS/
 │   ├── domains/synthetic_batch_analysis.py  пересчёт synthetic metric из raw data
 │   ├── domains/api.py            DomainPack envelopes, StatisticalReport v1 и hook-facing CasView (ADR 0016)
 │   ├── domains/registry.py       явный allowlist пакетов, code manifest и загрузка закреплённых bytes
+│   ├── domains/packs/synthetic_causal_v1/  фасад synthetic pack: те же программы, recipe и estimator
 │   └── demo.py                   два фиксированных CPU-приложения
 ├── schemas/                      command, statistical design, question/set, claim link, review, experiment proposal, девять DomainPack envelopes и pack code manifest
 ├── examples/model_hypotheses.py  подготовка одного задания; --execute явно вызывает модель
@@ -117,6 +118,7 @@ EpistemeOS/
     ├── golden_support.py         загрузка и наблюдение сохранённых fixture histories
     ├── fixtures/golden/          три synthetic histories от кода 483f1bd и их ожидаемые hashes
     ├── test_domain_pack_conformance.py  общий conformance suite пакетов, pinning, drift и import contract
+    ├── test_synthetic_pack.py    synthetic pack против legacy compiler/adapter на golden histories
     ├── pack_fixtures.py          conformance-входы пакетов и минимальный локальный runner без Store
     ├── fixtures/packs/           тестовый пакет conformance_fixture_v1, только для проверки контракта
     └── test_workflow.py          фактический search → execution → evidence demo
@@ -150,7 +152,8 @@ EpistemeOS/
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
 | `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; импорт сам не создаёт runs. Пересчёт stop-событий одного run выполняет отдельный пилот выше. |
 | `domains/api.py` | Frozen envelopes ADR 0016 (`PackManifest`, `ParameterCatalog`, `ProtocolDraft`, `ExecutionPlan`, `CaptureBundle`, `OutputCheck`, `Recomputation`, `AnalysisReport` v2, `StatisticalReport` v1) и runtime-проверка по тем же schemas, что опубликованы в `schemas/`. | Проверяет форму, согласованность полей и допустимость `not_applicable` для preregistered design, но не правильность статистики. Ядро эти envelopes пока не вызывает. |
-| `domains/registry.py` | Явный allowlist `pack_id → package`; хеширует все файлы каталога пакета, исполняет именно эти bytes под приватным именем модуля, проверяет manifest, hooks и статический import contract. | Пакет остаётся доверенным Python в процессе ядра: digest выявляет drift и чужую версию, но не вредоносный код, подмену интерпретатора или чтение вне контракта. Production allowlist пока пуст. |
+| `domains/registry.py` | Явный allowlist `pack_id → package`; хеширует все файлы каталога пакета, исполняет именно эти bytes под приватным именем модуля, проверяет manifest, hooks и статический import contract. | Пакет остаётся доверенным Python в процессе ядра: digest выявляет drift и чужую версию, но не вредоносный код, подмену интерпретатора или чтение вне контракта. |
+| `domains/packs/synthetic_causal_v1/` | Manifest, catalog, compile и analysis hooks synthetic fixture; программы, recipe и estimator перенесены из legacy-модулей без изменения вычислений, world объявлен скрытым входом. | Fixture с известным генератором; report оставляет `inconclusive`/`exploratory`. Legacy `synthetic_causal.py` и `synthetic_batch_analysis.py` по-прежнему обслуживают модельный путь ADR 0008 и `domain.bind`. |
 | `tests/golden_support.py`, `tests/fixtures/golden/` | Три synthetic fixture histories, созданные немодифицированным кодом `483f1bd`, и ожидаемые basis, gates, Graph, export bundle и replay-проекции. | Сравнение механическое: совпадение не означает научной валидности; новые event kinds в этих histories не представлены. |
 | `domain_binding.py` | Ручная receipt-backed привязка planning-bound protocol к CAS recipe/adapter source и точным параметрам batch до исполнения; replay и Graph проверяют исходный префикс. | Доменный смысл recipe проверяет адаптер; actor ID и code digest не доказывают независимость или исполнение именно этих bytes в изолированной среде. |
 | `kernel.py` | Hypothesis/protocol/run/result/claim/review commands, правила ролей, binding digests/scope, seeds и run limit, review basis и `next_action`; открытые typed obligations удерживают `replan` и paper gate. | Python caller доверенный. Проверка finite metric не пересчитывает науку. `next_action` возвращает решение, не job. |

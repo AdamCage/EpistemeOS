@@ -30,9 +30,19 @@ def _fixture_request(workdir: Path) -> api.CompileRequest:
                               host_inputs={"groups": [[1, 2, 3], [4, 5], [-7]]}, capture=None)
 
 
+def _synthetic_request(workdir: Path) -> api.CompileRequest:
+    return api.CompileRequest(
+        parameters={"n_samples": 48, "assignment": "observational", "analysis": "adjusted_ols"},
+        host_inputs={"world": {"treatment_effect": 1.5, "confounding_strength": 0.7,
+                               "noise_std": 0.5},
+                     "seeds": [3, 5], "replication_tolerance": 1e-9},
+        capture=None)
+
+
 # pack_id -> (module name for registration, compile-request builder)
 FIXTURES: dict[str, tuple[str, Callable[[Path], api.CompileRequest]]] = {
     FIXTURE_PACK: (FIXTURE_PACK, _fixture_request),
+    "synthetic_causal_v1": ("episteme.domains.packs.synthetic_causal_v1", _synthetic_request),
 }
 
 
