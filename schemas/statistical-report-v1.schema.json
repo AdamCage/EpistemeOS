@@ -1,0 +1,1115 @@
+{
+  "$comment": "All twelve fields are required. not_applicable is valid only when the preregistered design implies it; not_supplied needs a reason and limits claim strength. Presence and consistency of fields are checked, not correctness of the statistics.",
+  "$defs": {
+    "assumptions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "assumption": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "holds",
+              "violated",
+              "unchecked"
+            ]
+          }
+        },
+        "required": [
+          "assumption",
+          "status",
+          "reference"
+        ],
+        "type": "object"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "confidence_interval": {
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "lower": {
+          "type": "number"
+        },
+        "method": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "upper": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "level",
+        "lower",
+        "upper",
+        "method"
+      ],
+      "type": "object"
+    },
+    "deviations": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "actual": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "field": {
+            "enum": [
+              "estimand",
+              "estimator",
+              "point_estimate",
+              "uncertainty",
+              "confidence_interval",
+              "effect_size",
+              "assumptions",
+              "sample_size",
+              "multiple_testing",
+              "stopping_rule",
+              "sensitivity_analysis",
+              "analysis_plan"
+            ]
+          },
+          "plan": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "plan",
+          "actual",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "maxItems": 64,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "effect_size": {
+      "additionalProperties": false,
+      "properties": {
+        "measure": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "reference": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "measure",
+        "value",
+        "reference"
+      ],
+      "type": "object"
+    },
+    "estimand": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 16384,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol_hash",
+        "text"
+      ],
+      "type": "object"
+    },
+    "estimator": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "hook": {
+          "enum": [
+            "analyse",
+            "recompute_metrics"
+          ]
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "hook"
+      ],
+      "type": "object"
+    },
+    "multiple_testing": {
+      "additionalProperties": false,
+      "properties": {
+        "adjusted_result": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "claim_position": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "correction": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "family": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "family",
+        "claim_position",
+        "correction",
+        "adjusted_result"
+      ],
+      "type": "object"
+    },
+    "point_estimate": {
+      "additionalProperties": false,
+      "properties": {
+        "by_roster_unit": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "roster_unit": {
+                "maximum": 2147483647,
+                "minimum": -2147483648,
+                "type": "integer"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "roster_unit",
+              "value"
+            ],
+            "type": "object"
+          },
+          "maxItems": 4096,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "metric": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+          "type": "string"
+        },
+        "unit": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "metric",
+        "unit",
+        "value",
+        "by_roster_unit"
+      ],
+      "type": "object"
+    },
+    "sample_size": {
+      "additionalProperties": false,
+      "properties": {
+        "analysed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exclusions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "count": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "preregistered": {
+                "type": "boolean"
+              },
+              "rule": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule",
+              "count",
+              "preregistered"
+            ],
+            "type": "object"
+          },
+          "maxItems": 64,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "experimental_unit": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "missing_slots": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 8192,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "planned": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "planned_total": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "unit_scope": {
+          "enum": [
+            "per_roster_unit",
+            "total"
+          ]
+        }
+      },
+      "required": [
+        "experimental_unit",
+        "unit_scope",
+        "planned",
+        "planned_total",
+        "analysed",
+        "exclusions",
+        "missing_slots"
+      ],
+      "type": "object"
+    },
+    "sensitivity_analysis": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "result": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "timing": {
+            "enum": [
+              "preregistered",
+              "post_hoc"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "timing",
+          "result"
+        ],
+        "type": "object"
+      },
+      "maxItems": 64,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "stopping_rule": {
+      "additionalProperties": false,
+      "properties": {
+        "interim_looks": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "roster_complete": {
+          "type": "boolean"
+        },
+        "rule_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_sha256",
+        "roster_complete",
+        "interim_looks"
+      ],
+      "type": "object"
+    },
+    "uncertainty": {
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "resampling_unit": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "resampling_unit"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:epistemeos:statistical-report:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assumptions": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/assumptions"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "confidence_interval": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/confidence_interval"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "deviations": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/deviations"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "effect_size": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/effect_size"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "estimand": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/estimand"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "estimator": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/estimator"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "multiple_testing": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/multiple_testing"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "point_estimate": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/point_estimate"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "protocol_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "sample_size": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/sample_size"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "sensitivity_analysis": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/sensitivity_analysis"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "stopping_rule": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/stopping_rule"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    },
+    "uncertainty": {
+      "else": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "status": {}
+        },
+        "required": [
+          "status",
+          "reason"
+        ]
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "supplied"
+          }
+        }
+      },
+      "properties": {
+        "status": {
+          "enum": [
+            "supplied",
+            "not_supplied",
+            "not_applicable"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {},
+          "value": {
+            "$ref": "#/$defs/uncertainty"
+          }
+        },
+        "required": [
+          "status",
+          "value"
+        ]
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "protocol_hash",
+    "estimand",
+    "estimator",
+    "point_estimate",
+    "uncertainty",
+    "confidence_interval",
+    "effect_size",
+    "assumptions",
+    "sample_size",
+    "multiple_testing",
+    "stopping_rule",
+    "sensitivity_analysis",
+    "deviations"
+  ],
+  "title": "EpistemeOS statistical report v1",
+  "type": "object"
+}

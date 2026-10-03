@@ -1,0 +1,187 @@
+{
+  "$comment": "Static pack declaration. Metric names, output labels and paths must be unique; outputs include raw_data and metrics; capabilities include estimator, point_estimate and sample_size. A declaration is not evidence that the pack computes correctly.",
+  "$id": "urn:epistemeos:pack-manifest:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "capture": {
+      "type": "boolean"
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "description": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "execution_profiles": {
+      "items": {
+        "enum": [
+          "trusted_local_python_v1"
+        ]
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "hidden_inputs": {
+      "items": {
+        "enum": [
+          "protocol_data",
+          "captured_artifacts"
+        ]
+      },
+      "maxItems": 2,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "interpretation_cautions": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "metrics": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "unit",
+          "description"
+        ],
+        "type": "object"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "numeric_tolerance": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "outputs": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+            "type": "string"
+          },
+          "schema_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "schema_id"
+        ],
+        "type": "object"
+      },
+      "maxProperties": 16,
+      "minProperties": 2,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "required": [
+        "raw_data",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "pack_id": {
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "type": "string"
+    },
+    "pack_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^\\S(?:.*\\S)?$",
+      "type": "string"
+    },
+    "roster_semantics": {
+      "items": {
+        "enum": [
+          "rng_seed",
+          "partition_seed",
+          "frozen_unit_index",
+          "deterministic_single"
+        ]
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "statistical_capabilities": {
+      "items": {
+        "enum": [
+          "estimand",
+          "estimator",
+          "point_estimate",
+          "uncertainty",
+          "confidence_interval",
+          "effect_size",
+          "assumptions",
+          "sample_size",
+          "multiple_testing",
+          "stopping_rule",
+          "sensitivity_analysis",
+          "deviations"
+        ]
+      },
+      "maxItems": 12,
+      "minItems": 3,
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "contract_version",
+    "pack_id",
+    "pack_version",
+    "description",
+    "roster_semantics",
+    "metrics",
+    "outputs",
+    "numeric_tolerance",
+    "hidden_inputs",
+    "execution_profiles",
+    "statistical_capabilities",
+    "interpretation_cautions",
+    "capture"
+  ],
+  "title": "EpistemeOS DomainPack manifest v1",
+  "type": "object"
+}

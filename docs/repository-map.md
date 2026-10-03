@@ -65,8 +65,9 @@ EpistemeOS/
 │   ├── domains/afterlife_seed_batch_analysis.py  предметный пересчёт nine-trajectory batch
 │   ├── domains/synthetic_causal.py  synthetic fixture recipe и runner sources
 │   ├── domains/synthetic_batch_analysis.py  пересчёт synthetic metric из raw data
+│   ├── domains/api.py            DomainPack envelopes и StatisticalReport v1 (ADR 0016), без вызовов из ядра
 │   └── demo.py                   два фиксированных CPU-приложения
-├── schemas/                      command, statistical design, question/set, claim link, review и experiment proposal
+├── schemas/                      command, statistical design, question/set, claim link, review, experiment proposal и девять DomainPack envelopes
 ├── examples/model_hypotheses.py  подготовка одного задания; --execute явно вызывает модель
 ├── examples/model_experiment.py  frozen synthetic experiment request; --execute явно вызывает модель
 ├── examples/afterlife_historical_pilot.py  подготовка exploratory batch по проверенному legacy run
@@ -110,6 +111,10 @@ EpistemeOS/
     ├── test_experiment_graph.py  typed refs, schema export и tamper rejection
     ├── test_experiment_proposals.py strict schema и frozen hypothesis order
     ├── test_synthetic_causal.py  fixture recipe, estimates и real runner
+    ├── test_domain_api.py        строгие envelopes, StatisticalReport v1 и опубликованные schemas
+    ├── test_golden_history.py    basis/gates/Graph/export сохранённых histories не меняются
+    ├── golden_support.py         загрузка и наблюдение сохранённых fixture histories
+    ├── fixtures/golden/          три synthetic histories от кода 483f1bd и их ожидаемые hashes
     └── test_workflow.py          фактический search → execution → evidence demo
 ```
 
@@ -140,6 +145,8 @@ EpistemeOS/
 | `claims.py`, `claim_context.py` | Immutable proposals отношений, validation порядка/scope/циклов; review context из incoming supports/limits и symmetric contradictions/supersession. | Не доказывают научную связь; binding evidence basis и bytes проверяет Kernel/Graph. |
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
 | `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; импорт сам не создаёт runs. Пересчёт stop-событий одного run выполняет отдельный пилот выше. |
+| `domains/api.py` | Frozen envelopes ADR 0016 (`PackManifest`, `ParameterCatalog`, `ProtocolDraft`, `ExecutionPlan`, `CaptureBundle`, `OutputCheck`, `Recomputation`, `AnalysisReport` v2, `StatisticalReport` v1) и runtime-проверка по тем же schemas, что опубликованы в `schemas/`. | Проверяет форму, согласованность полей и допустимость `not_applicable` для preregistered design, но не правильность статистики. Ядро эти envelopes пока не вызывает. |
+| `tests/golden_support.py`, `tests/fixtures/golden/` | Три synthetic fixture histories, созданные немодифицированным кодом `483f1bd`, и ожидаемые basis, gates, Graph, export bundle и replay-проекции. | Сравнение механическое: совпадение не означает научной валидности; новые event kinds в этих histories не представлены. |
 | `domain_binding.py` | Ручная receipt-backed привязка planning-bound protocol к CAS recipe/adapter source и точным параметрам batch до исполнения; replay и Graph проверяют исходный префикс. | Доменный смысл recipe проверяет адаптер; actor ID и code digest не доказывают независимость или исполнение именно этих bytes в изолированной среде. |
 | `kernel.py` | Hypothesis/protocol/run/result/claim/review commands, правила ролей, binding digests/scope, seeds и run limit, review basis и `next_action`; открытые typed obligations удерживают `replan` и paper gate. | Python caller доверенный. Проверка finite metric не пересчитывает науку. `next_action` возвращает решение, не job. |
 | `search.py` | `register_tournament`, `pairings`, `ballot`, `ranking`; `register_tree`, `add_node`, `select_next`, `tree_state`, `finish_selection`. Сохраняются policy, ballots, nodes, решения и резервы объявленной стоимости. | Нет LLM judge, worker dispatch/lease или независимого измерения расходов. Priority не продвигает claim и допускает неполное сравнение pool. |
@@ -238,7 +245,7 @@ LLM provider не владеет SQLite-файлом, credentials или пра�
 
 ## DomainPack и перенос afterlife
 
-Минимальный DomainPack предоставляет config schema, input/result schemas и units, планируемые outputs, runner recipe, metric recomputation, interpretation cautions, domain gates и reproduction comparator. Контракт должен выражать cached replay, rerun, reanalysis и new-data replication раздельно. Core знает режим и зависимости, но не знает конкретные поля temperature/window/tokenizer.
+Принятый контракт v1 — [ADR 0016](decisions/0016-domain-pack-contract.md): static manifest, явный реестр, hooks с typed envelopes и `StatisticalReport` v1; силу claim ограничивает ядро. Ниже — исходная постановка, которую этот ADR конкретизирует. Минимальный DomainPack предоставляет config schema, input/result schemas и units, планируемые outputs, runner recipe, metric recomputation, interpretation cautions, domain gates и reproduction comparator. Контракт должен выражать cached replay, rerun, reanalysis и new-data replication раздельно. Core знает режим и зависимости, но не знает конкретные поля temperature/window/tokenizer.
 
 Afterlife pack размещает provider/model revisions, protocol/context semantics, stage import, degeneracy controls, trajectory readers и figure adapters. Импорт read-only: оригинальный checkout и его runs не меняются. `PLAN`/`REPORT` преобразуются в historical protocol/claim candidates с локаторами; legacy timestamps не создают preregistration задним числом. Manifest hashes верифицируются, failed/superseded records сохраняются, re-import того же snapshot идемпотентен. Скопированные MIT utilities сохраняют attribution и notice.
 

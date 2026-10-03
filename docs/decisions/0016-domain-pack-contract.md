@@ -1,0 +1,233 @@
+# ADR 0016 — контракт DomainPack
+
+Дата: 4 октября 2026. Статус: **принято 4 октября 2026, реализуется поэтапно.** Пользователь принял все пять рекомендаций; они записаны в разделе «Решения по открытым вопросам». Что из плана уже реализовано и проверено, а что только запланировано, указано в разделе «Ход реализации»; результаты проверок — в [validation.md](../validation.md). Проверки в разделах «Этапы реализации» и «Критерии универсальности» остаются критериями приёмки; выполненными считаются только те, что перечислены в «Ходе реализации». Основания: [архитектура](../architecture.md) (§1, §6, §9), [MVP-план](../mvp-plan.md) (M4: два domain packs, «общий kernel проходит оба pack без проверок по имени afterlife»), [карта репозитория](../repository-map.md) (раздел «DomainPack и перенос afterlife»), ADR [0002](0002-statistical-design.md), [0005](0005-local-runner.md), [0006](0006-execution-batches.md), [0007](0007-model-proposals.md), [0008](0008-experiment-proposals.md), [0013](0013-batch-analysis-admission.md), [0014](0014-manual-domain-binding.md), [0015](0015-afterlife-historical-pilot.md). Предложение писалось на `41ad0e7`, когда ADR 0015 и модули `afterlife_seed*` ещё менялись; после их фиксации в `483f1bd` ссылки на них сверены с этим commit.
+
+## Проблема
+
+Архитектура обещает подключаемые domain packs с config schema, runner, result schema, пересчётом метрики, domain gates, interpretation cautions и reproduction comparator. На `41ad0e7` вместо единого контракта есть несколько частичных швов с разными правилами.
+
+- Модельный путь [ADR 0008](0008-experiment-proposals.md) привязан к одному домену внутри модулей ядра. [`experiment_proposals.py`](../../src/episteme/experiment_proposals.py) фиксирует `RECIPE_ID = "synthetic_causal_v1"` и его параметры, а [`agents.py`](../../src/episteme/agents.py) импортирует `domains.synthetic_causal` и проверяет поля synthetic `world`. Второй домен не пройдёт этот путь без правки ядра.
+- [`domain.bind`](../../src/episteme/domain_binding.py) универсален, но recipe для ядра непрозрачен: проверяются форма, CAS bytes и совместимость с runner. Исходник адаптера — один bounded CAS artifact; на практике это bytes одного файла.
+- Анализ вызывает [`AnalysisAdapter`](../../src/episteme/analysis_controller.py) с `adapter_id`, `adapter_version` и `propose(store, state)` и принимает proposal schema v1 со свободным `details`. Адаптер получает весь `Store` и использует приватные функции ядра (`Kernel._get`, `domain_binding._index`). То, что synthetic анализ не читает скрытый `world`, проверяет тест с подменой `Store.read`, а не входной контракт.
+- Pinning непоследователен. При ручной привязке ID, версия и исходник адаптера фиксируются до batch. На модельном пути [`analysis.apply`](../../src/episteme/batch_analysis.py) сверяет только `compiled.domain == adapter_id`, поэтому версия и код анализа выбираются после исполнения. Controller сохраняет `inspect.getfile(type(adapter))` — один файл без импортируемых модулей пакета.
+- Код анализа выбирает caller. На `41ad0e7` CLI вызывал только synthetic adapter; с `483f1bd` (ADR 0015) он выбирает один из двух адаптеров флагом `--adapter`, по умолчанию synthetic.
+- Смысл roster не объявлен. Ядро знает только целые `seeds`; afterlife pilot использует их как индексы уже наблюдённых траекторий, а таблица paper называет колонку `Seed`. Synthetic recipe задаёт `sample_size` на один seed, afterlife pilot — общее число траекторий.
+- Статистика не структурирована. Оба адаптера возвращают только `inconclusive`/`exploratory`, а отсутствие interval, power и significance записано в limitations свободным текстом. [ADR 0002](0002-statistical-design.md) замораживает декларации, но сверки с фактическим анализом и правила, связывающего отсутствие статистики с силой claim, нет.
+- Профиль исполнения узкий. [`trusted_local_python_v1`](0005-local-runner.md) запускает `python -I -S program.py input.dat --seed N`: один stdlib-файл, один input, наследуемое окружение, без sandbox. Пакет, которому нужны сторонние библиотеки, GPU или сеть, сейчас исполниться не может. Контракт не должен это скрывать.
+
+## Решение
+
+Вводится **DomainPack contract v1**: статический manifest, явный реестр, hooks с типизированными JSON envelopes и стандартный statistical report. Пакет предлагает и вычисляет; ядро допускает переходы. Действует правило монотонности: проверка пакета может только добавить отказ или ограничение, но не ослабить правило ядра и не повысить силу claim.
+
+### Разделение полномочий
+
+| Только ядро | Пакет |
+|---|---|
+| Events, receipts, запись в CAS, expected revision, replay | Каталог параметров и их предметная проверка |
+| Preregistration, exposure и `seen_data`, роли data splits, amendments | Дополнительные предметные ограничения protocol |
+| Mechanical gate, полнота roster, tolerance повторного анализа | Bytes программ, input и outputs для runner |
+| Сила claim: `inference_mode`, допустимый `outcome`, отказ при превышении | Схема raw data и пересчёт метрики |
+| Assignment, контекст reviewer, review, obligations, resolution, paper eligibility | Текст bounded claim, limitations, statistical report |
+| Режим replication и измерения независимости по фактам | Дополнительные реализации повторного анализа и comparator |
+| Бюджет, Search, вызовы provider/model, dispatch, `scientific_validity` | Interpretation cautions; необязательный захват исторических bytes |
+
+### Предложенные hooks и существующие швы
+
+| Hook | Существующий шов | Решение |
+|---|---|---|
+| `propose_experiment()` | `experiment_proposals.py`, `agents.py`, `synthetic_causal.describe()` | Не hook пакета. Prompt, schema, бюджет вызовов, provider и атомарное применение остаются в ядре. Пакет даёт `describe()`, `validate_parameters()` и `compile_protocol()`. |
+| `validate_protocol()` | `_validate` в `compile_recipe`; проверки design в afterlife анализе | Принять как чистый hook. Вызывается при привязке и повторно при `batch.plan` и анализе. |
+| `prepare_execution()` | `compile_recipe()`; `compile_seed_bundle()` читает файлы и сам пишет CAS | Разделить на необязательный `capture()` (однократное read-only чтение внешнего источника до привязки) и чистый `compile_execution()`. В CAS пишет только ядро. |
+| `validate_outputs()` | `_check_completion` и `_metric` ядра; проверки `raw.json` в адаптерах | Принять как чистый hook по slots; общие проверки ядра остаются. |
+| `recompute_metrics()` | `_estimate` synthetic, `_steps` afterlife | Принять. Сравнение с primary и reanalysis metrics по арифметическому допуску выполняет ядро. |
+| `analyse()` | `AnalysisAdapter.propose()` | Принять: `AnalysisReport` v2 со `StatisticalReport` v1; потолок силы claim вычисляет ядро. |
+| `replicate()` | `reanalysis_implementation` в binding и batch; gate ядра | Отклонить в этой форме. Пакет может поставить дополнительные реализации и `compare()`. Режим выбирает policy protocol, а независимость реализации, авторства, контекста и данных ядро выводит из digests, actors и data bytes. Тот же код на тех же данных — `exact_rerun`; вторая реализация того же пакета — повторный анализ тем же автором, а не независимая реализация. |
+| `build_domain_context()` | `describe()` для модели; manifest `review.assign` | Разделить. Пакет даёт каталог и static cautions; состав контекста модели и reviewer и allowlist определяет ядро. Пакет не добавляет bytes в контекст reviewer. |
+
+В предложении недостаёт статического manifest, `roster_semantics`, `numeric_tolerance`, объявления скрытых входов (`hidden_inputs`), `capture`, `execution_profile` и `statistical_capabilities`.
+
+### Идентичность, момент привязки и реестр
+
+`PackManifest` v1 содержит `contract_version=1`, `pack_id` (формат `adapter_id`), `pack_version`, `roster_semantics` (`rng_seed`, `partition_seed`, `frozen_unit_index`, `deterministic_single`), метрики с units, outputs и их schema IDs, `numeric_tolerance`, `hidden_inputs`, `execution_profiles`, `statistical_capabilities` и `interpretation_cautions`. `code_manifest` перечисляет отсортированные относительные пути и SHA-256 **всех** файлов пакета; `pack_code_digest` — SHA-256 его canonical JSON. Файлы сохраняются в CAS с общим лимитом размера, поэтому Graph, backup и review basis охватывают весь код пакета, а не один модуль. Пакет импортирует только stdlib и новый фасад `episteme.domains.api`; импорт приватных функций ядра запрещён и проверяется тестом.
+
+Привязка происходит при preregistration. Ручной путь получает новую команду (предварительно `pack.preregister`), которая в одной receipt компилирует `ProtocolDraft` и `ExecutionPlan`, вызывает `preregister_for_set` и записывает `domain_binding` v2. Модельный путь делает то же внутри `agent.apply_experiment` v3. Привязка фиксирует pack identity, `pack_code_digest`, digests каталога и recipe, `roster_semantics`, execution profile, результат `validate_protocol` и уровень environment closure. `batch.plan` сверяет пакет и recipe. Анализ (предварительно `pack.analyse`) сравнивает bytes загруженных файлов с закреплённым `code_manifest` и отказывает при любом расхождении.
+
+Новая версия пакета требует новой привязки, а значит нового protocol с учётом exposure. Анализ другим кодом после исполнения в v1 закрыт; явный post-hoc переход с потолком `exploratory` требует отдельного решения. Привязки v1 и `agent_application` v2 остаются валидными по прежним правилам и в отчётах помечаются `pack_pinning=legacy_single_file`; задним числом ничего не закрепляется. `domain.bind` и `analysis.apply` v1 сохраняются для legacy и replay.
+
+Реестр — явный allowlist в репозитории (`episteme/domains/registry.py`: `pack_id → module`). Добавить пакет — значит изменить код и пройти review. Entry points и автоматический discovery в v1 не используются: они незаметно расширяют круг кода, исполняемого в процессе ядра. CLI берёт пакет из привязки protocol; флаг выбора адаптера может остаться только как утверждение, которое обязано совпасть с привязкой.
+
+### Граница доверия
+
+Пакет — доверенный локальный Python под той же OS identity. Hooks исполняются в процессе ядра, программы из `ExecutionPlan` — в общем runner без sandbox. Пакет может читать Store, файлы и сеть, ошибиться или солгать. Pinning, повторные проверки и монотонность выявляют случайный drift и ошибки, но не защищают от злонамеренного кода. Malicious pack, malicious executor и утечка oracle через пакет — вне scope до появления isolation profiles. События привязки и анализа фиксируют `pack_trust=trusted_local_code` и `hook_isolation=in_process`.
+
+Hooks не получают `Store`. Ядро передаёт копии нужных payloads и `CasView` — чтение только по allowlist digests, который ядро вычисляет и записывает в событие. Для анализа в allowlist входят наблюдённые `raw_data` и `metrics`, recipe и каталог, но не `hidden_inputs`; для synthetic это `protocol.data` со скрытым world. Это не security boundary. Зато входы становятся явными и воспроизводимыми, их можно передать будущему изолированному процессу, а тест `test_hidden_world_artifact_is_never_read` превращается в проверку во время исполнения.
+
+### Чистота и детерминизм
+
+| Hook | Когда вызывается | Требование | Проверка ядром |
+|---|---|---|---|
+| `manifest`, `describe` | Загрузка пакета и каждая привязка | Константа версии; canonical JSON без NaN, ограниченный размер | Сравнение с закреплённым digest |
+| `validate_parameters`, `validate_protocol` | Привязка, `batch.plan`, анализ | Чистые, без I/O | Повторный вызов перед каждым из этих переходов |
+| `capture` | Только до привязки | Read-only чтение объявленного внешнего пути, без сети; одинаковые исходные bytes дают одинаковый результат | При replay не вызывается; дальше используется только CAS |
+| `compile_protocol`, `compile_execution` | Привязка, модельное применение | Чистые над recipe, каталогом и захваченными bytes | Повторная компиляция и сравнение digests с protocol |
+| `validate_outputs`, `recompute_metrics`, `analyse` | Анализ | Чистые над `CasView`: без времени, сети, environment и неявной случайности | Read-only `pack verify` повторяет вызовы и сравнивает canonical bytes |
+
+Hooks выполняются вне SQL write transaction на зафиксированном snapshot, как сейчас `propose` вызывается до `analysis.apply`. Внутри команды ядро повторно проверяет закреплённый код, актуальность snapshot и settlement, envelopes, вычисляемые им поля и потолок силы claim; внешняя работа и длительные вычисления внутри `Store.command` не выполняются. Float между разными interpreter fingerprints сравнивается по `numeric_tolerance` — это допуск арифметики, а не неопределённость.
+
+### Typed envelopes
+
+Все envelopes — JSON с `schema_version`, точным набором полей и лимитами размера, без duplicate keys и non-finite numbers, как действующие validators. JSON Schemas публикуются, runtime-проверка остаётся без зависимостей.
+
+- `ParameterCatalog`: видимые planner и модели параметры, метрика, outputs и limitations; без скрытых входов.
+- `ProtocolDraft`: design, analysis plan, metric, stopping rule, typed `StatisticalDesign` v1, roster, run limit и `roster_semantics`.
+- `ExecutionPlan`: bytes primary и reanalysis программ, input, outputs, wall time, лимит bytes, capabilities, `execution_profile`, `environment_requirements`.
+- `CaptureBundle`: внешний источник, inventory путей и SHA-256, итог аудита и bytes.
+- `OutputCheck` по slot и `Recomputation` по единице roster: пересчитанное значение, обе записанные метрики, абсолютные расхождения и допуск.
+- `AnalysisReport` v2: statement, limitations, предлагаемые `outcome` и `inference_mode`, ограниченные `details` и ссылка на `StatisticalReport` v1. Report — отдельный CAS artifact; он входит в evidence basis через событие анализа.
+
+### StatisticalReport v1
+
+Все 12 полей обязательны и имеют один из статусов: `supplied` с `value`; `not_supplied` с непустой `reason`; `not_applicable` с `reason`, допустимый только если неприменимость следует из preregistered design. Отсутствующее поле, пустая причина или `not_applicable` вопреки protocol отвергают анализ целиком. Ядро ничего не дополняет и не переписывает молча.
+
+| Поле | `value` при `supplied` | Источник истины | Проверка ядром |
+|---|---|---|---|
+| `estimand` | Hash protocol и текст | Preregistered estimand | Точное совпадение; иная цель — только как deviation |
+| `estimator` | Имя, описание, hook | Пакет | Обязательно `supplied` |
+| `point_estimate` | Метрика, unit, значение, при необходимости по единицам roster | Пакет | Обязательно; метрика и unit preregistered; согласовано с `recompute_metrics` |
+| `uncertainty` | Метод, resampling unit | Protocol и пакет | Метод совпадает с preregistered, иначе deviation; `not_applicable` только при preregistered `not_applicable` |
+| `confidence_interval` | Уровень, границы, метод | Пакет | Конечные границы, `lower ≤ upper`; N/A — по тому же правилу |
+| `effect_size` | Мера, значение, точка сравнения | Пакет | Конечное значение |
+| `assumptions` | Список: допущение, `holds`/`violated`/`unchecked`, ссылка | Пакет | Непустой список |
+| `sample_size` | Unit, `unit_scope` (`per_slot`/`total`), planned, analysed, exclusions, отсутствующие slots | Protocol, settlement, пакет | Planned и отсутствующие slots вычисляет ядро; расхождение — отказ |
+| `multiple_testing` | Family, позиция claim, correction, скорректированный результат | Protocol и пакет | Family и correction равны preregistered |
+| `stopping_rule` | Hash правила, полнота roster, interim looks | Protocol и settlement | Полноту roster вычисляет ядро |
+| `sensitivity_analysis` | Список: имя, preregistered или post hoc, результат | Пакет | Post-hoc анализ силу не повышает |
+| `deviations` | Список: поле, план, факт, причина | Пакет и ядро | Ядро добавляет найденные расхождения |
+
+Фрагмент synthetic report; остальные поля обязательны так же:
+
+```json
+{
+  "schema_version": 1,
+  "protocol_hash": "<sha256 protocol event>",
+  "point_estimate": {"status": "supplied",
+    "value": {"metric": "treatment_effect", "unit": "outcome units", "value": 2.0}},
+  "confidence_interval": {"status": "not_applicable",
+    "reason": "Preregistered uncertainty.method is not_applicable; point estimate only."},
+  "assumptions": {"status": "not_supplied",
+    "reason": "Balance and positivity checks are not computed by this pack."}
+}
+```
+
+### Потолок силы claim
+
+В `claims.py` уровней силы нет: там только декларации связей между claims. Сила claim в ядре — пара `inference_mode` (`unclassified`, `descriptive`, `exploratory`, `confirmatory`) и `outcome` (`supports`, `refutes`, `inconclusive`); `Kernel._inference_mode` уже требует confirmatory protocol для `confirmatory`. Ядро вычисляет потолок до записи claim и сохраняет его с причинами в событии анализа:
+
+1. Если `estimator`, `point_estimate` или `sample_size` не `supplied`, анализ отвергается.
+2. `supports` и `refutes` требуют `supplied` `confidence_interval` и `effect_size`. Исключение — `descriptive` protocol с preregistered `uncertainty.method=not_applicable`: вывод относится только к проанализированным единицам, режим остаётся `descriptive`. В остальных случаях допустим только `inconclusive`.
+3. Любое deviation, не предусмотренное protocol, ограничивает режим уровнем `exploratory`. Post-hoc sensitivity analyses силу не повышают.
+4. `confirmatory` дополнительно требует: все поля `supplied` или согласованно `not_applicable`, пустой `deviations`, analysed = planned минус preregistered exclusions, полный roster и отсутствие допущений со статусом `unchecked` или `violated`.
+5. Расхождение полей, которые ядро вычисляет само, приводит к отказу.
+6. Предложение выше потолка отвергается целиком, без тихого понижения: statement пишет пакет, и он должен соответствовать outcome. Ядро добавляет в limitations claim строку о каждом `not_supplied` поле и каждом deviation.
+
+Потолок механический. Он не меняет `scientific_validity=not_assessed`, не заменяет review и не мешает reviewer потребовать сужения. Оба существующих пакета по этим правилам получают то же, что выдают сейчас: `exploratory` и `inconclusive`. Меняется то, что отсутствие статистики становится структурированным и проверяемым.
+
+### Связь с ADR 0002
+
+| Замораживается до данных (ADR 0002) | Сообщается после анализа (этот ADR) |
+|---|---|
+| Mode, experimental unit, estimand, metrics и units, sample size и rationale, метод и unit uncertainty, exclusions, stopping rule, family и correction multiple testing, data splits | Estimator, оценки, interval, effect size, проверки допущений, фактически проанализированные и исключённые единицы, применённая correction, полнота roster и interim looks, sensitivity analyses, deviations |
+
+`StatisticalDesign` v1 не меняется. Report ссылается на hash protocol и не переопределяет preregistered поля: значение либо совпадает, либо попадает в `deviations`. Это первый узкий срез сверки planned-versus-observed из M1: ядро сравнивает число единиц, полноту roster и методы, а правильность вычислений остаётся задачей независимой реализации и review. Поле `unit_scope` устраняет нынешнюю неоднозначность «на seed» или «всего». Дизайны с зависимыми оценками, например repeated cross-validation, упираются в правило v1 «resampling unit равен experimental unit»; это кандидат на `StatisticalDesign` v2, а не часть данного решения.
+
+### Место для execution profile и environment closure
+
+- `execution_profile`: реализован только `trusted_local_python_v1`. Неподдерживаемый профиль отвергается при привязке, как требует ADR 0005.
+- `environment_requirements` резервирует `closure_level` (сейчас только `interpreter_fingerprint`), `image_digest`, `lock_digest`, `accelerator`, `network_policy` и `env_allowlist`. В v1 все поля, кроме текущего уровня, обязаны быть `null`; иное значение отвергается, пока профиль не реализован.
+- `hook_isolation` резервирует `subprocess` и `container` для будущих isolation profiles.
+- Все bytes `ExecutionPlan` остаются в CAS, поэтому будущий `episteme reproduce <run-id>` в режиме `exact_rerun` сможет исполнить их без загрузки кода пакета. Здесь он не проектируется.
+- Literature/novelty и controller loop не проектируются: пакет не делает novelty claims и не выбирает следующее действие.
+
+## Миграция
+
+1. **`synthetic_causal_v1`.** Фасад над `synthetic_causal` и `synthetic_batch_analysis` без изменения вычислений: `roster_semantics=rng_seed`, `protocol.data` со скрытым world объявлен в `hidden_inputs`, `numeric_tolerance=1e-9`. В report `uncertainty` и `confidence_interval` — `not_applicable` по preregistered design, `assumptions` — `not_supplied`. Итог остаётся `exploratory`/`inconclusive`. Истории с привязкой v1 и `agent_application` v2 проходят replay без изменений.
+2. **Модельный путь ADR 0008.** `agent.request_experiment` v3 с `pack_id` и digest каталога; schema `experiment-proposal-v2`, в которой `parameters` проверяет пакет. Ядро перестаёт импортировать `synthetic_causal`; для replay запросов v2 сохраняется замороженный legacy compiler.
+3. **`afterlife_seed_v1`** — после фиксации ADR 0015 (зафиксирован в `483f1bd`). Аудит исторического run и запись bytes разделяются на `capture()` и чистую повторную проверку захваченного inventory по CAS. `roster_semantics=frozen_unit_index`. Проверка `seen_data` и open discovery split переходит из анализа в `validate_protocol` при привязке. В report interval и effect size — `not_supplied`: шаги внутри траектории не независимы, данные относятся к одной model/configuration. Historical importer `afterlife.py` остаётся отдельным namespace `historical_unverified` вне evidence path.
+4. **Кандидат третьего пакета — `tabular_classification_v1`.** Только CPU, детерминированно и только stdlib. Это требование, а не стиль: `dependencies = []`, а runner запускает Python с `-S`. Пакет сравнивает два классификатора на чистом Python (например, majority baseline и logistic regression с фиксированным числом шагов gradient descent) на frozen CSV.
+   - Exploratory фаза: repeated stratified k-fold на development split, `roster_semantics=partition_seed`. Повторы делят одни данные, поэтому seeds не являются независимыми выборками; report обязан указать это в `assumptions`.
+   - Confirmatory фаза: один прогон на ранее не открытом holdout split с preregistered парным сравнением на одних и тех же test examples (например, exact McNemar и interval парной разности accuracy, вычислимые через `math`). Этот пакет первым проверяет положительную ветвь потолка: confirmatory claim возможен только при полном report и непросмотренном holdout.
+   - `validate_protocol` запрещает exploratory protocol с bundle, содержащим holdout bytes: ядро учитывает exposure по digests, а не по содержимому.
+   - CI использует детерминированно сгенерированную fixture-таблицу, явно помеченную synthetic. Пилот на публичной таблице (например, небольшом наборе UCI) — отдельный ручной запуск после проверки лицензии и закрепления digest при `capture`.
+
+## Этапы реализации
+
+Каждый шаг — отдельный commit с тестами и обновлением этого ADR, command API и validation.md. Перед commit, затрагивающим storage или интерфейсы, выполняются `python -m unittest discover -s tests -v` и соответствующие CLI integration checks.
+
+1. `domains/api.py`: envelopes и `StatisticalReport` v1 как неизменяемые dataclasses, JSON Schemas; unit-тесты на пропуск поля, пустую причину и `not_applicable` вопреки design.
+2. `domains/registry.py`, `code_manifest` и загрузчик со сверкой bytes; общий conformance suite для любого зарегистрированного пакета.
+3. Фасад synthetic pack. Golden test: basis hashes и Graph snapshot сохранённой fixture history не меняются.
+4. `pack.preregister` и `pack.analyse` в ядре: pinning, `CasView`, проверки и пересчёт под контролем ядра, report artifact, потолок силы claim, автоматические limitations; поддержка Graph, recovery, export и review basis. Тесты на drift кода, чужую версию, пропущенное поле, превышение потолка, restart между receipts, backup/restore и CLI.
+5. CLI определяет пакет по привязке; read-only `pack describe` и `pack verify`.
+6. Фасад afterlife pack после фиксации ADR 0015 (зафиксирован в `483f1bd`).
+7. Reporting и export показывают report и каждое `not_supplied`; колонка roster подписывается по `roster_semantics`; политика `blind_initial_review_v2` (решение по вопросу 4 принято 4 октября 2026).
+8. Третий пакет на fixture-данных; ручной пилот отдельно.
+9. Обобщение модельного пути ADR 0008.
+10. Приёмка универсальности по критериям ниже; запись результатов в validation.md.
+
+Условная оценка — 3–5 инженерных недель. Шаги 1–6 дают работающий контракт для двух пакетов примерно за половину этого срока.
+
+## Что означает заморозка ядра
+
+- Изменения ядра ограничены швом пакета: новые версионированные actions и события, их поддержка в Graph, recovery и export, исправления ошибок.
+- Payloads и hashes существующих event kinds, recipe basis для histories без привязок v2, семантика gate, review, obligations, resolution и assignment не меняются. Golden test пересчитывает basis и Graph snapshot сохранённой fixture history до и после каждого commit.
+- Опубликованные v1 signatures и actions сохраняются; новое добавляется только версиями.
+- Вне шва ничего не добавляется: ни controller loop, ни literature layer, ни новые agent personas, web UI или graph DB.
+- В модулях ядра нет проверок по `pack_id` и импортов конкретных пакетов, кроме реестра; это проверяет статический тест.
+
+## Критерии универсальности
+
+Для каждого зарегистрированного пакета одинаково выполняются:
+
+1. Один и тот же код ядра; статический тест не находит доменных имён и импортов пакетов вне `domains/` и реестра.
+2. Conformance suite: manifest и `code_manifest`, детерминизм hooks, отсутствие доступа к `Store`, чтение только из allowlist, валидные envelopes и все 12 полей report.
+3. Путь привязка → `batch.plan` → `batch advance` → анализ → `review.assign` → явно synthetic fixture review → paper scaffold; restart на каждой границе receipt без дублей; backup/restore; Graph closure включает код пакета, recipe и report.
+4. Одинаковые отказы tamper suite: изменён byte raw output; изменён файл пакета после привязки; подставлена другая версия; удалено поле report; `not_applicable` вопреки protocol; предложение выше потолка; попытка прочитать hidden input.
+5. Одинаковое применение потолка: synthetic и afterlife остаются `exploratory`/`inconclusive`; положительную confirmatory ветвь проверяет третий пакет.
+6. `roster_semantics` различается и правильно отображается; режим replication и измерения независимости выводит ядро.
+7. Схемы raw data действительно разные, а не переименованный synthetic пример, как требует MVP-план.
+
+## Решения по открытым вопросам
+
+4 октября 2026 пользователь принял все пять рекомендаций предложения. Формулировки вопросов и рекомендаций сохранены.
+
+1. Реестр: явный allowlist или entry points. Рекомендация — allowlist до появления isolation profiles. **Решение: явный allowlist, entry points не используются.**
+2. Превышение потолка: отказ или тихое понижение. Рекомендация — отказ. **Решение: предложение выше потолка отвергается целиком, без тихого понижения.**
+3. Анализ другой версией пакета после исполнения. Рекомендация — в v1 закрыть; post-hoc переход с потолком `exploratory` проектировать отдельно. **Решение: в v1 запрещено; post-hoc путь с потолком `exploratory` — отдельный будущий design.**
+4. Получает ли reviewer statistical report в начальном контексте. Сейчас `blind_initial_review_v1` исключает analysis proposals и исходник адаптера. Рекомендация — `blind_initial_review_v2` с report, но без исходника пакета и `details`; assignments v1 не меняются. **Решение: принято; реализация относится к шагу 7 и в текущий срез (шаги 1–6) не входит. До неё assignments остаются `blind_initial_review_v1`, и report в начальный контекст reviewer не попадает.**
+5. Когда обобщать модельный путь ADR 0008. Рекомендация — после шагов 1–6, когда контракт подтверждён на двух analysis packs. **Решение: только после того, как контракт работает для двух packs (шаг 9, вне текущего среза).**
+
+## Ход реализации
+
+Текущий срез охватывает шаги 1–6. Шаги 7–10 вне его; известные проблемы review integrity (снятие veto тем же reviewer в `kernel.py`, legacy `kernel.review` и CLI `review` без assignment) и медленная повторная проверка receipts в `analysis advance` здесь не исправляются.
+
+| Шаг | Состояние |
+|---|---|
+| 1. Envelopes, `StatisticalReport` v1, JSON Schemas | Реализован и локально проверен: [`domains/api.py`](../../src/episteme/domains/api.py), девять schemas в [`schemas/`](../../schemas), `tests/test_domain_api.py`. Ядро эти envelopes пока не вызывает. |
+| Golden test старых histories | Реализован раньше шага 3: три synthetic fixture histories, созданные немодифицированным кодом `483f1bd`, и их basis, gates, Graph, export bundle и replay (`tests/test_golden_history.py`). |
+| 2–6 | Запланированы в текущем срезе; код не написан. |
+| 7–10 | Вне текущего среза. |
+
+### Отклонения от предложения и уточнения шага 1
+
+- **Отклонение.** `unit_scope` принимает `per_roster_unit` или `total` вместо `per_slot`/`total`. В batch slot означает отдельную primary или reanalysis попытку, а `missing_slots` перечисляет именно такие slots; одно слово с двумя смыслами в одном поле report недопустимо.
+- **Отклонение.** `sample_size.value` дополнительно содержит `planned_total`: для `per_roster_unit` это `planned` × размер roster, для `total` — `planned`. Ядро сможет вычислить его само и отвергнуть расхождение.
+- **Уточнение.** `ProtocolDraft` дополнительно содержит `sample_size_scope`, `replication_tolerance` и `seen_data`. Интерпретация `sample_size` («на единицу roster» или «всего») закрепляется до данных, а не выбирается в report.
+- **Уточнение.** Значения полей при `supplied` имеют фиксированные схемы: `estimand` — `{protocol_hash, text}`; `estimator` — `{name, description, hook}`; `point_estimate` — `{metric, unit, value|null, by_roster_unit}`; `uncertainty` — `{method, resampling_unit}`; `confidence_interval` — `{level, lower, upper, method}`; `effect_size` — `{measure, value, reference}`; `assumptions` — непустой список `{assumption, status, reference}`; `sample_size` — `{experimental_unit, unit_scope, planned, planned_total, analysed, exclusions, missing_slots}`; `multiple_testing` — `{family, claim_position, correction, adjusted_result}`; `stopping_rule` — `{rule_sha256, roster_complete, interim_looks}`; `sensitivity_analysis` и `deviations` — списки, пустой список при `supplied` явно означает «нет».
+- **Уточнение.** `not_applicable` допустим только так: `uncertainty` и `confidence_interval` — при preregistered `uncertainty.method=not_applicable`; `effect_size` — только в `descriptive` design; `multiple_testing` — при preregistered `correction=not_applicable`; остальные поля — никогда. Это правило проверяет `StatisticalReport.validate_design`.
+- **Уточнение.** `PackManifest.roster_semantics` — список поддерживаемых значений, конкретное выбирает `ProtocolDraft` (третьему пакету нужны две фазы); `outputs` — словарь label → `{path, schema_id}`; булево `capture` объявляет hook захвата.
+- **Уточнение.** Frozen `ExecutionPlan` и `CaptureBundle` ссылаются на bytes через `{sha256, bytes}`; bytes записывает в CAS только ядро. `CaptureBundle.source.label` выводится пакетом из захваченных bytes, а не из пути файловой системы, чтобы одинаковые bytes давали одинаковый bundle.
+- **Уточнение.** Одна декларативная schema на envelope используется и runtime-проверкой без зависимостей, и опубликованным файлом; тест сравнивает их. Validator поддерживает строгое подмножество JSON Schema и отвергает неизвестные ключевые слова, а не пропускает их.
+
+## Ограничения
+
+Контракт не создаёт изоляции: доверенный пакет может читать всё и вычислить статистику неверно. Report проверяет наличие и согласованность полей, а не их правильность; её устанавливают независимая реализация и review. Отказ анализа воспроизводим из закреплённых bytes и детерминированных hooks, но в v1 не записывается отдельным событием; это нужно решить до автоматического controller loop. `capture` доверяет локальной файловой системе: hashes фиксируют захваченные bytes, а не историческое время или полноту источника. Runner остаётся stdlib-only, поэтому пакеты с зависимостями, GPU или вызовами provider требуют нового execution profile. Ни fixture e2e, ни conformance suite не являются scientific review и не подтверждают универсальность за пределами проверенных пакетов.

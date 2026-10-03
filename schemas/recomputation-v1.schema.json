@@ -1,0 +1,54 @@
+{
+  "$comment": "Metric recomputed from raw data for one roster unit, both recorded metrics and their absolute differences. The tolerance concerns arithmetic agreement, not uncertainty.",
+  "$id": "urn:epistemeos:recomputation:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "metric": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+      "type": "string"
+    },
+    "primary_absolute_difference": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "primary_recorded": {
+      "type": "number"
+    },
+    "reanalysis_absolute_difference": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "reanalysis_recorded": {
+      "type": "number"
+    },
+    "recomputed": {
+      "type": "number"
+    },
+    "roster_unit": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "tolerance": {
+      "minimum": 0,
+      "type": "number"
+    }
+  },
+  "required": [
+    "schema_version",
+    "roster_unit",
+    "metric",
+    "recomputed",
+    "primary_recorded",
+    "reanalysis_recorded",
+    "primary_absolute_difference",
+    "reanalysis_absolute_difference",
+    "tolerance"
+  ],
+  "title": "EpistemeOS DomainPack recomputation v1",
+  "type": "object"
+}

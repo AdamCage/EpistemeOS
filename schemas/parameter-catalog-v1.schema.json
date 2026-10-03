@@ -1,0 +1,75 @@
+{
+  "$comment": "Model- and planner-visible parameters. It never contains hidden inputs such as a synthetic world. parameters_schema is a JSON Schema subset checked by the kernel.",
+  "$id": "urn:epistemeos:parameter-catalog:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "limitations": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "metric": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+      "type": "string"
+    },
+    "outputs": {
+      "additionalProperties": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+        "type": "string"
+      },
+      "maxProperties": 16,
+      "minProperties": 2,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "required": [
+        "raw_data",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "pack_id": {
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "type": "string"
+    },
+    "pack_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^\\S(?:.*\\S)?$",
+      "type": "string"
+    },
+    "parameters_schema": {
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "pack_id",
+    "pack_version",
+    "description",
+    "parameters_schema",
+    "metric",
+    "outputs",
+    "limitations"
+  ],
+  "title": "EpistemeOS DomainPack parameter catalog v1",
+  "type": "object"
+}

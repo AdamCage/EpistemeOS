@@ -1,0 +1,95 @@
+{
+  "$comment": "Compiled preregistration fields. statistical_design must be a normalized StatisticalDesign v1 whose primary metric and stopping rule equal metric and stopping_rule. The kernel, not the pack, records the protocol.",
+  "$id": "urn:epistemeos:protocol-draft:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "analysis_plan": {
+      "maxLength": 16384,
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "design": {
+      "maxLength": 16384,
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "metric": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+      "type": "string"
+    },
+    "replication_tolerance": {
+      "minimum": 0,
+      "type": "number"
+    },
+    "roster": {
+      "items": {
+        "maximum": 2147483647,
+        "minimum": -2147483648,
+        "type": "integer"
+      },
+      "maxItems": 4096,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "roster_semantics": {
+      "enum": [
+        "rng_seed",
+        "partition_seed",
+        "frozen_unit_index",
+        "deterministic_single"
+      ]
+    },
+    "run_limit": {
+      "maximum": 2147483647,
+      "minimum": 2,
+      "type": "integer"
+    },
+    "sample_size_scope": {
+      "enum": [
+        "per_roster_unit",
+        "total"
+      ]
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "seen_data": {
+      "items": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "maxItems": 4096,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "statistical_design": {
+      "type": "object"
+    },
+    "stopping_rule": {
+      "maxLength": 16384,
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "design",
+    "analysis_plan",
+    "metric",
+    "stopping_rule",
+    "statistical_design",
+    "roster",
+    "roster_semantics",
+    "sample_size_scope",
+    "run_limit",
+    "replication_tolerance",
+    "seen_data"
+  ],
+  "title": "EpistemeOS DomainPack protocol draft v1",
+  "type": "object"
+}

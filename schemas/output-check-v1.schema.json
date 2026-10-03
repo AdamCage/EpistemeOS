@@ -1,0 +1,70 @@
+{
+  "$comment": "One pack check of one completed batch slot. A failed check rejects the analysis.",
+  "$id": "urn:epistemeos:output-check:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "metrics": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "primary",
+        "independent_reanalysis"
+      ]
+    },
+    "raw_data": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "result": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "roster_unit": {
+      "maximum": 2147483647,
+      "minimum": -2147483648,
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "slot": {
+      "pattern": "^(primary|reanalysis):-?[0-9]{1,10}$",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "slot",
+    "roster_unit",
+    "mode",
+    "result",
+    "raw_data",
+    "metrics",
+    "status",
+    "findings"
+  ],
+  "title": "EpistemeOS DomainPack output check v1",
+  "type": "object"
+}

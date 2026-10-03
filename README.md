@@ -63,6 +63,7 @@ uv run episteme analysis advance <batch-id> --root .research/study --planner pla
 - [Анализ завершённого batch и назначение reviewer](docs/decisions/0013-batch-analysis-admission.md).
 - [Ручная привязка frozen domain recipe до batch](docs/decisions/0014-manual-domain-binding.md).
 - [Разведочный офлайн-пилот на исторических траекториях Afterlife](docs/decisions/0015-afterlife-historical-pilot.md).
+- [Контракт DomainPack: envelopes, statistical report и потолок силы claim](docs/decisions/0016-domain-pack-contract.md) — принят 4 октября 2026 и реализуется поэтапно; текущий статус шагов указан в самом ADR.
 
 ## Локальный запуск
 

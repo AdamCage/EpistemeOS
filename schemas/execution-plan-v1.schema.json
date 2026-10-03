@@ -1,0 +1,162 @@
+{
+  "$comment": "Frozen form: program and input bytes are referenced by SHA-256 and stored by the kernel. Only trusted_local_python_v1 is implemented; every reserved environment field other than closure_level must be null in v1.",
+  "$id": "urn:epistemeos:execution-plan:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "environment_requirements": {
+      "additionalProperties": false,
+      "properties": {
+        "accelerator": {
+          "type": "null"
+        },
+        "closure_level": {
+          "enum": [
+            "interpreter_fingerprint"
+          ]
+        },
+        "env_allowlist": {
+          "type": "null"
+        },
+        "image_digest": {
+          "type": "null"
+        },
+        "lock_digest": {
+          "type": "null"
+        },
+        "network_policy": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "closure_level",
+        "image_digest",
+        "lock_digest",
+        "accelerator",
+        "network_policy",
+        "env_allowlist"
+      ],
+      "type": "object"
+    },
+    "execution_profile": {
+      "enum": [
+        "trusted_local_python_v1"
+      ]
+    },
+    "input": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "maximum": 67108864,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "max_output_bytes": {
+      "maximum": 1073741824,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "outputs": {
+      "additionalProperties": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+        "type": "string"
+      },
+      "maxProperties": 16,
+      "minProperties": 2,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "required": [
+        "raw_data",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "primary_program": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "maximum": 67108864,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "reanalysis_program": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "maximum": 67108864,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "required_capabilities": {
+      "items": {
+        "enum": [
+          "separate_cwd",
+          "python_isolated_mode",
+          "process_group_timeout",
+          "job_object_timeout",
+          "bounded_output_capture"
+        ]
+      },
+      "maxItems": 8,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "wall_seconds": {
+      "maximum": 86400,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "primary_program",
+    "reanalysis_program",
+    "input",
+    "outputs",
+    "wall_seconds",
+    "max_output_bytes",
+    "required_capabilities",
+    "execution_profile",
+    "environment_requirements"
+  ],
+  "title": "EpistemeOS DomainPack execution plan v1",
+  "type": "object"
+}

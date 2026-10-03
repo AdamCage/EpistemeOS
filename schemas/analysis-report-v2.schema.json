@@ -1,0 +1,79 @@
+{
+  "$comment": "Pack proposal for one bounded claim. statistical_report is the SHA-256 of a separate StatisticalReport v1 artifact. The kernel computes the claim-strength ceiling and rejects a proposal above it; it never silently downgrades.",
+  "$id": "urn:epistemeos:analysis-report:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "details": {
+      "type": "object"
+    },
+    "inference_mode": {
+      "enum": [
+        "unclassified",
+        "descriptive",
+        "exploratory",
+        "confirmatory"
+      ]
+    },
+    "limitations": {
+      "items": {
+        "maxLength": 1024,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "outcome": {
+      "enum": [
+        "supports",
+        "refutes",
+        "inconclusive"
+      ]
+    },
+    "pack_id": {
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "type": "string"
+    },
+    "pack_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^\\S(?:.*\\S)?$",
+      "type": "string"
+    },
+    "protocol_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "statement": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "statistical_report": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "pack_id",
+    "pack_version",
+    "protocol_hash",
+    "statement",
+    "limitations",
+    "outcome",
+    "inference_mode",
+    "details",
+    "statistical_report"
+  ],
+  "title": "EpistemeOS DomainPack analysis report v2",
+  "type": "object"
+}
