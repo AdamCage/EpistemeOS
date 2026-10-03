@@ -1,0 +1,51 @@
+{
+  "$comment": "Sorted relative paths, SHA-256 and sizes of every file of one pack directory, bytecode caches excluded. pack_code_digest is the SHA-256 of this canonical JSON. It identifies the executed pack bytes, not their authorship, safety or the interpreter.",
+  "$id": "urn:epistemeos:pack-code-manifest:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]{0,255}[.]py$",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "sha256",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "pack_id": {
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "pack_id",
+    "files"
+  ],
+  "title": "EpistemeOS DomainPack code manifest v1",
+  "type": "object"
+}

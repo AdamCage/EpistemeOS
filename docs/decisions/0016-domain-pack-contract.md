@@ -212,9 +212,10 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 
 | Шаг | Состояние |
 |---|---|
-| 1. Envelopes, `StatisticalReport` v1, JSON Schemas | Реализован и локально проверен: [`domains/api.py`](../../src/episteme/domains/api.py), девять schemas в [`schemas/`](../../schemas), `tests/test_domain_api.py`. Ядро эти envelopes пока не вызывает. |
-| Golden test старых histories | Реализован раньше шага 3: три synthetic fixture histories, созданные немодифицированным кодом `483f1bd`, и их basis, gates, Graph, export bundle и replay (`tests/test_golden_history.py`). |
-| 2–6 | Запланированы в текущем срезе; код не написан. |
+| 1. Envelopes, `StatisticalReport` v1, JSON Schemas | Реализован и локально проверен в `c5270ac`: [`domains/api.py`](../../src/episteme/domains/api.py), девять schemas в [`schemas/`](../../schemas), `tests/test_domain_api.py`. Ядро эти envelopes пока не вызывает. |
+| Golden test старых histories | Реализован в `c5270ac`, раньше шага 3: три synthetic fixture histories, созданные немодифицированным кодом `483f1bd`, и их basis, gates, Graph, export bundle и replay (`tests/test_golden_history.py`). |
+| 2. Реестр, `code_manifest`, conformance suite | Реализован и локально проверен: [`domains/registry.py`](../../src/episteme/domains/registry.py) с пустым production allowlist, schema `pack-code-manifest-v1`, загрузчик, исполняющий ровно хешированные bytes, статическая проверка импортов и `tests/test_domain_pack_conformance.py` с тестовым пакетом `conformance_fixture_v1`. Hook-facing типы `CompileRequest`, `ProtocolContext`, `AnalysisContext` и `CasView` добавлены в `domains/api.py`. Ядро реестр пока не вызывает. |
+| 3–6 | Запланированы в текущем срезе; код не написан. |
 | 7–10 | Вне текущего среза. |
 
 ### Отклонения от предложения и уточнения шага 1
@@ -227,6 +228,14 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 - **Уточнение.** `PackManifest.roster_semantics` — список поддерживаемых значений, конкретное выбирает `ProtocolDraft` (третьему пакету нужны две фазы); `outputs` — словарь label → `{path, schema_id}`; булево `capture` объявляет hook захвата.
 - **Уточнение.** Frozen `ExecutionPlan` и `CaptureBundle` ссылаются на bytes через `{sha256, bytes}`; bytes записывает в CAS только ядро. `CaptureBundle.source.label` выводится пакетом из захваченных bytes, а не из пути файловой системы, чтобы одинаковые bytes давали одинаковый bundle.
 - **Уточнение.** Одна декларативная schema на envelope используется и runtime-проверкой без зависимостей, и опубликованным файлом; тест сравнивает их. Validator поддерживает строгое подмножество JSON Schema и отвергает неизвестные ключевые слова, а не пропускает их.
+
+### Отклонения от предложения и уточнения шага 2
+
+- **Отклонение (усиление).** Загрузчик не сравнивает bytes уже импортированного модуля, а сам хеширует все файлы каталога пакета и исполняет именно эти bytes под приватным именем модуля `_episteme_pack_<id>_<digest>`. Окна между хешированием и импортом нет. Изменение файла после загрузки не меняет исполняемый код; следующая загрузка даёт новый digest, и сверка с закреплённым digest отказывает.
+- **Уточнение.** Пакет — каталог-package, имя каталога равно `pack_id`; все его файлы, кроме `__pycache__`, обязаны быть `.py`. Установленный wheel содержит только Python-модули, поэтому файл другого типа сделал бы digest исходного и установленного дерева разным. `code_manifest` — schema `pack-code-manifest-v1`: `pack_id` и отсортированный список `{path, sha256, bytes}`.
+- **Уточнение.** Статическая проверка импортов разрешает stdlib, кроме модулей времени, случайности, процессов, сети, окружения и динамического импорта (`os`, `sys`, `time`, `random`, `subprocess`, `socket`, `importlib` и др.), `episteme.domains.api` и относительные импорты внутри пакета; вызовы `__import__`, `eval`, `exec`, `compile`, `breakpoint`, `input` отвергаются. Это проверка контракта для доверенного кода, а не граница безопасности.
+- **Отклонение (перенос).** `CasView` и hook-facing типы (`CompileRequest`, `ProtocolContext`, `AnalysisContext`) определены на шаге 2, а не 4: без них conformance suite не может вызвать hooks. `CasView` хранит заранее прочитанные и проверенные bytes allowlist и не держит ссылки на Store; запрос объявленного скрытого входа отвергается с отдельной ошибкой.
+- **Уточнение.** Production allowlist на шаге 2 пуст. Conformance suite работает для каждого зарегистрированного пакета и тестового `conformance_fixture_v1`; зарегистрированный пакет без conformance-входов в `tests/pack_fixtures.py` проваливает suite. Программы в suite исполняет минимальный локальный runner без Store; полный путь через ядро — шаг 4.
 
 ## Ограничения
 

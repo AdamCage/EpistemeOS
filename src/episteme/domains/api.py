@@ -102,12 +102,16 @@ def strict_loads(data: bytes, label: str = "envelope") -> Any:
         raise EnvelopeError(f"invalid {label}: {exc}") from exc
 
 
-def _freeze(value: Any) -> Any:
-    if type(value) is dict:
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if type(value) is list:
-        return tuple(_freeze(item) for item in value)
+def freeze(value: Any) -> Any:
+    """Deeply immutable view of strict JSON: mappings become read-only, lists tuples."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: freeze(item) for key, item in value.items()})
+    if type(value) in (list, tuple):
+        return tuple(freeze(item) for item in value)
     return value
+
+
+_freeze = freeze
 
 
 def thaw(value: Any) -> Any:
@@ -481,6 +485,17 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         _object({"schema_version": {"const": 1}, "protocol_hash": _SHA256,
                  **{name: _field(name) for name in STATISTICAL_FIELDS}}),
         defs=_FIELD_VALUES),
+    "pack-code-manifest-v1": _schema(
+        "pack-code-manifest:v1", "EpistemeOS DomainPack code manifest v1",
+        "Sorted relative paths, SHA-256 and sizes of every file of one pack directory, bytecode "
+        "caches excluded. pack_code_digest is the SHA-256 of this canonical JSON. It identifies "
+        "the executed pack bytes, not their authorship, safety or the interpreter.",
+        _object({
+            "schema_version": {"const": 1}, "pack_id": _PACK_ID,
+            "files": _list(_object({
+                "path": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]{0,255}[.]py$"},
+                "sha256": _SHA256, "bytes": {"type": "integer", "minimum": 0}}),
+                minimum=1, maximum=256)})),
 }
 
 
@@ -977,6 +992,163 @@ class AnalysisReport:
 
     def digest(self) -> str:
         return digest(canonical(self.to_dict()))
+
+
+def validate_code_manifest(value: Any) -> dict[str, Any]:
+    """Strict check of a frozen pack code manifest; returns a detached copy."""
+    value = strict_json(value)
+    _size(value, MAX_ENVELOPE_BYTES, "pack code manifest")
+    validate_schema("pack-code-manifest-v1", value)
+    paths = [row["path"] for row in value["files"]]
+    _require(paths == sorted(paths) and len(set(paths)) == len(paths),
+             "pack code manifest paths must be sorted and unique")
+    for path in paths:
+        _safe_relative(path)
+    _require("__init__.py" in paths, "pack code manifest needs __init__.py")
+    return value
+
+
+# ------------------------------------------------------- hook-facing views
+
+
+class PackAccessError(EnvelopeError):
+    """A hook asked for bytes outside the kernel-computed allowlist."""
+
+
+class CasView:
+    """Read-only bytes of a kernel-computed digest allowlist; never the Store.
+
+    The kernel reads and verifies every allowed artifact before a hook runs, so
+    a view holds no reference to the Store. ``hidden`` names digests a pack
+    declared as hidden inputs; asking for them fails explicitly. This is a
+    contract check for trusted code, not a security boundary.
+    """
+
+    __slots__ = ("_blobs", "_hidden", "_reads")
+
+    def __init__(self, blobs: Mapping[str, bytes], *, hidden: Any = ()):
+        verified: dict[str, bytes] = {}
+        for key, data in blobs.items():
+            _require(type(data) is bytes and digest(data) == key,
+                     f"CAS view bytes do not match their digest: {key}")
+            verified[key] = data
+        hidden_keys = frozenset(hidden)
+        _require(not hidden_keys & verified.keys(), "a hidden input cannot be in the allowlist")
+        self._blobs = MappingProxyType(dict(sorted(verified.items())))
+        self._hidden = hidden_keys
+        self._reads: set[str] = set()
+
+    def read(self, key: str) -> bytes:
+        if key in self._hidden:
+            raise PackAccessError(f"pack tried to read a declared hidden input: {key}")
+        if key not in self._blobs:
+            raise PackAccessError(f"artifact is outside the pack allowlist: {key}")
+        self._reads.add(key)
+        return self._blobs[key]
+
+    def json(self, key: str, label: str = "artifact") -> Any:
+        return strict_loads(self.read(key), label)
+
+    @property
+    def allowlist(self) -> tuple[str, ...]:
+        return tuple(self._blobs)
+
+    @property
+    def reads(self) -> tuple[str, ...]:
+        return tuple(sorted(self._reads))
+
+
+@dataclass(frozen=True)
+class CompileRequest:
+    """Kernel-validated inputs of compile hooks; ``host_inputs`` never reach analysis."""
+
+    parameters: Any
+    host_inputs: Any
+    capture: CaptureBundle | None
+
+    def __post_init__(self) -> None:
+        for name in ("parameters", "host_inputs"):
+            value = strict_json(thaw(getattr(self, name)))
+            _require(type(value) is dict, f"compile request {name} must be a JSON object")
+            _size(value, MAX_ENVELOPE_BYTES, f"compile request {name}")
+            object.__setattr__(self, name, freeze(value))
+        _require(self.capture is None or type(self.capture) is CaptureBundle,
+                 "compile request capture must be a CaptureBundle")
+
+
+@dataclass(frozen=True)
+class ProtocolContext:
+    """What ``validate_protocol`` sees: the recorded protocol and its pinned compilation."""
+
+    request: CompileRequest
+    draft: ProtocolDraft
+    execution_plan: Any
+    protocol: Any
+    protocol_hash: str
+
+    def __post_init__(self) -> None:
+        _require(type(self.request) is CompileRequest and type(self.draft) is ProtocolDraft,
+                 "protocol context needs a compile request and a protocol draft")
+        object.__setattr__(self, "execution_plan", freeze(strict_json(thaw(self.execution_plan))))
+        object.__setattr__(self, "protocol", freeze(strict_json(thaw(self.protocol))))
+        _require(type(self.protocol_hash) is str and re.fullmatch("[0-9a-f]{64}", self.protocol_hash)
+                 is not None, "protocol context needs a protocol hash")
+
+
+@dataclass(frozen=True)
+class AnalysisContext:
+    """Copied payloads for analysis hooks: no Store, no host inputs, no hidden bytes."""
+
+    pack_id: str
+    pack_version: str
+    protocol: Any
+    protocol_hash: str
+    parameters: Any
+    draft: ProtocolDraft
+    execution_plan: Any
+    capture: Any
+    batch: Any
+    slots: Any
+    numeric_tolerance: float
+
+    def __post_init__(self) -> None:
+        _require(type(self.draft) is ProtocolDraft, "analysis context needs a protocol draft")
+        for name in ("protocol", "parameters", "execution_plan", "capture", "batch", "slots"):
+            object.__setattr__(self, name, freeze(strict_json(thaw(getattr(self, name)))))
+        _require(type(self.numeric_tolerance) in (int, float) and self.numeric_tolerance >= 0,
+                 "analysis context needs a nonnegative numeric tolerance")
+        _require(all(isinstance(row, Mapping) and set(row) == {
+            "slot", "roster_unit", "mode", "run", "result", "outputs"} for row in self.slots),
+            "analysis context slots have unexpected fields")
+
+    def slot(self, name: str) -> Mapping[str, Any]:
+        found = [row for row in self.slots if row["slot"] == name]
+        _require(len(found) == 1, f"analysis context lacks slot {name}")
+        return found[0]
+
+
+class DomainPack:
+    """Hook signatures of a pack module; documentation, not a base class to inherit.
+
+    A pack is a package directory registered in ``registry.PACKS``. Its module
+    defines ``MANIFEST`` (a PackManifest dict) and these functions. Every hook
+    is pure over its arguments: no Store, time, network, environment or
+    implicit randomness. Only ``capture`` reads a declared local path, read-only,
+    and only before binding.
+    """
+
+    MANIFEST: Mapping[str, Any]
+
+    def describe(self) -> ParameterCatalog: ...
+    def validate_parameters(self, parameters: Mapping[str, Any]) -> None: ...
+    def compile_protocol(self, request: CompileRequest) -> ProtocolDraft: ...
+    def compile_execution(self, request: CompileRequest) -> ExecutionPlan: ...
+    def validate_protocol(self, context: ProtocolContext) -> None: ...
+    def capture(self, source: Any) -> CaptureBundle: ...
+    def validate_outputs(self, context: AnalysisContext, cas: CasView) -> Any: ...
+    def recompute_metrics(self, context: AnalysisContext, cas: CasView) -> Any: ...
+    def analyse(self, context: AnalysisContext, cas: CasView, checks: Any,
+                recomputations: Any) -> AnalysisReport: ...
 
 
 def published_schema(name: str) -> dict[str, Any]:
