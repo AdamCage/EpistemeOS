@@ -42,7 +42,7 @@ uv run episteme analysis advance <batch-id> --root .research/study --planner pla
 
 `analysis advance` пересчитывает метрику из наблюдённых raw data, сохраняет bounded exploratory claim и назначает reviewer на текущем evidence basis. Повтор после перезапуска не создаёт второй claim или assignment. Статус `awaiting_review` не означает научное подтверждение; demo и CLI не создают reviewer verdict. Контракт — [ADR 0013](docs/decisions/0013-batch-analysis-admission.md), фактические проверки — в [validation.md](docs/validation.md).
 
-Ручной `domain.bind` через `episteme command` фиксирует domain recipe, исходник адаптера и параметры batch до исполнения planning-bound protocol. Он позволяет провести manual synthetic batch через тот же анализ и служит контрактом для будущего Afterlife pack; сам historical import пока не создаёт анализируемые runs или claim. Контракт — [ADR 0014](docs/decisions/0014-manual-domain-binding.md).
+Ручной `domain.bind` через `episteme command` фиксирует domain recipe, исходник адаптера и параметры batch до исполнения planning-bound protocol. Его используют synthetic adapter и офлайн-пилот на исторических траекториях Afterlife. Сам historical import по-прежнему не создаёт анализируемые runs или claim. Контракты — [ADR 0014](docs/decisions/0014-manual-domain-binding.md) и [ADR 0015](docs/decisions/0015-afterlife-historical-pilot.md).
 
 ## Начать с документов
 
@@ -62,6 +62,7 @@ uv run episteme analysis advance <batch-id> --root .research/study --planner pla
 - [Подготовка batch и сохраняемый follow-up по отрицательному review](docs/decisions/0009-proposal-review-replanning.md).
 - [Анализ завершённого batch и назначение reviewer](docs/decisions/0013-batch-analysis-admission.md).
 - [Ручная привязка frozen domain recipe до batch](docs/decisions/0014-manual-domain-binding.md).
+- [Разведочный офлайн-пилот на исторических траекториях Afterlife](docs/decisions/0015-afterlife-historical-pilot.md).
 
 ## Локальный запуск
 
@@ -167,6 +168,7 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 - Два versioned model proposal tasks: hypotheses/ExplanationSet и exploratory protocol/tree node, с original response, receipts и provenance.
 - Атомарная подготовка полного batch для выбранного applied proposal; typed отрицательные reviewer obligations и сохраняемый дочерний follow-up без ложного закрытия finding.
 - Receipt-backed анализ завершённого synthetic batch до ограниченного claim и назначение reviewer на frozen basis; scientific verdict не создаётся.
+- Офлайн-пересчёт доли stop-событий девяти уже наблюдённых траекторий Afterlife через общий runner: полная проверка захваченных bytes и записей шагов, exploratory protocol с объявленной экспозицией и `inconclusive` claim до review.
 
 ## Граф и исторический импорт
 
@@ -179,7 +181,18 @@ uv run episteme afterlife import C:\Projects\llm-semantic-afterlife --root .rese
 
 Граф проверяет ссылки и байты артефактов; Python API `ResearchGraph` поддерживает ancestors/descendants и точный фильтр claims по scope. Рёбра отражают зарегистрированные зависимости, не автоматически установленную истинность.
 
-Afterlife importer сохраняет immutable исторический снимок, статусы и ограничения проверки. Повторный импорт того же снимка идемпотентен. По умолчанию копируются metadata, а большие outputs только проверяются по hashes в пределах лимита; непроверенные ссылки остаются явными. Импорт не создаёт preregistered protocols, reviews или accepted claims и не меняет исходный checkout. Это начало domain adapter; перенос исполнения/анализа afterlife остаётся в плане.
+Afterlife importer сохраняет immutable исторический снимок, статусы и ограничения проверки. Повторный импорт того же снимка идемпотентен. По умолчанию копируются metadata, а большие outputs только проверяются по hashes в пределах лимита; непроверенные ссылки остаются явными. Импорт не создаёт preregistered protocols, reviews или accepted claims и не меняет исходный checkout.
+
+Отдельный офлайн-пилот пересчитывает долю stop-событий из девяти уже сохранённых траекторий одного run. Укажите каталог этого run; `prepare` проверит все 30 объявленных outputs и создаст новый exploratory protocol и batch, но не запустит его:
+
+```powershell
+uv run python examples/afterlife_historical_pilot.py prepare --source-run <run-directory> --root .research/afterlife-pilot
+uv run episteme batch advance <batch-id-from-prepare> --root .research/afterlife-pilot
+uv run episteme analysis advance <batch-id-from-prepare> --adapter afterlife_seed_v1 --root .research/afterlife-pilot --planner afterlife-pilot-planner --analyst afterlife-pilot-analyst --reviewer afterlife-pilot-reviewer
+uv run episteme analysis status <batch-id-from-prepare> --root .research/afterlife-pilot
+```
+
+Запуски локальные и не вызывают provider. Второй анализ использует те же исходные шаги; `awaiting_review` оставляет научное решение открытым. В выбранных файлах нет embeddings для повторного вычисления исходного S1 семантического разрыва. [ADR 0015](docs/decisions/0015-afterlife-historical-pilot.md) описывает данные, проверки и ограничения.
 
 Actor IDs пока назначает доверенный вызывающий процесс. Разные ID и source hashes не доказывают независимость рассуждения или clean-room реализацию. SQLite/hash chain не защищает от владельца файлов. Generic kernel проверяет наличие и согласованность метрик и статистических деклараций; соответствие фактических данных, вычисление uncertainty и научную корректность метода должен проверять domain adapter и независимая реализация. Независимые Executor, Replication и Scientific Reviewer агенты, sandbox, автоматическое исполнение follow-up и внешне проверяемое закрытие научных замечаний остаются в [MVP-плане](docs/mvp-plan.md).
 

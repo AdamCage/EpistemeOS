@@ -1,6 +1,6 @@
 # Карта репозитория EpistemeOS
 
-Дата: 3 октября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
+Дата: 4 октября 2026. Здесь отдельно описаны существующие файлы v0.1 и проектируемые модули. Архитектурные решения — в [architecture.md](architecture.md), зависимости и приёмка — в [mvp-plan.md](mvp-plan.md). Названия будущих каталогов задают границы ответственности; пустые пакеты ради этой схемы создавать не требуется.
 
 ## Фактическое ядро v0.1
 
@@ -61,12 +61,15 @@ EpistemeOS/
 │   ├── reporting.py              snapshot export и внутренний paper scaffold
 │   ├── graph.py                  типизированная read-only проекция и queries
 │   ├── domains/afterlife.py      bounded historical inspection/import
+│   ├── domains/afterlife_seed.py verified historical steps bundle и два offline runner sources
+│   ├── domains/afterlife_seed_batch_analysis.py  предметный пересчёт nine-trajectory batch
 │   ├── domains/synthetic_causal.py  synthetic fixture recipe и runner sources
 │   ├── domains/synthetic_batch_analysis.py  пересчёт synthetic metric из raw data
 │   └── demo.py                   два фиксированных CPU-приложения
 ├── schemas/                      command, statistical design, question/set, claim link, review и experiment proposal
 ├── examples/model_hypotheses.py  подготовка одного задания; --execute явно вызывает модель
 ├── examples/model_experiment.py  frozen synthetic experiment request; --execute явно вызывает модель
+├── examples/afterlife_historical_pilot.py  подготовка exploratory batch по проверенному legacy run
 └── tests/
     ├── test_kernel.py            инварианты ядра и исторические failure cases
     ├── test_cli.py               реальные CLI/subprocess интеграции
@@ -83,6 +86,7 @@ EpistemeOS/
     ├── test_batch.py             полный roster, failures/unknown, atomicity, restore guard и CLI
     ├── test_batch_analysis.py    полный batch → claim → assignment, replay, CLI и restore
     ├── test_domain_binding.py    manual recipe → batch → analysis, drift, CLI и restore
+    ├── test_afterlife_seed_batch.py  исторический inventory, схема записей шагов, offline batch/analysis, drift и подмена
     ├── test_synthetic_batch_analysis.py  пересчёт raw metrics, frozen parameters и oracle boundary
     ├── test_execution_authority.py atomic marker, concurrency, corruption и restore
     ├── test_runner_backend.py    реальные descendants, timeout, capture cap и duplicate delivery
@@ -117,7 +121,8 @@ EpistemeOS/
 | `experiment_proposals.py` | Frozen prompt, provider schema и strict semantic validator для experiment proposal по исходному порядку hypotheses. | Валидный JSON не доказывает различающую силу эксперимента или реальное исполнение. |
 | `domains/synthetic_causal.py` | Синтетический causal recipe, отдельные source для primary/reanalysis и typed exploratory design. | Известный генератор и общие наблюдения для повторного анализа; нет внешнего scientific evidence или доказанной независимости второго анализа. |
 | `batch.py`, `batch_controller.py` | Полный roster primary/reanalysis для выбранного scientific node, резерв будущих slots, resume без повторного dispatch, полный технический settlement. | Fresh primary policy; стоимость в attempts, без agent reasoning или научной оценки. |
-| `batch_analysis.py`, `analysis_controller.py`, `domains/synthetic_batch_analysis.py` | На frozen synthetic recipe пересчитывают observed point estimates, фиксируют proposal/code CAS, полный claim и отдельно reviewer assignment с resume после сбоя. | Тот же OS actor может прочитать world; source digest не attestation. Нет verdict, универсального анализа или второго domain pack. |
+| `batch_analysis.py`, `analysis_controller.py`, `domains/synthetic_batch_analysis.py` | На frozen synthetic recipe пересчитывают observed point estimates, фиксируют proposal/code CAS, полный claim и отдельно reviewer assignment с resume после сбоя. | Тот же OS actor может прочитать world; source digest не attestation. Нет verdict или универсального анализа; второй, исторический адаптер описан ниже. |
+| `domains/afterlife_seed.py`, `domains/afterlife_seed_batch_analysis.py`, `examples/afterlife_historical_pilot.py` | До CAS проверяют 30 заявленных outputs одного S1 run, hashes, seed grid, схему каждой записи шага и legacy counters; готовят exploratory protocol, `domain.bind` и batch из 9 primary и 9 same-data reanalysis slots; адаптер повторно сверяет bundle, raw bytes и метрики и предлагает только `inconclusive` claim. | Уже наблюдённые данные одного model/configuration; согласие с manifest — предусловие захвата, поэтому конкурирующее объяснение не получает исхода. Нет embeddings для S1 semantic gap, независимого авторства программ, sandbox или verdict. |
 | `proposal_execution.py` | Одной planner receipt связывает текущий winning applied model experiment node с selection и полным frozen batch из первоначальной compilation. | Не выбирает узел вопреки priority, не запускает worker и не оценивает научную состоятельность дизайна. |
 | `replanning.py`, `resolution.py` | Отрицательное мнение reviewer и typed obligations; затем адресное удовлетворение одного `discriminating_experiment` finding новым reviewed claim на неизменённом evidence basis. Historical receipt и текущий effective status проверяются отдельно. | Роль/ID заявлены caller; решение reviewer не доказывает научную истину или независимость, остальные findings остаются открытыми. |
 | `review_assignment.py` | На текущем mechanically passed basis сохраняет одну receipt, reviewer ID и curated CAS manifest предполагаемого initial context. Historical replay пересчитывает bytes и проверяет contributor conflict. | `caller_declared` identity и `not_enforced` read isolation; legacy review commands не требуют назначения. Manifest не закрывает доступ к Store или утечку смысла через свободный текст. |
@@ -134,13 +139,13 @@ EpistemeOS/
 | `runner_backend.py` | Frozen single Python source/input, отдельный cwd, gated process launch, Windows Job Object / POSIX group, bounded capture, durable completion. | Trusted local profile, без filesystem/network sandbox, package environment reconstruction или domain metric recomputation. |
 | `claims.py`, `claim_context.py` | Immutable proposals отношений, validation порядка/scope/циклов; review context из incoming supports/limits и symmetric contradictions/supersession. | Не доказывают научную связь; binding evidence basis и bytes проверяет Kernel/Graph. |
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
-| `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; общий runner и metric recomputation не перенесены. |
+| `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; импорт сам не создаёт runs. Пересчёт stop-событий одного run выполняет отдельный пилот выше. |
 | `domain_binding.py` | Ручная receipt-backed привязка planning-bound protocol к CAS recipe/adapter source и точным параметрам batch до исполнения; replay и Graph проверяют исходный префикс. | Доменный смысл recipe проверяет адаптер; actor ID и code digest не доказывают независимость или исполнение именно этих bytes в изолированной среде. |
 | `kernel.py` | Hypothesis/protocol/run/result/claim/review commands, правила ролей, binding digests/scope, seeds и run limit, review basis и `next_action`; открытые typed obligations удерживают `replan` и paper gate. | Python caller доверенный. Проверка finite metric не пересчитывает науку. `next_action` возвращает решение, не job. |
 | `search.py` | `register_tournament`, `pairings`, `ballot`, `ranking`; `register_tree`, `add_node`, `select_next`, `tree_state`, `finish_selection`. Сохраняются policy, ballots, nodes, решения и резервы объявленной стоимости. | Нет LLM judge, worker dispatch/lease или независимого измерения расходов. Priority не продвигает claim и допускает неполное сравнение pool. |
 | `demo.py` | Генерация синтетических CSV и два способа OLS в реальных subprocess, локальные actors; завершение перед review. | Только фиксированные программы, без LLM и независимого scientific review. Runtime record не восстанавливает произвольную среду. |
 | `reporting.py` | Один snapshot для inspect/export; `PaperBuilder.build` проверяет текущую eligibility и записывает immutable Markdown/JSON+paper event с трассировкой привязанного review-driven follow-up; `materialize` повторно проверяет basis и bytes. | Внутренний scaffold, без полноценного literature/figures/Methods validation или venue formatting; свободный claim text не сертифицируется. |
-| `cli.py` | Demo/inspection/gates/export, review JSON, paper scaffold; `agent recipe --input` замораживает host-owned binding, `agent advance` продолжает оба proposal tasks; `analysis status/advance` обрабатывает завершённый synthetic batch. Остальные переходы принимаются через `episteme command`. | Actor ID задаётся доверенным caller; sandbox и независимого scientific review нет. |
+| `cli.py` | Demo/inspection/gates/export, review JSON, paper scaffold; `agent recipe --input` замораживает host-owned binding, `agent advance` продолжает оба proposal tasks; `analysis status/advance` обрабатывает завершённый synthetic batch, а с `--adapter afterlife_seed_v1` — исторический Afterlife batch. Остальные переходы принимаются через `episteme command`. | Actor ID задаётся доверенным caller; sandbox и независимого scientific review нет. |
 | `tests/test_kernel.py` | Протокол до run, источники evidence, scope, budgets при конфликте writers, retention failures, stale review, self-review, integrity. | Unit tests не доказывают clean-room, sandbox, научную правильность или публикационное качество. |
 | `tests/test_search.py`, `tests/test_reporting.py`, `tests/test_cli.py` | Поиск и cost reservations, snapshot consistency и paper eligibility, входные review JSON и запускаемые CLI/subprocess сценарии. | Покрытие конкретных failure cases не означает общего доказательства безопасности либо работы независимых научных агентов. |
 | `docs/research/*` | Проверяемые основания решений и заранее предлагаемый evaluation design. | Литературный обзор и локальный code audit не означают независимого запуска внешних систем. |

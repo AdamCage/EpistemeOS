@@ -86,6 +86,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation.add_argument("batch", help="Completed batch_plan ID")
         operation.add_argument("--root", type=Path, required=True)
         if name == "advance":
+            operation.add_argument("--adapter", choices=("synthetic_causal_v1", "afterlife_seed_v1"),
+                                   default="synthetic_causal_v1",
+                                   help="Frozen domain analysis adapter for this batch")
             operation.add_argument("--planner", required=True, help="Caller-declared batch planner ID")
             operation.add_argument("--analyst", required=True, help="Caller-declared analyst ID")
             operation.add_argument("--reviewer", required=True, help="Caller-declared reviewer ID")
@@ -143,14 +146,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "analysis":
             from .analysis_controller import advance_batch_analysis, analysis_state
             from .domains.synthetic_batch_analysis import SyntheticCausalBatchAnalysisAdapter
+            from .domains.afterlife_seed_batch_analysis import AfterlifeSeedBatchAnalysisAdapter
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
             with Store(args.root, read_only=args.operation == "status") as store:
+                adapter = ({"synthetic_causal_v1": SyntheticCausalBatchAnalysisAdapter,
+                            "afterlife_seed_v1": AfterlifeSeedBatchAnalysisAdapter}[args.adapter]()
+                           if args.operation == "advance" else None)
                 result = (analysis_state(store, args.batch) if args.operation == "status" else
                           advance_batch_analysis(store, args.batch,
                               planner=Actor(args.planner, "planner"),
                               analyst=Actor(args.analyst, "analyst"), reviewer_actor=args.reviewer,
-                              adapter=SyntheticCausalBatchAnalysisAdapter()))
+                              adapter=adapter))
             status = 0
         elif args.command == "batch":
             from .batch import batch_state
