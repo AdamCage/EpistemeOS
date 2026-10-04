@@ -52,6 +52,11 @@ DENIED_STDLIB = {
     "tempfile", "termios", "threading", "time", "tty", "urllib", "uuid", "webbrowser",
     "winreg", "winsound", "xmlrpc", "zoneinfo"}
 DENIED_CALLS = {"__import__", "breakpoint", "compile", "eval", "exec", "input"}
+# File access belongs only to the read-only capture hook, kept in capture.py.
+CAPTURE_MODULE = "capture.py"
+FILE_IO_STDLIB = {"bz2", "fileinput", "glob", "gzip", "io", "logging", "lzma", "mmap",
+                  "pathlib", "tarfile", "zipfile"}
+FILE_IO_CALLS = {"open"}
 _PACK_ID = re.compile(r"[a-z][a-z0-9_]{1,63}\Z")
 _LOCK = threading.Lock()
 _LOADED: dict[str, LoadedPack] = {}
@@ -116,13 +121,16 @@ def import_violations(files: Mapping[str, bytes]) -> list[str]:
     stdlib = set(sys.stdlib_module_names)
     violations: list[str] = []
 
-    def module_allowed(name: str) -> bool:
+    def module_allowed(name: str, capture: bool) -> bool:
         if name in ALLOWED_EPISTEME_IMPORTS:
             return True
         top = name.split(".")[0]
-        return top in stdlib and top not in DENIED_STDLIB
+        return (top in stdlib and top not in DENIED_STDLIB
+                and (capture or top not in FILE_IO_STDLIB))
 
     for path, data in sorted(files.items()):
+        capture = path == CAPTURE_MODULE
+        denied_calls = DENIED_CALLS | (set() if capture else FILE_IO_CALLS)
         try:
             tree = ast.parse(data, filename=path)
         except (SyntaxError, ValueError) as exc:
@@ -131,7 +139,7 @@ def import_violations(files: Mapping[str, bytes]) -> list[str]:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 violations.extend(f"{path}:{node.lineno}: import {alias.name}"
-                                  for alias in node.names if not module_allowed(alias.name))
+                                  for alias in node.names if not module_allowed(alias.name, capture))
             elif isinstance(node, ast.ImportFrom):
                 if node.level == 1:
                     continue
@@ -139,10 +147,10 @@ def import_violations(files: Mapping[str, bytes]) -> list[str]:
                     violations.append(f"{path}:{node.lineno}: relative import outside the pack")
                 elif node.module == "episteme.domains" and [a.name for a in node.names] == ["api"]:
                     continue
-                elif node.module is None or not module_allowed(node.module):
+                elif node.module is None or not module_allowed(node.module, capture):
                     violations.append(f"{path}:{node.lineno}: from {node.module} import")
             elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                  and node.func.id in DENIED_CALLS):
+                  and node.func.id in denied_calls):
                 violations.append(f"{path}:{node.lineno}: call {node.func.id}()")
     return violations
 
@@ -243,7 +251,7 @@ def load_pack(pack_id: str) -> LoadedPack:
         violations = import_violations(files)
         _require(not violations, f"pack {pack_id} violates the import contract: "
                  + "; ".join(violations))
-        name = f"_episteme_pack_{pack_id}_{key[:16]}"
+        name = f"_episteme_pack_{pack_id}_{key}"
         if name not in sys.modules:
             frozen = MappingProxyType(dict(files))
             sys.meta_path.insert(0, _Finder(name, frozen, root))

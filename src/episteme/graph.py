@@ -49,6 +49,8 @@ class NodeKind(str, Enum):
     BATCH_SETTLEMENT = "batch_settlement"
     BATCH_ANALYSIS = "batch_analysis"
     DOMAIN_BINDING = "domain_binding"
+    PACK_BINDING = "pack_binding"
+    PACK_ANALYSIS = "pack_analysis"
     EXECUTION_JOB = "execution_job"
     EXECUTION_DISPATCH = "execution_dispatch"
     EXECUTION_FINALIZED = "execution_finalized"
@@ -91,6 +93,12 @@ class Relation(str, Enum):
     BATCH_ANALYSIS_ARTIFACT = "batch_analysis_artifact"
     DOMAIN_REFERENCE = "domain_binding_reference"
     DOMAIN_ARTIFACT = "domain_binding_artifact"
+    PACK_REFERENCE = "pack_binding_reference"
+    PACK_ARTIFACT = "pack_binding_artifact"
+    PACK_ANALYSIS_REFERENCE = "pack_analysis_reference"
+    PACK_ANALYSIS_ARTIFACT = "pack_analysis_artifact"
+    PACK_ANALYSIS_INPUT = "pack_analysis_allowed_input"
+    REVIEW_PACK = "review_pack"
     REVIEW_BATCH = "review_batch"
     EXECUTION_RUN = "execution_run"
     EXECUTION_JOB = "execution_job"
@@ -406,6 +414,28 @@ class _Projection:
             for key in sorted(binding_artifacts(e)):
                 self.blob(key, Relation.DOMAIN_ARTIFACT, "frozen_domain_recipe")
             return
+        if kind == "pack_binding":
+            from .domain_packs import binding_artifacts
+            protocol = self.ref(p["protocol"], "protocol", Relation.PACK_REFERENCE, "protocol")
+            self.hash_ref(protocol, p["protocol_hash"], "protocol_hash")
+            self.ref(p["explanation_set"], "explanation_set", Relation.PACK_REFERENCE, "explanation_set")
+            for key in sorted(binding_artifacts(self.store, e)):
+                self.blob(key, Relation.PACK_ARTIFACT, "pinned_pack")
+            return
+        if kind == "pack_analysis":
+            fields = {"batch": "batch_plan", "settlement": "batch_settlement",
+                      "terminal": "search_terminal", "protocol": "protocol",
+                      "binding": "pack_binding", "claim": "claim"}
+            for field, target_kind in fields.items():
+                reference = self.ref(p[field], target_kind, Relation.PACK_ANALYSIS_REFERENCE, field)
+                self.hash_ref(reference, p[field + "_hash"], field + "_hash")
+            self.refs(p["runs"], "run", Relation.PACK_ANALYSIS_REFERENCE, "runs")
+            self.refs(p["results"], "result", Relation.PACK_ANALYSIS_REFERENCE, "results")
+            for field in ("report", "statistical_report", "checks", "recomputations"):
+                self.blob(p[field], Relation.PACK_ANALYSIS_ARTIFACT, field)
+            for index, key in enumerate(p["cas_allowlist"]):
+                self.blob(key, Relation.PACK_ANALYSIS_INPUT, f"cas_allowlist[{index}]")
+            return
         if kind == "batch_analysis":
             fields = {"batch": "batch_plan", "settlement": "batch_settlement",
                       "terminal": "search_terminal", "protocol": "protocol",
@@ -657,6 +687,9 @@ class _Projection:
                             "search_selection", "experiment_node", "search_tree"}:
                         self.ref(record["id"], record["kind"], Relation.REVIEW_BATCH, "basis_hash",
                                  derivation="resolved_batch_provenance")
+                    elif record["kind"] in {"pack_binding", "pack_analysis"}:
+                        self.ref(record["id"], record["kind"], Relation.REVIEW_PACK, "basis_hash",
+                                 derivation="resolved_pack_provenance")
             version = p.get("review_schema_version", 1)
             if type(version) is not int or version not in {1, 2} or (context.link_ids and version != 2):
                 self.fail("unsupported review schema or linked context lacks explicit assessments")
@@ -832,6 +865,15 @@ class _Projection:
             analysis_index(self.store, self.history, receipts=receipts)
         except (ValueError, KeyError, TypeError) as exc:
             self.fail(f"invalid batch analysis history: {exc}")
+        if (any(e["kind"] in {"pack_binding", "pack_analysis"} for e in self.history)
+                or any(r["request"]["action"] in {"pack.preregister", "pack.analyse"} for r in receipts)):
+            from .domain_packs import _analysis_index as pack_analysis_index
+            from .domain_packs import _binding_index as pack_binding_index
+            try:
+                pack_binding_index(self.store, self.history, receipts=receipts)
+                pack_analysis_index(self.store, self.history, receipts=receipts)
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid pack history: {exc}")
         try:
             assignment_index(self.store, self.history, receipts=receipts)
         except (ValueError, KeyError, TypeError) as exc:

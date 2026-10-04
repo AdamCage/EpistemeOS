@@ -20,6 +20,7 @@ from .execution import Execution
 from .batch import Batch
 from .batch_analysis import BatchAnalysis
 from .domain_binding import DomainBinding
+from .domain_packs import PackAnalysis, PackPreregistration
 from .agents import Agents
 from .proposal_execution import ProposalExecution
 from .replanning import Replanning
@@ -112,6 +113,8 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "agent.apply_experiment": (Agents, Agents.apply_experiment, frozenset({"planner"})),
     "batch.plan": (Batch, Batch.plan, frozenset({"planner"})),
     "domain.bind": (DomainBinding, DomainBinding.bind, frozenset({"planner"})),
+    "pack.preregister": (PackPreregistration, PackPreregistration.preregister, frozenset({"planner"})),
+    "pack.analyse": (PackAnalysis, PackAnalysis.analyse, frozenset({"analyst"})),
     "proposal.prepare_next": (ProposalExecution, ProposalExecution.prepare_next, frozenset({"planner"})),
     "replanning.record_review": (Replanning, Replanning.record_review, frozenset({"reviewer"})),
     "replanning.resolve_obligation": (Replanning, Replanning.resolve_obligation,
@@ -192,7 +195,9 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "execution_job": ("run",), "execution_dispatch": ("job",), "execution_finalized": ("job",),
             "batch_plan": ("protocol", "selection"), "batch_slot": ("batch",), "batch_settlement": ("batch",),
             "domain_binding": ("protocol",),
+            "pack_binding": ("protocol", "explanation_set"),
             "batch_analysis": ("batch", "settlement", "terminal", "protocol", "claim"),
+            "pack_analysis": ("batch", "settlement", "terminal", "protocol", "binding", "claim"),
             "agent_request": (("question", "budget", "explanation_set", "tree")
                               if p.get("schema_version") == 2 else ("question", "budget")),
             "agent_dispatch": ("request",), "agent_response": ("request",),

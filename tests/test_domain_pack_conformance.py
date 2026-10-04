@@ -108,7 +108,8 @@ class PackConformanceTests(unittest.TestCase):
                                  design.primary_metric.unit)
                 protocol = pack_fixtures.protocol_payload(draft, plan)
                 loaded.hook("validate_protocol")(api.ProtocolContext(
-                    request=request, draft=draft, execution_plan=plan.to_dict(),
+                    parameters=request.parameters, draft=draft, execution_plan=plan.to_dict(),
+                    capture=None if request.capture is None else request.capture.to_dict(),
                     protocol=protocol, protocol_hash="e" * 64))
 
     def test_analysis_hooks_are_repeatable_over_the_allowlist_only(self):

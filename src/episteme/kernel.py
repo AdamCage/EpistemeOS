@@ -106,6 +106,10 @@ def exposure_artifacts(event: dict[str, Any], store: Store | None = None) -> set
     if event["kind"] == "domain_binding":
         from .domain_binding import binding_artifacts
         return binding_artifacts(event)
+    if event["kind"] in {"pack_binding", "pack_analysis"}:
+        from .domain_packs import pack_artifacts
+        require(store is not None, "pack provenance requires its artifact store")
+        return pack_artifacts(store, event)
     if event["kind"] in {"batch_plan", "batch_slot", "batch_settlement", "batch_analysis"}:
         from .batch import batch_artifacts
         require(store is not None, "batch artifact context requires a store")
@@ -439,7 +443,19 @@ class Kernel:
     def claim(self, *, protocol: str, statement: str, scope: dict[str, str],
               evidence: list[str], limitations: list[str], outcome: str,
               inference_mode: str | None = None) -> str:
+        return self._claim(protocol=protocol, statement=statement, scope=scope, evidence=evidence,
+                           limitations=limitations, outcome=outcome, inference_mode=inference_mode,
+                           pack_admission=False)
+
+    def _claim(self, *, protocol: str, statement: str, scope: dict[str, str],
+               evidence: list[str], limitations: list[str], outcome: str,
+               inference_mode: str | None, pack_admission: bool) -> str:
         history = self._history()
+        # A pack-bound protocol's strength ceiling is enforced only by pack.analyse.
+        require(pack_admission or not any(event["kind"] == "pack_binding"
+                                          and event["payload"].get("protocol") == protocol
+                                          for event in history),
+                "claims on a pack-bound protocol are admitted only by pack.analyse")
         plan = self._get(history, protocol, "protocol")["payload"]
         require(scope == plan["scope"], "claim scope exceeds/differs from protocol scope")
         require(bool(statement.strip()) and bool(limitations) and all(
@@ -502,9 +518,13 @@ class Kernel:
             basis.extend(batch_context(self.store, history, context_runs))
         basis.extend(event for event in history if event["kind"] == "domain_binding"
                      and event["payload"].get("protocol") == protocol)
+        basis.extend(event for event in history if event["kind"] == "pack_binding"
+                     and event["payload"].get("protocol") == protocol)
         # A frozen domain proposal is part of the evidence revision reviewed
         # later. Its event follows the claim, so it cannot be added by claim().
         basis.extend(event for event in history if event["kind"] == "batch_analysis"
+                     and event["payload"].get("claim") == claim)
+        basis.extend(event for event in history if event["kind"] == "pack_analysis"
                      and event["payload"].get("claim") == claim)
         return basis, runs
 
@@ -640,9 +660,15 @@ class Kernel:
             except IntegrityError as exc:
                 failures.append(str(exc))
         for event in evidence:
-            if event["kind"] not in {"batch_analysis", "domain_binding"}:
+            if event["kind"] not in {"batch_analysis", "domain_binding", "pack_binding", "pack_analysis"}:
                 continue
-            for key in exposure_artifacts(event, self.store):
+            try:
+                # Pack closures read CAS manifests; report damage as a gate failure.
+                keys = exposure_artifacts(event, self.store)
+            except IntegrityError as exc:
+                failures.append(str(exc))
+                continue
+            for key in keys:
                 try:
                     self.store.read(key)
                 except IntegrityError as exc:

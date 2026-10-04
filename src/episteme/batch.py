@@ -113,6 +113,16 @@ def _validate_plan(store: Store, history: list[dict[str, Any]], p: dict[str, Any
                     ("reanalysis_implementation", "reanalysis_environment", "outputs",
                      "wall_seconds", "max_output_bytes", "required_capabilities")),
                 "batch execution differs from the frozen domain binding")
+    packs = [event for event in history if event["kind"] == "pack_binding"
+             and event["payload"].get("protocol") == protocol["id"]]
+    if packs:
+        # The binding itself is replayed by pack.analyse, Graph and exports; this
+        # replay-time check only compares the batch with the pinned plan.
+        from .domain_packs import execution_fields
+        require(len(packs) == 1 and binding is None,
+                "protocol cannot have several or both manual and pack bindings")
+        require(all(p[field] == value for field, value in execution_fields(store, packs[0]).items()),
+                "batch execution differs from the pinned pack execution plan")
 
 
 def _cells(state: dict[str, Any], executions: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -285,6 +295,8 @@ def validate_start(store: Store, history: list[dict[str, Any]], protocol: str,
     require(len(active) <= 1, "protocol has multiple active batches")
     if not active:
         require(batch_slot is None, "batch slot requires its active protocol reservation")
+        require(not any(e["kind"] == "pack_binding" and e["payload"].get("protocol") == protocol
+                        for e in history), "pack-bound protocols run only through their frozen batch")
         return
     plan = active[0]
     require(type(batch_slot) is tuple and len(batch_slot) == 2 and batch_slot[0] == plan["id"],
@@ -389,6 +401,12 @@ class Batch:
                        slots=_roster(protocol["payload"]["seeds"], executor, replicator),
                        cost_unit="enqueued_attempt", reserved_cost=2 * len(protocol["payload"]["seeds"]))
         _validate_plan(self.store, history, payload)
+        if any(event["kind"] == "pack_binding" for event in history):
+            from .domain_packs import pack_bindings, require_live_pack
+            pack = pack_bindings(self.store, history).get(protocol["id"])
+            if pack is not None:
+                # Replay checks the pinned recipe; a new plan also needs the pinned code now.
+                require_live_pack(self.store, pack)
         return self._write("batch_plan", payload, "planner")
 
     def enqueue_slot(self, *, batch: str, slot: str) -> str:

@@ -77,6 +77,9 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
         if event["kind"] == "domain_binding":
             from .domain_binding import binding_artifacts
             keys.update(binding_artifacts(event))
+        if event["kind"] in {"pack_binding", "pack_analysis"}:
+            from .domain_packs import pack_artifacts
+            keys.update(pack_artifacts(store, event))
         if event["kind"].startswith("execution_"):
             from .execution import execution_artifacts
             keys.update(execution_artifacts(store, event))
@@ -125,6 +128,11 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     from .review_submission import _index as submission_index
     analysis_index(store, history)
     binding_index(store, history)
+    packs = any(event["kind"] in {"pack_binding", "pack_analysis"} for event in history)
+    if packs:
+        from .domain_packs import pack_analyses, pack_bindings
+        pack_bindings(store, history)
+        pack_analyses(store, history)
     assignment_index(store, history)
     delivery_index(store, history)
     submission_index(store, history)
@@ -140,6 +148,16 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     from .batch import batch_summaries
     batches = batch_summaries(store, history)
     summary = _summary(store, history)
+    if packs:
+        # Added only for pack histories so exports of older histories stay byte-identical.
+        return dict(_bundle(store, history, summary, batches, resolutions),
+                    pack_bindings=[event for event in history if event["kind"] == "pack_binding"],
+                    pack_analyses=[event for event in history if event["kind"] == "pack_analysis"])
+    return _bundle(store, history, summary, batches, resolutions)
+
+
+def _bundle(store: Store, history: list[dict[str, Any]], summary: dict[str, Any],
+            batches: list[dict[str, Any]], resolutions: dict[str, Any]) -> dict[str, Any]:
     return dict(bundle_version=1, summary=summary, events=history,
                 execution_batches=batches,
                 batch_analyses=[event for event in history if event["kind"] == "batch_analysis"],
@@ -381,6 +399,20 @@ def export_store(store: Store) -> dict[str, str]:
         report.extend(f"| {_cell(row['payload']['batch'])} | {_cell(row['payload']['claim'])} | "
                       f"{_cell(row['payload']['adapter_id'])} | {_cell(row['payload']['reviewer_actor'])} |"
                       for row in bundle["batch_analyses"])
+        report.append("")
+    if bundle.get("pack_analyses"):
+        report.extend(["## DomainPack analyses", "",
+            "Pack reports are trusted local proposals under a kernel-computed strength ceiling. "
+            "Scientific validity remains not_assessed; mechanical gates and reviews are separate records.", "",
+            "| Batch | Claim | Pack | Code digest | Ceiling | Intended reviewer |",
+            "| --- | --- | --- | --- | --- | --- |"])
+        report.extend(f"| {_cell(row['payload']['batch'])} | {_cell(row['payload']['claim'])} | "
+                      f"{_cell(row['payload']['pack_id'])} {_cell(row['payload']['pack_version'])} | "
+                      f"`{row['payload']['pack_code_digest']}` | "
+                      f"{_cell(row['payload']['ceiling']['max_inference_mode'])} / "
+                      f"{_cell('/'.join(row['payload']['ceiling']['allowed_outcomes']))} | "
+                      f"{_cell(row['payload']['reviewer_actor'])} |"
+                      for row in bundle["pack_analyses"])
         report.append("")
     planning_ids = {record["id"] for event in history if event["kind"] == "protocol"
                     and "planning" in event["payload"]

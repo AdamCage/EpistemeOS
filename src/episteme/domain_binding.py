@@ -42,6 +42,8 @@ def _expected(store: Store, before: list[dict[str, Any]], request: dict[str, Any
             "domain binding needs a planning-bound protocol in its command study")
     require(not any(event["kind"] == KIND and event["payload"].get("protocol") == protocol["id"]
                     for event in before), "protocol already has a domain binding")
+    require(not any(event["kind"] == "pack_binding" and event["payload"].get("protocol") == protocol["id"]
+                    for event in before), "protocol already has a pack binding")
     require(not any(event["kind"] == "run" and event["payload"].get("protocol") == protocol["id"]
                     or event["kind"] == "batch_plan" and event["payload"].get("protocol") == protocol["id"]
                     for event in before), "domain binding must precede every run and batch plan")

@@ -71,16 +71,22 @@ def describe():
         schema_version=1, pack_id=PACK_ID, pack_version=PACK_VERSION,
         description="Scale frozen integer groups and describe each group mean.",
         parameters_schema={"type": "object", "additionalProperties": False,
-                           "required": ["scale"],
+                           "required": ["scale", "outcome", "inference_mode"],
                            "properties": {"scale": {"type": "integer", "minimum": 1,
-                                                    "maximum": 10}}},
+                                                    "maximum": 10},
+                                          "outcome": {"enum": ["supports", "refutes", "inconclusive"]},
+                                          "inference_mode": {"enum": ["descriptive", "exploratory",
+                                                                      "confirmatory"]}}},
         metric=METRIC, outputs=dict(OUTPUTS),
         limitations=["Invented fixture values; group means are descriptive only."])
 
 
 def validate_parameters(parameters):
-    _require(set(parameters) == {"scale"} and type(parameters["scale"]) is int
-             and 1 <= parameters["scale"] <= 10, "scale must be an integer in [1, 10]")
+    # outcome and inference_mode let tests ask this honest fixture for a proposal
+    # above the kernel ceiling; a real pack derives them from its analysis.
+    _require(set(parameters) == {"scale", "outcome", "inference_mode"}
+             and type(parameters["scale"]) is int and 1 <= parameters["scale"] <= 10,
+             "scale must be an integer in [1, 10]")
 
 
 def _groups(request):
@@ -226,5 +232,5 @@ def analyse(context, cas, checks, recomputations):
         pack_id=PACK_ID, pack_version=PACK_VERSION, protocol_hash=context.protocol_hash,
         statement=f"Fixture group means were {values}; they describe invented values only.",
         limitations=["Invented fixture values; not evidence about anything."],
-        outcome="inconclusive", inference_mode="descriptive",
+        outcome=context.parameters["outcome"], inference_mode=context.parameters["inference_mode"],
         details={"analysed_values": analysed}, statistical_report=report)

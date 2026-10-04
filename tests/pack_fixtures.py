@@ -26,7 +26,8 @@ FIXTURE_PACK = "conformance_fixture_v1"
 
 
 def _fixture_request(workdir: Path) -> api.CompileRequest:
-    return api.CompileRequest(parameters={"scale": 2},
+    return api.CompileRequest(parameters={"scale": 2, "outcome": "inconclusive",
+                                          "inference_mode": "descriptive"},
                               host_inputs={"groups": [[1, 2, 3], [4, 5], [-7]]}, capture=None)
 
 

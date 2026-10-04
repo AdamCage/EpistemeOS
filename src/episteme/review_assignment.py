@@ -47,6 +47,11 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
     if any(event["kind"] == "batch_analysis" for event in history):
         from .batch_analysis import _index as analysis_index
         analysis_index(store, history)
+    packs = any(event["kind"] in {"pack_binding", "pack_analysis"} for event in history)
+    if packs:
+        from .domain_packs import pack_analyses, pack_bindings
+        pack_bindings(store, history)
+        pack_analyses(store, history)
     require(type(reviewer_actor) is str and bool(reviewer_actor.strip()),
             "reviewer actor must be a nonempty caller-declared ID")
     require(type(study_id) is str and bool(study_id.strip()), "assignment study_id is required")
@@ -89,6 +94,14 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
                      and event["payload"]["protocol"] in protocols
                      for key in (event["payload"]["recipe_digest"],
                                  event["payload"]["adapter_source_digest"]))
+    if packs:
+        # Policy v1: no pack source, recipe, host inputs or report in the initial context.
+        from .domain_packs import review_excluded
+        forbidden.update(key for event in history
+                         if (event["kind"] == "pack_binding" and event["payload"]["protocol"] in protocols)
+                         or (event["kind"] == "pack_analysis"
+                             and event["payload"]["claim"] in context.claim_ids)
+                         for key in review_excluded(store, event))
     observed = []
     for run in runs:
         result = results.get(run["id"])

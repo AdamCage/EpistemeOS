@@ -32,6 +32,7 @@
           "agent.dispatch", "agent.finalize", "agent.apply_hypotheses", "agent.apply_experiment",
           "execution.enqueue", "execution.dispatch", "execution.finalize",
           "batch.plan", "batch.enqueue_slot", "batch.settle", "analysis.apply", "domain.bind", "proposal.prepare_next",
+          "pack.preregister", "pack.analyse",
           "replanning.record_review", "replanning.resolve_obligation",
           "review.assign", "review.dispatch", "review.finalize", "review.submit",
           "followup.apply", "followup.prepare_next",

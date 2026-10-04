@@ -39,6 +39,10 @@ def analysis_state(store: Store, batch: str) -> dict[str, Any]:
         return dict(batch=batch, status="repair_evidence", scientific_validity="not_assessed")
     analyses = [event for event in analysis_index(store, history).values()
                 if event["payload"]["batch"] == batch]
+    if any(event["kind"] == "pack_analysis" for event in history):
+        from .domain_packs import pack_analyses
+        analyses.extend(event for event in pack_analyses(store, history).values()
+                        if event["payload"]["batch"] == batch)
     if not analyses:
         return dict(batch=batch, status="awaiting_analysis", scientific_validity="not_assessed")
     rows = []
@@ -154,4 +158,103 @@ def advance_batch_analysis(store: Store, batch: str, *, planner: Actor, analyst:
         return dict(status="awaiting_review", batch=batch, analysis=analysis["id"],
                     claim=claim_id, assignment=assignments[0]["id"],
                     basis_hash=gate["basis_hash"], scientific_validity="not_assessed")
+    raise ConflictError("analysis controller lost concurrent admissions; retry from persisted state")
+
+
+def _assign(store: Store, history: list[dict[str, Any]], *, batch: str, analysis: dict[str, Any],
+            planner: Actor, reviewer_actor: str, study_id: str, correlation_id: str
+            ) -> dict[str, str] | None:
+    """Assign review on the current basis; None means a concurrent writer won."""
+    claim_id = analysis["payload"]["claim"]
+    gate = Kernel(store, Actor("analysis-controller-observer", "observer"))._gate(history, claim_id)
+    require(gate["passed"], "analysis claim no longer passes mechanical gate: "
+            + "; ".join(gate["failures"]))
+
+    def current(snapshot: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [event for event in assignment_index(store, snapshot).values()
+                if event["payload"]["claim"] == claim_id
+                and event["payload"]["basis_hash"] == gate["basis_hash"]
+                and event["payload"]["reviewer_actor"] == reviewer_actor]
+
+    assignments = current(history)
+    require(len(assignments) <= 1, "duplicate reviewer assignments for analysis basis")
+    if not assignments:
+        context = dict(command_id=f"analysis-assign-{uuid4().hex}",
+                       expected_revision=len(history), actor=planner.id, role=planner.role,
+                       study_id=study_id, correlation_id=correlation_id,
+                       causation_id=analysis["id"])
+        request = dict(version=1, action="review.assign", payload=dict(
+            claim=claim_id, reviewer_actor=reviewer_actor, expected_basis=gate["basis_hash"]))
+        try:
+            CommandService(store).execute(dict(context=context, request=request))
+        except ConflictError:
+            return None
+        assignments = current(store.events())
+        require(len(assignments) == 1, "review assignment did not persist")
+        status = "awaiting_review"
+    else:
+        submission = submission_index(store, history).get(assignments[0]["id"])
+        status = "review_recorded" if submission else "awaiting_review"
+    return dict(status=status, batch=batch, analysis=analysis["id"], claim=claim_id,
+                assignment=assignments[0]["id"], basis_hash=gate["basis_hash"],
+                scientific_validity="not_assessed")
+
+
+def advance_pack_analysis(store: Store, batch: str, *, planner: Actor, analyst: Actor,
+                          reviewer_actor: str) -> dict[str, str]:
+    """Pack path: hooks run outside the write transaction, then two persisted decisions.
+
+    The pack is taken from the protocol's pack binding, never from the caller.
+    Hooks are trusted local code in this process; the kernel re-verifies their
+    envelopes, the pinned code and the claim-strength ceiling inside the command.
+    """
+    from .domain_packs import analysis_inputs, pack_analyses, require_live_pack, run_hooks
+    require(analyst.role == "analyst", "batch analysis controller needs an analyst")
+    require(planner.role == "planner", "batch analysis controller needs a planner")
+    require(type(reviewer_actor) is str and bool(reviewer_actor.strip()),
+            "reviewer actor is required")
+    for _ in range(3):
+        history = store.events()
+        states = batch_index(store, history)
+        require(batch in states, "unknown batch")
+        plan, settlement = states[batch]["plan"], states[batch]["settlement"]
+        require(planner.id == plan["actor"], "controller planner differs from batch planner")
+        require(settlement is not None and settlement["payload"]["status"] == "completed",
+                "batch analysis requires completed technical settlement")
+        origin = next((r for r in store.receipts() if batch in r["event_ids"]), None)
+        require(origin is not None, "batch planning receipt is missing")
+        study_id = origin["context"]["study_id"]
+        correlation_id = origin["context"]["correlation_id"]
+        existing = [event for event in pack_analyses(store, history).values()
+                    if event["payload"]["batch"] == batch]
+        require(len(existing) <= 1, "batch has multiple analysis tasks; choose one explicitly")
+        if not existing:
+            facts, context_, cas = analysis_inputs(store, history, batch)
+            loaded = require_live_pack(store, facts["binding"])
+            hooks = run_hooks(loaded, context_, cas)
+            pin = facts["binding"]["payload"]
+            context = dict(command_id=f"pack-analysis-{uuid4().hex}", expected_revision=len(history),
+                           actor=analyst.id, role=analyst.role, study_id=study_id,
+                           correlation_id=correlation_id, causation_id=settlement["id"])
+            request = dict(version=1, action="pack.analyse", payload=dict(
+                batch=batch, expected_settlement=settlement["id"], pack_id=pin["pack_id"],
+                pack_version=pin["pack_version"], pack_code_digest=pin["pack_code_digest"],
+                checks=hooks["checks"], recomputations=hooks["recomputations"],
+                report=hooks["report"], statistical_report=hooks["statistical_report"],
+                reviewer_actor=reviewer_actor))
+            try:
+                CommandService(store).execute(dict(context=context, request=request))
+            except ConflictError:
+                pass
+            # Reload from receipts rather than trusting the in-memory report.
+            continue
+        analysis = existing[0]
+        require(analysis["actor"] == analyst.id
+                and analysis["payload"]["reviewer_actor"] == reviewer_actor,
+                "persisted analysis actor/reviewer differs from requested controller policy")
+        result = _assign(store, history, batch=batch, analysis=analysis, planner=planner,
+                         reviewer_actor=reviewer_actor, study_id=study_id,
+                         correlation_id=correlation_id)
+        if result is not None:
+            return result
     raise ConflictError("analysis controller lost concurrent admissions; retry from persisted state")

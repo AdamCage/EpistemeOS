@@ -1024,7 +1024,7 @@ class CasView:
     contract check for trusted code, not a security boundary.
     """
 
-    __slots__ = ("_blobs", "_hidden", "_reads")
+    __slots__ = ("_blobs", "_hidden", "_reads", "_refused")
 
     def __init__(self, blobs: Mapping[str, bytes], *, hidden: Any = ()):
         verified: dict[str, bytes] = {}
@@ -1037,11 +1037,14 @@ class CasView:
         self._blobs = MappingProxyType(dict(sorted(verified.items())))
         self._hidden = hidden_keys
         self._reads: set[str] = set()
+        self._refused: set[str] = set()
 
     def read(self, key: str) -> bytes:
-        if key in self._hidden:
-            raise PackAccessError(f"pack tried to read a declared hidden input: {key}")
         if key not in self._blobs:
+            # Recorded so that a hook cannot hide a refused read by catching the error.
+            self._refused.add(str(key))
+            if key in self._hidden:
+                raise PackAccessError(f"pack tried to read a declared hidden input: {key}")
             raise PackAccessError(f"artifact is outside the pack allowlist: {key}")
         self._reads.add(key)
         return self._blobs[key]
@@ -1056,6 +1059,10 @@ class CasView:
     @property
     def reads(self) -> tuple[str, ...]:
         return tuple(sorted(self._reads))
+
+    @property
+    def refused(self) -> tuple[str, ...]:
+        return tuple(sorted(self._refused))
 
 
 @dataclass(frozen=True)
@@ -1078,19 +1085,24 @@ class CompileRequest:
 
 @dataclass(frozen=True)
 class ProtocolContext:
-    """What ``validate_protocol`` sees: the recorded protocol and its pinned compilation."""
+    """What ``validate_protocol`` sees: the recorded protocol and its pinned compilation.
 
-    request: CompileRequest
+    Host inputs and captured bytes are not included: the same context is rebuilt
+    at ``batch.plan`` and analysis, after hidden inputs must no longer reach pack
+    code. ``capture`` is the frozen inventory (paths and digests) or None.
+    """
+
+    parameters: Any
     draft: ProtocolDraft
     execution_plan: Any
+    capture: Any
     protocol: Any
     protocol_hash: str
 
     def __post_init__(self) -> None:
-        _require(type(self.request) is CompileRequest and type(self.draft) is ProtocolDraft,
-                 "protocol context needs a compile request and a protocol draft")
-        object.__setattr__(self, "execution_plan", freeze(strict_json(thaw(self.execution_plan))))
-        object.__setattr__(self, "protocol", freeze(strict_json(thaw(self.protocol))))
+        _require(type(self.draft) is ProtocolDraft, "protocol context needs a protocol draft")
+        for name in ("parameters", "execution_plan", "capture", "protocol"):
+            object.__setattr__(self, name, freeze(strict_json(thaw(getattr(self, name)))))
         _require(type(self.protocol_hash) is str and re.fullmatch("[0-9a-f]{64}", self.protocol_hash)
                  is not None, "protocol context needs a protocol hash")
 
