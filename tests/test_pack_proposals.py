@@ -229,7 +229,13 @@ class PackProposalTests(unittest.TestCase):
             freeze_proposal_binding(self.store, pack_id="afterlife_seed_v1", host_inputs={},
                                     capture=None, environment=self.environment)
 
-    def test_prepare_next_does_not_treat_a_pack_proposal_as_a_legacy_batch(self):
+    def test_prepare_next_freezes_a_schema_3_batch_and_keeps_schema_2_defaults(self):
+        import inspect
+        from episteme.proposal_execution import ProposalExecution
+        signature = inspect.signature(ProposalExecution.prepare_next)
+        self.assertEqual(signature.parameters["wall_seconds"].default, 120)
+        self.assertEqual(signature.parameters["max_output_bytes"].default, 1048576)
+        self.assertIsNone(signature.parameters["required_capabilities"].default)
         hypotheses, explanation, tree = self.planning("Which fixture statement matches the hidden world?")
         binding = freeze_proposal_binding(
             self.store, pack_id="synthetic_causal_v1",
@@ -240,11 +246,45 @@ class PackProposalTests(unittest.TestCase):
                                  {"n_samples": 32, "assignment": "randomized",
                                   "analysis": "difference_in_means"}),
                    explanation=explanation, tree=tree, binding=binding)
+        batch = self.command("proposal.prepare_next", dict(
+            tree=tree, executor="pack-executor", replicator="pack-reanalyst"))
+        plan = Kernel._get(self.store.events(), batch, "batch_plan")["payload"]
+        self.assertEqual((plan["wall_seconds"], plan["max_output_bytes"], plan["required_capabilities"]),
+                         (120, 1048576, []))
+        self.assertFalse(any(event["kind"] in {"run", "claim", "review", "paper"}
+                             for event in self.store.events()))
+        self.assertTrue(all(event["payload"].get("scientific_validity", "not_assessed") == "not_assessed"
+                            for event in self.store.events()))
+        receipt = next(row for row in self.store.receipts()
+                       if row["request"]["action"] == "proposal.prepare_next")
+        self.assertEqual(CommandService(self.store).execute(
+            dict(context=receipt["context"], request=receipt["request"])), batch)
+
+    def test_prepare_next_uses_pinned_tabular_limits_and_rejects_a_different_override(self):
+        source = Path(self.temp.name) / "tables"
+        source.mkdir()
+        for name in ("train.csv", "holdout.csv"):
+            shutil.copyfile(TABULAR / name, source / name)
+        captured = domain_packs.store_capture(self.store, "tabular_classification_v1", source)
+        hypotheses, explanation, tree = self.planning("Does the frozen tabular schema admit a proposal?")
+        binding = freeze_proposal_binding(
+            self.store, pack_id="tabular_classification_v1", host_inputs={},
+            capture=captured["capture"], environment=self.environment)
+        self.admit(self.proposal("tabular_classification_v1", hypotheses, {}),
+                   explanation=explanation, tree=tree, binding=binding)
         before = len(self.store.events())
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "pinned pack execution plan"):
             self.command("proposal.prepare_next", dict(
-                tree=tree, executor="pack-executor", replicator="pack-reanalyst"))
+                tree=tree, executor="tabular-executor", replicator="tabular-reanalyst",
+                wall_seconds=90))
         self.assertEqual(len(self.store.events()), before)
+        batch = self.command("proposal.prepare_next", dict(
+            tree=tree, executor="tabular-executor", replicator="tabular-reanalyst"))
+        plan = Kernel._get(self.store.events(), batch, "batch_plan")["payload"]
+        self.assertEqual(plan["wall_seconds"], 60)
+        self.assertEqual(plan["max_output_bytes"], 1048576)
+        self.assertEqual(plan["reserved_cost"], 2)
+        self.assertFalse(any(event["kind"] == "run" for event in self.store.events()))
 
     def test_applied_pack_proposal_replays_and_restores(self):
         hypotheses, explanation, tree = self.planning("Which fixture statement matches the hidden world?")

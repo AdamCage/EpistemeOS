@@ -47,7 +47,7 @@ EpistemeOS/
 │   ├── batch_controller.py       последовательный resume по сохранённым slots
 │   ├── batch_analysis.py         claim + analysis provenance одной receipt
 │   ├── analysis_controller.py    resume analysis → review assignment
-│   ├── proposal_execution.py     applied proposal → selected frozen batch в одной receipt
+│   ├── proposal_execution.py     applied proposal schema 2 или pack schema 3 → selected frozen batch в одной receipt
 │   ├── replanning.py             negative review → typed открытые obligations
 │   ├── resolution.py             reviewer opinion → evidence-bound obligation resolution
 │   ├── review_admission.py       семейства claims и общая проекция veto/obligations/resolutions (ADR 0018)
@@ -68,7 +68,7 @@ EpistemeOS/
 │   ├── domain_binding.py         receipt-backed manual frozen domain recipe
 │   ├── domain_packs.py           pack.preregister/pack.analyse, replay, CasView allowlist и потолок силы claim
 │   ├── search.py                 persistent tournament и bounded tree policy
-│   ├── reporting.py              snapshot export и внутренний paper scaffold
+│   ├── reporting.py              snapshot export и внутренний paper scaffold; колонка roster по roster_semantics
 │   ├── graph.py                  типизированная read-only проекция и queries
 │   ├── domains/afterlife.py      bounded historical inspection/import
 │   ├── domains/afterlife_seed.py verified historical steps bundle и два offline runner sources
@@ -288,7 +288,7 @@ LLM provider не владеет SQLite-файлом, credentials или пра�
 
 ## DomainPack и перенос afterlife
 
-Принятый контракт v1 — [ADR 0016](decisions/0016-domain-pack-contract.md): static manifest, явный реестр, hooks с typed envelopes и `StatisticalReport` v1; силу claim ограничивает ядро. Ниже — исходная постановка, которую этот ADR конкретизирует. Минимальный DomainPack предоставляет config schema, input/result schemas и units, планируемые outputs, runner recipe, metric recomputation, interpretation cautions, domain gates и reproduction comparator. Контракт должен выражать cached replay, rerun, reanalysis и new-data replication раздельно. Core знает режим и зависимости, но не знает конкретные поля temperature/window/tokenizer.
+Принятый контракт v1 — [ADR 0016](decisions/0016-domain-pack-contract.md): static manifest, явный реестр, hooks с typed envelopes и `StatisticalReport` v1; силу claim ограничивает ядро. Шаг 10 провёл `synthetic_causal_v1`, `afterlife_seed_v1` и `tabular_classification_v1` одним кодом ядра до synthetic fixture review и внутреннего paper scaffold. `scientific_validity` остаётся `not_assessed`. Отказ чтения hidden input показан только у пакета, который такой вход объявил. Ниже — исходная постановка, которую этот ADR конкретизирует. Минимальный DomainPack предоставляет config schema, input/result schemas и units, планируемые outputs, runner recipe, metric recomputation, interpretation cautions, domain gates и reproduction comparator. Контракт должен выражать cached replay, rerun, reanalysis и new-data replication раздельно. Core знает режим и зависимости, но не знает конкретные поля temperature/window/tokenizer.
 
 Afterlife pack размещает provider/model revisions, protocol/context semantics, stage import, degeneracy controls, trajectory readers и figure adapters. Импорт read-only: оригинальный checkout и его runs не меняются. `PLAN`/`REPORT` преобразуются в historical protocol/claim candidates с локаторами; legacy timestamps не создают preregistration задним числом. Manifest hashes верифицируются, failed/superseded records сохраняются, re-import того же snapshot идемпотентен. Скопированные MIT utilities сохраняют attribution и notice.
 

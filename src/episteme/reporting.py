@@ -27,6 +27,30 @@ def _cell(value: Any) -> str:
     return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
+def _roster_by_protocol(history: list[dict[str, Any]]) -> dict[str, str]:
+    """Pinned roster_semantics by protocol. Absent on histories that have no pack binding."""
+    found: dict[str, str] = {}
+    for event in history:
+        if event["kind"] != "pack_binding":
+            continue
+        protocol = event["payload"].get("protocol")
+        semantics = event["payload"].get("roster_semantics")
+        if isinstance(protocol, str) and isinstance(semantics, str):
+            found[protocol] = semantics
+    return found
+
+
+def _roster_heading(history: list[dict[str, Any]], protocols: list[str]) -> str | None:
+    """The column label when every listed protocol shares one pinned roster_semantics."""
+    if not protocols:
+        return None
+    labels = _roster_by_protocol(history)
+    tokens = [labels.get(protocol) for protocol in protocols]
+    if any(token is None for token in tokens) or len(set(tokens)) != 1:
+        return None
+    return tokens[0]
+
+
 def _atomic_text(path: Path, value: str) -> None:
     fd, temporary = tempfile.mkstemp(dir=path.parent)
     try:
@@ -204,7 +228,7 @@ def admission_record(store: Store, history: list[dict[str, Any]], claim: str) ->
                               assignment=sp.get("assignment"), dispatch=sp.get("dispatch"),
                               submission=None if submission is None else submission["id"],
                               policy=None if assignment is None else assignment["payload"]["policy"],
-                              counted=defect is None, defect=defect))
+                              rationale=p["rationale"], counted=defect is None, defect=defect))
     family = set(projection.family(claim))
     return dict(
         approvals=approvals,
@@ -249,8 +273,14 @@ def _bundle(store: Store, history: list[dict[str, Any]], summary: dict[str, Any]
 
 
 def _run_table(store: Store, history: list[dict[str, Any]], runs: list[dict[str, Any]]) -> list[str]:
-    rows = ["| Run | Kind | Seed | Primary metric | Value | Raw data | Implementation |",
-            "| --- | --- | --- | --- | --- | --- | --- |"]
+    heading = _roster_heading(history, [run["payload"]["protocol"] for run in runs])
+    column = heading if heading is not None else "Seed"
+    rows = []
+    if heading is not None:
+        rows.append(f"Roster column label is pinned roster_semantics `{heading}`.")
+        rows.append("")
+    rows.extend([f"| Run | Kind | {column} | Primary metric | Value | Raw data | Implementation |",
+                 "| --- | --- | --- | --- | --- | --- | --- |"])
     jobs = {e["payload"]["run"]: e for e in history if e["kind"] == "execution_job"}
     for run in runs:
         p = run["payload"]
@@ -450,14 +480,24 @@ def _followup_manuscript(claim: str, lineage: list[dict[str, Any]]) -> list[str]
     return lines
 
 
-def _ledger_manuscript(ledger: dict[str, Any]) -> list[str]:
+def _ledger_manuscript(ledger: dict[str, Any], history: list[dict[str, Any]] | None = None) -> list[str]:
+    family = [row for row in ledger["attempts"] if row["tier"] == "family"]
+    heading = None if history is None else _roster_heading(
+        history, [row["protocol"] for row in family])
+    column = heading if heading is not None else "Seed"
     lines = ["### Claim family and attempt ledger", "",
              "Every recorded attempt on the protocols of this claim's family, including failed, "
-             "unknown and queued ones. Reanalyses use the same data; none is a new-data replication.", "",
-             "Family protocols: " + ", ".join(f"`{row['id']}` ({row['edge']})"
-                                              for row in ledger["family_protocols"]) + ".", "",
-             "| Run | Protocol | Seed | Kind | Status | Primary metric | Value | Outputs |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "unknown and queued ones. Reanalyses use the same data; none is a new-data replication.", ""]
+    if heading is not None:
+        lines.extend([f"Roster column label is pinned roster_semantics `{heading}`.", ""])
+    repetitions = sorted({row["roster_repetition"] for row in family
+                          if row.get("roster_repetition") not in {None, "undeclared"}})
+    if repetitions:
+        lines.extend(["Kernel roster repetition: " + ", ".join(f"`{item}`" for item in repetitions) + ".", ""])
+    lines.extend(["Family protocols: " + ", ".join(f"`{row['id']}` ({row['edge']})"
+                                                   for row in ledger["family_protocols"]) + ".", "",
+                  f"| Run | Protocol | {column} | Kind | Status | Primary metric | Value | Outputs |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- |"])
     for row in ledger["attempts"]:
         if row["tier"] != "family":
             continue
@@ -489,7 +529,9 @@ def _admission_manuscript(record: dict[str, Any]) -> list[str]:
         if row["counted"]:
             lines.append(f"- Counted approval `{row['review']}` by `{_cell(row['reviewer'])}`: assignment "
                          f"`{row['assignment']}`, dispatch `{row['dispatch']}`, submission "
-                         f"`{row['submission']}`, policy `{row['policy']}`.")
+                         f"`{row['submission']}`, policy `{row['policy']}`. "
+                         f"Recorded rationale: {_cell(row['rationale'])}. "
+                         "Counting this record does not assess scientific validity.")
         else:
             lines.append(f"- Not counted: review `{row['review']}` by `{_cell(row['reviewer'])}`: "
                          f"{_cell(row['defect'])}.")
@@ -552,6 +594,23 @@ def export_store(store: Store) -> dict[str, str]:
                       f"{_cell(row['payload']['reviewer_actor'])} |"
                       for row in bundle["pack_analyses"])
         report.append("")
+        semantics = _roster_by_protocol(history)
+        for row in bundle["pack_analyses"]:
+            payload = row["payload"]
+            replication = payload["replication"]
+            independence = replication["independence"]
+            missing = payload["ceiling"].get("not_supplied") or []
+            report.append(
+                f"- Analysis `{row['id']}`: roster_semantics "
+                f"`{semantics.get(payload['protocol'], 'undeclared')}`; "
+                f"replication mode `{replication['mode']}` on `{replication['data']}`; "
+                f"roster repetition `{replication['roster_repetition']}`; "
+                f"independence implementation `{independence['implementation']}`, "
+                f"context `{independence['context']}`, data `{independence['data']}`, "
+                f"actors `{independence['actors']}`.")
+            report.append("- Statistical report not_supplied: " + (
+                ", ".join(f"`{name}`" for name in missing) if missing else "none") + ".")
+        report.append("")
     planning_ids = {record["id"] for event in history if event["kind"] == "protocol"
                     and "planning" in event["payload"]
                     for record in planning_context(history, event["payload"]["planning"])}
@@ -612,14 +671,29 @@ class PaperBuilder:
                 lines.extend(_planning_table(planning_context(history, p["planning"])))
             lines.extend([f"## Result {id}", "", c["statement"], "",
                           f"Recorded outcome: `{c['outcome']}`. Scope: `{json.dumps(c['scope'], ensure_ascii=False)}`.",
-                          "", f"Protocol: `{c['protocol']}`. Review basis: `{expected_bases[id]}`.", "",
-                          "### Registered methods", "", p["design"], "", p["analysis_plan"], "",
+                          "", "Scientific validity: `not_assessed`. A counted local approval is an admitted "
+                          "record, not a scientific assessment.",
+                          "", f"Protocol: `{c['protocol']}`. Review basis: `{expected_bases[id]}`.", ""])
+            pack_rows = [event for event in history if event["kind"] == "pack_analysis"
+                         and event["payload"].get("claim") == id]
+            if pack_rows:
+                replication = pack_rows[-1]["payload"]["replication"]
+                independence = replication["independence"]
+                semantics = _roster_by_protocol(history).get(c["protocol"], "undeclared")
+                lines.extend([
+                    f"Pinned roster_semantics: `{semantics}`. Kernel replication mode: "
+                    f"`{replication['mode']}` on `{replication['data']}`; roster repetition "
+                    f"`{replication['roster_repetition']}`. Independence of implementation "
+                    f"`{independence['implementation']}`, context `{independence['context']}`, "
+                    f"data `{independence['data']}`, actors `{independence['actors']}`.", ""])
+            lines.extend(["### Registered methods", "", p["design"], "", p["analysis_plan"], "",
                           f"Stopping rule: {p['stopping_rule']}", "", "### Evidence", ""])
             runs = [e for e in history if e["kind"] == "run" and e["payload"]["protocol"] == c["protocol"]]
             lines.extend(_run_table(self.store, history, runs))
             lines.extend(["", *_followup_manuscript(id, followup_lineage[id])])
             ledger = bundle["claim_families"][id]["attempt_ledger"]
-            lines.extend(["", *_ledger_manuscript(ledger), *_admission_manuscript(bundle["review_admission"][id])])
+            lines.extend(["", *_ledger_manuscript(ledger, history),
+                          *_admission_manuscript(bundle["review_admission"][id])])
             lines.extend(["", "### Limitations", "", *(f"- {item}" for item in c["limitations"]),
                           *(f"- Kernel disclosure: {item}" for item in ledger["disclosures"]), ""])
         links = [e for e in history if e["id"] in context_links]

@@ -208,7 +208,7 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 
 ## Ход реализации
 
-Шаги 1–6, 8 и 9 реализованы. Шаг 10 остаётся. Проблемы review integrity закрыл [ADR 0018](0018-claim-families-and-review-admission.md); отображение roster в отчётах из шага 7 туда не входило. Медленная повторная проверка receipts в `analysis advance` здесь не исправляется.
+Шаги 1–6 и 8–10 реализованы. Шаг 7 в части review закрыл [ADR 0018](0018-claim-families-and-review-admission.md); отображение `roster_semantics`, которого в том ADR не было, сделано в шаге 10 на уже записанных полях. Медленная повторная проверка receipts в `analysis advance` здесь не исправляется.
 
 | Шаг | Состояние |
 |---|---|
@@ -221,15 +221,16 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 | 6. Фасад `afterlife_seed_v1` | Реализован и локально проверен: пакет [`domains/packs/afterlife_seed_v1`](../../src/episteme/domains/packs/afterlife_seed_v1) зарегистрирован и проходит conformance suite; `episteme pack capture` сохраняет захваченные bytes в CAS без событий; `tests/test_afterlife_pack.py`. На восстановленной копии реального пилота ADR 0015 пакетный путь дал те же девять долей и тот же statement, что legacy claim (validation.md). |
 | 8. `tabular_classification_v1` | Реализован и локально проверен: пакет [`domains/packs/tabular_classification_v1`](../../src/episteme/domains/packs/tabular_classification_v1) в явном allowlist, весь каталог закрепляется `code_manifest`, профиль `trusted_local_python_v1`. Путь `pack.preregister` → batch → `pack.analyse` → `review.assign` на сгенерированной таблице проходит до назначения reviewer. Verdict и paper не создаются. Числа — в validation.md. |
 | 9. Обобщение модельного пути ADR 0008 | Реализован и локально проверен. `agent_request` schema 3 и конверт `experiment-proposal-v2`: пакет объявляет схему параметров и компилирует принятое предложение, ядро записывает protocol, `pack_binding` и узел. `agents.py` и `experiment_proposals.py` не импортируют конкретный пакет. Schema 2 и golden histories не переписывались. Числа — в validation.md. |
+| 10. Приёмка универсальности | Реализована и локально проверена с записанными пробелами. Для `synthetic_causal_v1`, `afterlife_seed_v1` и `tabular_classification_v1` один путь ядра доходит до явного synthetic fixture review и внутреннего paper scaffold там, где `next_action` равен `paper_candidate`. `scientific_validity` остаётся `not_assessed`. `proposal.prepare_next` принимает application schema 3, не меняя defaults schema 2. Числа и открытые пункты — в validation.md и ниже. |
 
-Критерии универсальности выполнены частично:
-- пункты 2 и 7 — для трёх зарегистрированных пакетов; схемы raw data у них разные;
-- пункт 1 — `agents.py`, `experiment_proposals_v2.py` и `pack_proposals.py` не импортируют конкретный пакет. В списке исключений статического теста остаются `experiment_proposals.py` (замороженный текст `experiment-proposal-v1` называет recipe) и `legacy_experiment.py` (compiler schema 2). `cli.py` из списка вышел: адаптер анализа берётся из реестра;
-- пункт 3 — только до `review.assign`: fixture review и paper scaffold через пакетный путь не проверялись, restart и backup/restore проверены только для synthetic;
-- пункт 4 — полностью для synthetic, для afterlife и tabular — подмены raw data и метрики в conformance suite; tabular дополнительно отвергает confirmatory proposal без interval и с нарушенным допущением;
-- пункт 5 — synthetic и afterlife остаются `exploratory`/`inconclusive`; положительную ветвь потолка проверяет `tabular_classification_v1` на сгенерированной таблице, не на научной выборке;
-- пункт 6 — `roster_semantics` и факты replication записываются, включая `deterministic_single` у третьего пакета; отображение в отчётах — шаг 7.
-Шаг 10 остаётся. Отображение `roster_semantics` в отчётах из шага 7 по-прежнему не сделано.
+Критерии универсальности для трёх зарегистрированных пакетов:
+- пункт 1 — тот же код ядра. `agents.py`, `experiment_proposals_v2.py`, `pack_proposals.py` и `proposal_execution.py` не импортируют конкретный пакет. В исключениях статического теста остаются `experiment_proposals.py` (замороженный текст `experiment-proposal-v1` называет recipe) и `legacy_experiment.py` (compiler schema 2);
+- пункт 2 — conformance suite трёх пакетов, как после шагов 6 и 8;
+- пункт 3 — привязка → `batch.plan` → `batch advance` → анализ → `review.assign` → synthetic fixture review через `review.submit` → paper scaffold. Restart между анализом и назначением не пишет дублей; повтор каждой receipt того же пути тоже не пишет дублей. Backup/restore делается на временной копии, не на `.research/afterlife-pilot-20261004`. Graph closure привязки включает код пакета и recipe, closure анализа — report. Paper строится, потому что механический допуск ADR 0018 даёт `paper_candidate`. Manuscript содержит rationale fixture и говорит, что counted approval не является научной оценкой;
+- пункт 4 — для всех трёх пакетов отвергаются изменённый byte raw output, изменённый файл пакета после привязки, чужая версия, удалённое поле report, `not_applicable` вопреки design и предложение выше потолка. Отказ «hidden input» есть только у `synthetic_causal_v1`, который объявляет `hidden_inputs=["protocol_data"]`. У двух других пакетов список пуст; чтение digest вне allowlist отвергается, но другой ошибкой. Этот шаг не добавляет скрытый вход, которого пакет не объявил;
+- пункт 5 — synthetic и afterlife остаются `exploratory`/`inconclusive`; положительную ветвь потолка по-прежнему проверяет `tabular_classification_v1` на сгенерированной таблице. Fixture approval не превращает этот потолок в scientific review;
+- пункт 6 — `rng_seed`, `frozen_unit_index` и `deterministic_single` различаются и подписаны в export и paper. Режим replication и факты независимости выводит ядро (`same_data_reanalysis`, `context=not_established`, actors caller-declared). `partition_seed` на живом протоколе не показан: exploratory-фаза repeated k-fold не реализована (отклонение шага 8);
+- пункт 7 — схемы raw data трёх пакетов разные, как после шагов 6 и 8.
 
 ### Отклонения от предложения и уточнения шага 1
 
@@ -305,9 +306,20 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 - **Уточнение.** Принятое предложение компилируется существующими `compile_protocol` и `compile_execution`. Одна receipt `agent.apply_experiment` пишет `protocol`, `pack_binding`, `experiment_node` и `agent_application` schema 3. Replay привязки структурный и код пакета не импортирует. Текст protocol равен draft пакета: в него не дописывается contrast модели, иначе digest draft разошёлся бы с повторным `compile_protocol`. Contrast и rationale остаются в proposal artifact и узле дерева.
 - **Уточнение.** Модель не задаёт `mode`, `outcome` или `inference_mode`. Режим protocol берётся из statistical design пакета. Для `tabular_classification_v1` это `confirmatory` как заранее зарегистрированный дизайн, не как claim. События claim, review и run не создаются. `scientific_validity` остаётся `not_assessed`. Потолок силы claim по-прежнему применяется только в `pack.analyse`.
 - **Уточнение.** Host inputs и bytes захвата не входят в контекст модели. Для synthetic это скрытый world. Число попыток в контексте есть, список seeds — нет: schema 2 по-прежнему показывает seeds.
-- **Уточнение.** `synthetic_causal_v1` и `tabular_classification_v1` объявляют схему. `afterlife_seed_v1` её не объявляет, и модельный путь его отвергает. `proposal.prepare_next` по-прежнему принимает только application schema 2 и не превращает schema 3 в batch.
+- **Уточнение.** `synthetic_causal_v1` и `tabular_classification_v1` объявляют схему. `afterlife_seed_v1` её не объявляет, и модельный путь его отвергает. На момент шага 9 `proposal.prepare_next` принимал только application schema 2. Шаг 10 принимает schema 3, не меняя fingerprint schema 2.
 - **Уточнение.** `agents.py` и `experiment_proposals.py` не импортируют пакет. Статический тест это проверяет. Исключения: `experiment_proposals.py` хранит литерал recipe замороженной schema v1; `legacy_experiment.py` импортирует `domains.synthetic_causal` только для schema 2. Replay уже записанного application schema 2 compiler не вызывает.
 - **Ограничение.** Демонстрация — fixture-ответ, уже совпадающий со схемой пакета. Сети и вызова модели нет. Выход не является научным результатом. Полная матрица универсальности остаётся шагом 10.
+
+### Отклонения от предложения и уточнения шага 10
+
+Отдельный ADR не добавлен. Допуск review и paper уже заданы [ADR 0018](0018-claim-families-and-review-admission.md). Этот шаг проводит зарегистрированные пакеты по тому же пути и не ослабляет его.
+
+- **Уточнение.** Fixture review в тестах — цепочка `review.assign` → выдача подготовленного ответа → `review.submit`. Rationale записан как явное тестовое мнение. `scientific_validity` на событиях остаётся `not_assessed`. Manuscript говорит, что scaffold не является статьёй к подаче и что counted approval не оценивает научную состоятельность. Для всех трёх пакетов `next_action` после такого approval равен `paper_candidate`: mechanical gate проходит, veto и obligations нет, policy назначения — `blind_initial_review_v2`. Это допуск записи, не научное одобрение. ID reviewer заявляет тест; контекст независимости остаётся `not_established`.
+- **Уточнение.** `proposal.prepare_next` принимает и application schema 2, и schema 3. Сигнатура команды и её defaults не менялись, поэтому fingerprint schema 2 прежний. Для schema 3 reanalysis source, environment, outputs и лимиты берутся из закреплённого execution plan. Если вызывающий явно передаёт лимиты, отличные и от defaults schema 2, и от pin, команда отвергается без событий. Совпадение с defaults schema 2 не переписывает pin: у `tabular_classification_v1` batch получает `wall_seconds=60`. `afterlife_seed_v1` схему предложения не объявляет, и этот переход его не принимает.
+- **Уточнение.** Колонка roster в export и paper подписывается значением `roster_semantics`, если все протоколы таблицы закреплены одним и тем же значением. Иначе заголовок остаётся `Seed`, чтобы истории без пакета, включая golden, не меняли текст. Рядом показываются уже записанные `replication` и список `not_supplied`. Новый статистический расчёт не добавлялся.
+- **Пробел.** Пункт 4 требует одинаковый отказ при чтении hidden input. Его можно показать только там, где пакет объявил скрытый вход. Делать вид, что пустой `hidden_inputs` даёт ту же ошибку, этот шаг не стал.
+- **Пробел.** `partition_seed` остаётся значением перечисления без зарегистрированного протокола.
+- **Ограничение.** Paper scaffold из fixture review не является внешним peer review и не меняет `scientific_validity`. Проверки этого шага не покрывают пакеты вне allowlist. `locked_fixture_v2` в реестр не входит. Изоляция, literature, controller loop и открытые пункты аудита хранения не закрываются.
 
 ## Ограничения
 
