@@ -9,6 +9,7 @@ from unittest.mock import patch
 from episteme.kernel import Actor, GateError, Kernel
 from episteme.reporting import PaperBuilder, export_store, inspect_store
 from episteme.store import ConflictError, IntegrityError, Store
+from review_paths import approve
 
 
 class ReportingTests(unittest.TestCase):
@@ -48,8 +49,8 @@ class ReportingTests(unittest.TestCase):
         self.builder = PaperBuilder(self.store, Actor("writer", "writer"))
 
     def approve(self):
-        return self.reviewer.review(self.claim, verdict="approve", rationale="Test-only review fixture",
-                                   actions=[], expected_basis=self.bases[self.claim])
+        return approve(self.store, self.claim, reviewer=self.reviewer.actor.id,
+                       expected_basis=self.bases[self.claim])
 
     def build(self):
         return self.builder.build(title="Test paper scaffold", claims=[self.claim], expected_bases=self.bases)

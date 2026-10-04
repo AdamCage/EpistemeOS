@@ -12,6 +12,7 @@ from episteme.kernel import Actor, Kernel
 from episteme.reporting import PaperBuilder
 from episteme.search import COMPONENTS, Search
 from episteme.store import IntegrityError, Store
+from review_paths import approve
 
 
 class GraphTests(unittest.TestCase):
@@ -63,8 +64,7 @@ class GraphTests(unittest.TestCase):
         claim = self.claim(protocol, [primary, replica])
         reviewer = Kernel(self.store, Actor("reviewer", "reviewer"))
         basis = reviewer.gate(claim)["basis_hash"]
-        review = reviewer.review(claim, verdict="approve", rationale="Test-only reference fixture",
-                                 actions=[], expected_basis=basis)
+        review = approve(self.store, claim, reviewer=reviewer.actor.id, expected_basis=basis)
         paper = PaperBuilder(self.store, Actor("writer", "writer")).build(
             title="Reference graph fixture", claims=[claim], expected_bases={claim: basis})
         return protocol, primary, result, replica, replica_result, claim, review, paper

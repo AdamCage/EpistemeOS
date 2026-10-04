@@ -32,7 +32,7 @@ class ClaimLineageTests(unittest.TestCase):
 
         b = next_version("B")
         b_replaces_a = fixture.link(b, a, "supersedes")
-        fixture.review(b)
+        fixture.approved(b)
         self.assertEqual(fixture.reader.next_action(b)["action"], "paper_candidate")
 
         c = next_version("C")
@@ -50,7 +50,7 @@ class ClaimLineageTests(unittest.TestCase):
         # B is still a valid historical replacement of A. Its immutable evidence
         # list does not contain the later runs that justify C, so it is no longer
         # a current frontier. Accepting C must not require rejecting B's history.
-        review = fixture.review(c)
+        review = fixture.approved(c)
         assessments = fixture.event(review)["payload"]["link_assessments"]
         self.assertEqual(set(assessments), {b_replaces_a, c_replaces_b})
         self.assertTrue(all(item["judgment"] == "accepted" for item in assessments.values()))
@@ -71,7 +71,7 @@ class ClaimLineageTests(unittest.TestCase):
         # citations. Testing review(C) alone would only exercise C's own gate.
         dependent = fixture.branch("lineage-dependent")
         fixture.link(c, dependent, "supports")
-        fixture.review(dependent)
+        fixture.approved(dependent)
         primary, _ = fixture.attempt(branch)
         fixture.attempt(branch, replica_of=primary)
         gate = fixture.reader.gate(dependent)

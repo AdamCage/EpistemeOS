@@ -21,6 +21,7 @@ from episteme.graph import GraphIntegrityError, NodeKind, Relation, ResearchGrap
 from episteme.kernel import Actor, GateError, Kernel
 from episteme.reporting import PaperBuilder
 from episteme.store import ConflictError, IntegrityError, Store, canonical, digest
+from review_paths import approve
 
 
 class ClaimWorkflowTests(unittest.TestCase):
@@ -110,6 +111,14 @@ class ClaimWorkflowTests(unittest.TestCase):
                 link_assessments=self.assessments(claim) if assessments is None else assessments)
         return reviewer.review(claim, **args)
 
+    def approved(self, claim, *, actor="fixture-independent-reviewer", assessments=None):
+        """Fixture approval through assignment, delivery and review.submit."""
+        link_assessments = None
+        if resolve_context(self.store.events(), claim).link_ids:
+            link_assessments = self.assessments(claim) if assessments is None else assessments
+        return approve(self.store, claim, reviewer=actor, link_assessments=link_assessments,
+                       rationale="Explicit fixture opinion, not a scientific approval")
+
     def paper(self, claim):
         return self.builder.build(title="Synthetic fixture scaffold", claims=[claim], expected_bases=self.bases(claim))
 
@@ -122,8 +131,8 @@ class ClaimWorkflowTests(unittest.TestCase):
         context = resolve_context(self.store.events(), c)
         self.assertEqual(context.claim_ids, (a, b, c))
         self.assertEqual(context.link_ids, (ab, bc))
-        self.review(b)
-        historical_review = self.review(c)
+        self.approved(b)
+        historical_review = self.approved(c)
         paper = self.paper(c)
         prior = self.bases(a, b, c)
         self.attempt(a, status="failed")
@@ -143,8 +152,8 @@ class ClaimWorkflowTests(unittest.TestCase):
 
     def test_contradiction_is_symmetric_context_without_automatic_failure_or_approval(self):
         a, b = self.branch("A"), self.branch("B")
-        self.review(a)
-        self.review(b)
+        self.approved(a)
+        self.approved(b)
         before = self.bases(a, b)
         link = self.link(a, b, "contradicts")
         for claim in (a, b):
@@ -157,7 +166,7 @@ class ClaimWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(GateError, "review_with_links"):
             self.kernel("fixture-other-reviewer", "reviewer").review(a, verdict="reject",
                 rationale="Fixture rejection", actions=["Fixture control"], expected_basis=self.bases(a)[a])
-        self.review(a)
+        self.approved(a)
         self.assertEqual(self.reader.next_action(a)["action"], "paper_candidate")
         self.assertEqual(self.reader.next_action(b)["action"], "scientific_review")
         self.assertEqual(self.event(a)["payload"]["outcome"], "inconclusive")
@@ -233,7 +242,7 @@ class ClaimWorkflowTests(unittest.TestCase):
                 self.review(b)
             # An explicit fixture rejection of the proposed support is allowed;
             # it never promotes the unreplicated source claim.
-            self.review(b, assessments=self.assessments(b, judgment="rejected"))
+            self.approved(b, assessments=self.assessments(b, judgment="rejected"))
             self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
             self.assertFalse(self.reader.gate(a)["passed"])
             self.assertEqual(self.reader.next_action(a)["action"], "repair_evidence")
@@ -263,7 +272,7 @@ class ClaimWorkflowTests(unittest.TestCase):
             with self.subTest(actor=actor), self.assertRaisesRegex(GateError, "independent of contributors"):
                 self.review(b, actor=actor)
         self.assertEqual(self.store.events(), before)
-        self.review(b)
+        self.approved(b)
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
 
     def test_prior_negative_veto_survives_changed_basis_and_another_reviewer_approval(self):
@@ -271,9 +280,9 @@ class ClaimWorkflowTests(unittest.TestCase):
         veto = self.review(b, actor="fixture-R1", verdict="request_changes")
         self.link(a, b)
         self.assertEqual(self.reader.next_action(b)["action"], "replan")
-        self.review(b, actor="fixture-R2")
+        self.approved(b, actor="fixture-R2")
         self.assertEqual(self.reader.next_action(b)["action"], "replan")
-        self.review(b, actor="fixture-R1")
+        self.approved(b, actor="fixture-R1")
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
         self.assertEqual(self.event(veto)["payload"]["verdict"], "request_changes")
 
@@ -285,13 +294,13 @@ class ClaimWorkflowTests(unittest.TestCase):
             self.link(a, b)
         self.assertEqual(self.store.events(), before)
         self.link(a, b, actor=self.kernel("fixture-independent-link-author", "analyst"))
-        self.review(b, actor=self.linker.actor.id)
+        self.approved(b, actor=self.linker.actor.id)
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
 
     def test_foreign_negative_requires_acknowledgement_without_closing_its_original_veto(self):
         a, b = self.branch("A"), self.branch("B")
         link = self.link(a, b)
-        self.review(b, actor="fixture-B-reviewer")
+        self.approved(b, actor="fixture-B-reviewer")
         original_basis = self.bases(b)[b]
         negative = self.review(a, actor="fixture-A-reviewer", verdict="request_changes")
         self.assertNotEqual(self.bases(b)[b], original_basis)
@@ -301,7 +310,7 @@ class ClaimWorkflowTests(unittest.TestCase):
         assessments = self.assessments(b)
         assessments[link]["evidence"].append(negative)
         assessments[link]["rationale"] = "Fixture: acknowledge unresolved upstream concern; bounded target assessed separately"
-        self.review(b, actor="fixture-B-reviewer", assessments=assessments)
+        self.approved(b, actor="fixture-B-reviewer", assessments=assessments)
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
         self.assertEqual(self.reader.next_action(a)["action"], "replan")
         paper = self.event(self.paper(b))["payload"]
@@ -309,11 +318,11 @@ class ClaimWorkflowTests(unittest.TestCase):
         self.assertIn(negative, manuscript)
         self.assertIn("open related finding", manuscript)
         self.assertIn("Fixture control remains required", manuscript)
-        self.review(a, actor="fixture-A-reviewer")
+        self.approved(a, actor="fixture-A-reviewer")
         after_closure = self.bases(b)[b]
         self.assertNotEqual(after_closure, original_basis)
         self.assertEqual(self.reader.next_action(b)["action"], "scientific_review")
-        self.review(b, actor="fixture-B-reviewer")
+        self.approved(b, actor="fixture-B-reviewer")
         self.review(a, actor="fixture-A-reviewer")  # Repeated positive review must not cause a refresh loop.
         self.assertEqual(self.bases(b)[b], after_closure)
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
@@ -328,10 +337,10 @@ class ClaimWorkflowTests(unittest.TestCase):
         negative_b = self.review(b, actor="fixture-B-reviewer", verdict="request_changes")
         assessments = self.assessments(a)
         assessments[link]["evidence"].append(negative_b)
-        self.review(a, actor="fixture-A-reviewer", assessments=assessments)
-        self.review(b, actor="fixture-B-reviewer")
+        self.approved(a, actor="fixture-A-reviewer", assessments=assessments)
+        self.approved(b, actor="fixture-B-reviewer")
         self.assertEqual(self.reader.next_action(a)["action"], "scientific_review")
-        self.review(a, actor="fixture-A-reviewer")
+        self.approved(a, actor="fixture-A-reviewer")
         bases = self.bases(a, b)
         for claim, actor in ((a, "fixture-A-reviewer"), (b, "fixture-B-reviewer")):
             self.review(claim, actor=actor)
@@ -352,15 +361,18 @@ class ClaimWorkflowTests(unittest.TestCase):
     def test_accepted_supersession_blocks_old_anchor_without_approving_replacement(self):
         old, new = self.branch("old"), self.branch("new")
         link = self.link(new, old, "supersedes")
-        accepted = self.review(old, actor="fixture-old-reviewer")
+        accepted = self.approved(old, actor="fixture-old-reviewer")
         self.assertEqual(self.reader.next_action(old)["action"], "superseded")
         self.assertEqual(self.reader.next_action(old)["replacement"], new)
         with self.assertRaisesRegex(GateError, "not eligible"):
             self.paper(old)
         self.assertEqual(self.reader.next_action(new)["action"], "scientific_review")
-        self.review(new, actor="fixture-new-reviewer")
+        self.approved(new, actor="fixture-new-reviewer")
         self.assertEqual(self.reader.next_action(new)["action"], "paper_candidate")
-        self.review(old, actor="fixture-old-reviewer", assessments=self.assessments(old, judgment="rejected"))
+        # One submitted opinion per reviewer and evidence revision: a reversed
+        # judgment of the replacement is recorded at a new revision of old.
+        self.attempt(old, status="failed")
+        self.approved(old, actor="fixture-old-reviewer", assessments=self.assessments(old, judgment="rejected"))
         self.assertEqual(self.reader.next_action(old)["action"], "paper_candidate")
         self.assertEqual(self.event(accepted)["payload"]["link_assessments"][link]["judgment"], "accepted")
 
@@ -379,7 +391,7 @@ class ClaimWorkflowTests(unittest.TestCase):
         self.link(new, old, "supersedes")
         gate = self.reader.gate(new)
         self.assertTrue(gate["passed"], gate["failures"])
-        self.review(new)
+        self.approved(new)
         self.assertEqual(self.reader.next_action(new)["action"], "paper_candidate")
         self.assertNotEqual(self.reader.next_action(old)["action"], "paper_candidate")
         self.paper(new)
@@ -399,14 +411,14 @@ class ClaimWorkflowTests(unittest.TestCase):
         self.assertFalse(related["current_gate"]["passed"])
         with self.assertRaisesRegex(GateError, "mechanically unqualified source"):
             self.review(old)
-        self.review(old, assessments=self.assessments(old, judgment="rejected"))
+        self.approved(old, assessments=self.assessments(old, judgment="rejected"))
         self.assertEqual(self.reader.next_action(old)["action"], "paper_candidate")
         self.assertEqual(self.reader.next_action(new)["action"], "repair_evidence")
 
     def test_paper_keeps_accepted_compatible_contradiction_as_unapproved_context(self):
         a, b = self.branch("competing"), self.branch("selected")
         link = self.link(a, b, "contradicts")
-        self.review(b)
+        self.approved(b)
         paper = self.paper(b)
         payload = self.event(paper)["payload"]
         manuscript = self.store.read(payload["manuscript"]).decode()
@@ -448,7 +460,7 @@ class ClaimWorkflowTests(unittest.TestCase):
     def test_graph_validates_historical_link_bases_and_projects_review_context_references(self):
         a, b = self.branch("A"), self.branch("B")
         link = self.link(a, b)
-        review = self.review(b)
+        review = self.approved(b)
         paper = self.paper(b)
         self.attempt(a, status="failed")
         graph = ResearchGraph.from_store(self.store)

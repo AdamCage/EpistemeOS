@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from episteme.kernel import Actor, GateError, Kernel
 from episteme.store import ConflictError, IntegrityError, Store, canonical, digest
+from review_paths import approve
 
 
 class KernelTests(unittest.TestCase):
@@ -96,6 +97,11 @@ class KernelTests(unittest.TestCase):
         return (self.reviewer if actor is None else actor).review(
             claim, verdict=verdict, rationale="Reviewed the available evidence bundle",
             actions=[] if actions is None else actions, expected_basis=basis)
+
+    def approved(self, claim, *, actor=None, basis=None):
+        """Fixture approval through assignment, delivery and review.submit."""
+        return approve(self.store, claim, reviewer=(self.reviewer if actor is None else actor).actor.id,
+                       expected_basis=basis)
 
     def assert_gate_failure(self, claim, phrase):
         gate = self.analyst.gate(claim)
@@ -383,7 +389,7 @@ class KernelTests(unittest.TestCase):
         protocol = self.protocol()
         claim = self.claim(protocol, self.completed_pair(protocol))
         prior_basis = self.reviewer.gate(claim)["basis_hash"]
-        self.review(claim, basis=prior_basis)
+        self.approved(claim, basis=prior_basis)
         self.assertEqual(self.reviewer.next_action(claim)["action"], "paper_candidate")
         run = self.start(protocol)
         self.executor.finish_run(run, status="cancelled", outputs={}, reason="New cancelled attempt")
@@ -394,7 +400,7 @@ class KernelTests(unittest.TestCase):
     def test_unrelated_hypothesis_does_not_invalidate_claim_review(self):
         protocol = self.protocol()
         claim = self.claim(protocol, self.completed_pair(protocol))
-        self.review(claim)
+        self.approved(claim)
         basis = self.reviewer.gate(claim)["basis_hash"]
         self.planner.hypothesis("Unrelated idea", "Different prediction", "Its falsifier", self.scope)
         self.assertEqual(self.reviewer.gate(claim)["basis_hash"], basis)
@@ -405,11 +411,11 @@ class KernelTests(unittest.TestCase):
         claim = self.claim(protocol, self.completed_pair(protocol))
         self.review(claim, verdict="request_changes", actions=["Add a discriminating control"])
         reviewer_two = Kernel(self.store, Actor("reviewer-2", "reviewer"))
-        self.review(claim, actor=reviewer_two)
+        self.approved(claim, actor=reviewer_two)
         next_action = self.reviewer.next_action(claim)
         self.assertEqual(next_action["action"], "replan")
         self.assertIn("Add a discriminating control", next_action["reasons"])
-        self.review(claim)
+        self.approved(claim)
         self.assertEqual(self.reviewer.next_action(claim)["action"], "paper_candidate")
 
     def test_nonapproval_requires_actions_and_approval_has_no_unresolved_actions(self):
@@ -425,7 +431,7 @@ class KernelTests(unittest.TestCase):
     def test_next_action_uses_one_history_snapshot_and_observes_later_changes(self):
         protocol = self.protocol()
         claim = self.claim(protocol, self.completed_pair(protocol))
-        self.review(claim)
+        self.approved(claim)
         snapshot = self.store.events()
         # The gate and review lookup must share one verified event snapshot.
         # next_action is an observation, not a publication lock that prevents
@@ -446,7 +452,7 @@ class KernelTests(unittest.TestCase):
     def test_reopen_preserves_event_chain_artifacts_gate_and_review(self):
         protocol = self.protocol()
         claim = self.claim(protocol, self.completed_pair(protocol))
-        self.review(claim)
+        self.approved(claim)
         before_events = self.store.events()
         before_gate = self.reviewer.gate(claim)
         self.store.close()

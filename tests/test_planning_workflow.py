@@ -21,6 +21,7 @@ from episteme.recovery import backup, restore
 from episteme.reporting import PaperBuilder, review_bundle
 from episteme.search import COMPONENTS, Search
 from episteme.store import ConflictError, Store
+from review_paths import approve
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -101,6 +102,11 @@ class PlanningWorkflowTests(unittest.TestCase):
         return self.kernel(actor, "reviewer").review(claim, verdict="approve",
             rationale="Explicit test opinion only, not an actual scientific assessment", actions=[],
             expected_basis=self.kernel().gate(claim)["basis_hash"])
+
+    def approved(self, claim, actor="fixture-independent-reviewer"):
+        """Fixture approval through assignment, delivery and review.submit."""
+        return approve(self.store, claim, reviewer=actor,
+                       rationale="Explicit test opinion only, not an actual scientific assessment")
 
     def test_question_revisions_are_immutable_and_reject_stale_parent(self):
         original = self.question()
@@ -261,7 +267,7 @@ class PlanningWorkflowTests(unittest.TestCase):
         protocol = self.protocol(explanation_set)
         claim = self.claim(protocol)
         basis = self.kernel().gate(claim)["basis_hash"]
-        review = self.review(claim)
+        review = self.approved(claim)
         builder = PaperBuilder(self.store, Actor("fixture-writer", "writer"))
         paper = builder.build(title="Synthetic planning fixture", claims=[claim], expected_bases={claim: basis})
         question2 = self.question(parent=question, revision_reason="Future research question refinement")
@@ -296,7 +302,7 @@ class PlanningWorkflowTests(unittest.TestCase):
             with self.subTest(actor=actor), self.assertRaises(ValueError):
                 self.review(claim, actor=actor)
             self.assertEqual(self.store.export(), before)
-        self.review(claim)
+        self.approved(claim)
         bundle = review_bundle(self.store, self.store.events())
         self.assertTrue({question, revised_q, original_set, revised_set, *self.hypotheses}
                         <= {event["id"] for event in bundle["events"]})
@@ -347,7 +353,7 @@ class PlanningWorkflowTests(unittest.TestCase):
             dict(explanation_set=explanation_set, **self.protocol_args()), command_id="cli-protocol"),
             "protocol-command.json")
         claim = self.claim(protocol)
-        self.review(claim)
+        self.approved(claim)
         graph = ResearchGraph.from_store(self.store).to_dict()
         history, receipts = self.store.export(), self.store.export_receipts()
         snapshot, destination = self.root / "snapshot", self.root / "restored"

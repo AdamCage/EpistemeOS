@@ -128,6 +128,7 @@ EpistemeOS/
     ├── test_pack_cli.py          CLI по привязке, pack describe и read-only pack verify
     ├── test_afterlife_pack.py    capture/compile против legacy, отказы захвата и CLI путь capture → анализ
     ├── pack_fixtures.py          conformance-входы пакетов и минимальный локальный runner без Store
+    ├── review_paths.py           тестовый путь review: assign → fixture provider → review.submit (ADR 0018)
     ├── fixtures/packs/           тестовый пакет conformance_fixture_v1, только для проверки контракта
     └── test_workflow.py          фактический search → execution → evidence demo
 ```
