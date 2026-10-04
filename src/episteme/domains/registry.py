@@ -33,6 +33,7 @@ from . import api
 # pack_id -> importable package whose directory contains all pack files.
 PACKS: dict[str, str] = {
     "synthetic_causal_v1": "episteme.domains.packs.synthetic_causal_v1",
+    "afterlife_seed_v1": "episteme.domains.packs.afterlife_seed_v1",
 }
 
 HOOKS = ("describe", "validate_parameters", "compile_protocol", "compile_execution",

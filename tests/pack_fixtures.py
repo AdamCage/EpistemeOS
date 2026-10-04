@@ -40,10 +40,30 @@ def _synthetic_request(workdir: Path) -> api.CompileRequest:
         capture=None)
 
 
+def historical_run(workdir: Path) -> Path:
+    """The 30-output synthetic layout of one historical Afterlife run (test fixture)."""
+    import test_afterlife_seed_batch
+    builder = test_afterlife_seed_batch.AfterlifeSeedBatchTests(
+        methodName="test_complete_roster_is_frozen_byte_for_byte_without_touching_source")
+    builder.source = workdir / "historical-run"
+    if builder.source.exists():
+        return builder.source  # The layout is deterministic; build it once per workdir.
+    builder.source.mkdir(parents=True)
+    builder.manifest = builder._build_historical_fixture()
+    return builder.source
+
+
+def _afterlife_request(workdir: Path) -> api.CompileRequest:
+    from episteme.domains import registry
+    capture = registry.load_pack("afterlife_seed_v1").hook("capture")(historical_run(workdir))
+    return api.CompileRequest(parameters={}, host_inputs={}, capture=capture)
+
+
 # pack_id -> (module name for registration, compile-request builder)
 FIXTURES: dict[str, tuple[str, Callable[[Path], api.CompileRequest]]] = {
     FIXTURE_PACK: (FIXTURE_PACK, _fixture_request),
     "synthetic_causal_v1": ("episteme.domains.packs.synthetic_causal_v1", _synthetic_request),
+    "afterlife_seed_v1": ("episteme.domains.packs.afterlife_seed_v1", _afterlife_request),
 }
 
 

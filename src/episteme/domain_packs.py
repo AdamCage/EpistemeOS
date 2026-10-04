@@ -926,6 +926,28 @@ class PackAnalysis:
                     scientific_validity="not_assessed")
 
 
+def store_capture(store: Store, pack_id: str, source: Any) -> dict[str, Any]:
+    """Run a pack's read-only capture once and store the bytes; no event is written.
+
+    Only ``pack.preregister`` turns a capture into evidence provenance. The
+    hashes identify captured bytes, not when or how completely they were made.
+    """
+    loaded = registry.load_pack(pack_id)
+    require(loaded.manifest.capture, "pack does not capture external sources")
+    bundle = _call(loaded, "capture", source)
+    require(type(bundle) is api.CaptureBundle
+            and (bundle.pack_id, bundle.pack_version) == (loaded.pack_id, loaded.pack_version),
+            "capture hook must return this pack's CaptureBundle")
+    for key, data in bundle.blobs().items():
+        require(store.put(data) == key, "captured bytes CAS digest mismatch")
+    key = store.put_json(bundle.to_dict())
+    require(key == bundle.digest(), "capture bundle CAS digest mismatch")
+    return dict(capture=key, pack_id=loaded.pack_id, pack_version=loaded.pack_version,
+                pack_code_digest=loaded.pack_code_digest, source_label=bundle.source_label,
+                files=len(bundle.files), audit=api.thaw(bundle.audit), events_written=0,
+                meaning="captured bytes stored in CAS without events; bind them with pack.preregister")
+
+
 VERIFIED_PARTS = ("catalog", "protocol_draft", "execution_plan", "validate_protocol",
                   "checks", "recomputations", "report", "statistical_report")
 

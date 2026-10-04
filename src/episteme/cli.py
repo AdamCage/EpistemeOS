@@ -98,6 +98,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     pack_describe.add_argument("pack_id")
     pack_verify = pack_ops.add_parser("verify", help="Re-run pinned hooks; compare recorded bytes")
     pack_verify.add_argument("--root", type=Path, required=True)
+    pack_capture = pack_ops.add_parser("capture", help="Read a declared source once into CAS; no events")
+    pack_capture.add_argument("pack_id")
+    pack_capture.add_argument("--source", type=Path, required=True, help="Existing local source directory")
+    pack_capture.add_argument("--root", type=Path, required=True, help="Research state outside the source")
     followups = subcommands.add_parser("followup", help="Inspect an open review obligation and its child plan")
     followup_ops = followups.add_subparsers(dest="operation", required=True)
     followup_status = followup_ops.add_parser("status")
@@ -178,9 +182,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                                                         **actors)
             status = 0
         elif args.command == "pack":
-            from .domain_packs import describe_pack, verify
+            from .domain_packs import describe_pack, store_capture, verify
             if args.operation == "describe":
                 result, status = describe_pack(args.pack_id), 0
+            elif args.operation == "capture":
+                source, root = args.source.resolve(), args.root.resolve()
+                if root.is_relative_to(source) or source.is_relative_to(root):
+                    raise ValueError("capture source and research state must not overlap")
+                with Store(args.root) as store:
+                    result, status = store_capture(store, args.pack_id, args.source), 0
             else:
                 if not (args.root / "state.sqlite3").is_file():
                     raise ValueError("existing research state is required")

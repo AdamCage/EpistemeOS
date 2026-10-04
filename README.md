@@ -202,6 +202,8 @@ uv run episteme analysis advance <batch-id-from-prepare> --root .research/afterl
 uv run episteme analysis status <batch-id-from-prepare> --root .research/afterlife-pilot
 ```
 
+Тот же run можно провести через пакет `afterlife_seed_v1`: `episteme pack capture afterlife_seed_v1 --source <run-directory> --root <state>` один раз читает 30 заявленных outputs и сохраняет их в CAS без событий, затем `pack.preregister` через `episteme command` получает digest захвата, пустые `parameters` и `host_inputs`, а `batch advance` и `analysis advance` работают как выше. Захват не создаёт preregistration задним числом: экспозиция исторических данных объявляется в protocol.
+
 Запуски локальные и не вызывают provider. Второй анализ использует те же исходные шаги; `awaiting_review` оставляет научное решение открытым. В выбранных файлах нет embeddings для повторного вычисления исходного S1 семантического разрыва. [ADR 0015](docs/decisions/0015-afterlife-historical-pilot.md) описывает данные, проверки и ограничения.
 
 Actor IDs пока назначает доверенный вызывающий процесс. Разные ID и source hashes не доказывают независимость рассуждения или clean-room реализацию. SQLite/hash chain не защищает от владельца файлов. Generic kernel проверяет наличие и согласованность метрик и статистических деклараций; соответствие фактических данных, вычисление uncertainty и научную корректность метода должен проверять domain adapter и независимая реализация. Независимые Executor, Replication и Scientific Reviewer агенты, sandbox, автоматическое исполнение follow-up и внешне проверяемое закрытие научных замечаний остаются в [MVP-плане](docs/mvp-plan.md).
