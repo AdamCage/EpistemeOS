@@ -27,6 +27,8 @@ from .planning import binding_for
 from .protocols import StatisticalDesign
 from .store import Store, canonical, digest
 
+Plan = api.ExecutionPlan | api.ExecutionPlanV2
+
 
 BINDING = "pack_binding"
 ANALYSIS = "pack_analysis"
@@ -34,7 +36,7 @@ KINDS = {BINDING, ANALYSIS}
 PACK_TRUST = "trusted_local_code"
 HOOK_ISOLATION = "in_process"
 PINNING = "pack_code_manifest"
-IMPLEMENTED_PROFILES = {"trusted_local_python_v1"}
+IMPLEMENTED_PROFILES = {"trusted_local_python_v1", api.LOCKED_PROFILE}
 MODE_ORDER = {"descriptive": 0, "exploratory": 1, "confirmatory": 2}
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _PREREGISTER_FIELDS = {"explanation_set", "pack_id", "pack_version", "pack_code_digest",
@@ -114,7 +116,7 @@ def _pinned(store: Store, binding: Mapping[str, Any]) -> dict[str, Any]:
                                                                 "parameter catalog"), "catalog")
     draft = _envelope(api.ProtocolDraft.from_dict, _object(store, p["protocol_draft"],
                                                            "protocol draft"), "protocol draft")
-    plan = _envelope(lambda value: api.ExecutionPlan.from_frozen(value, store.read),
+    plan = _envelope(lambda value: api.plan_from_frozen(value, store.read),
                      _object(store, p["execution_plan"], "execution plan"), "execution plan")
     host = _object(store, p["host_inputs"], "host inputs")
     require(type(host) is dict, "host inputs must be a JSON object")
@@ -131,6 +133,17 @@ def _pinned(store: Store, binding: Mapping[str, Any]) -> dict[str, Any]:
                 host=host, capture=capture)
 
 
+def plan_keys(store: Store, plan: dict[str, Any]) -> set[str]:
+    """CAS keys of a frozen execution plan: programs (v2: manifests and tree files), input, project."""
+    keys = {plan[name]["sha256"] for name in ("primary_program", "reanalysis_program", "input")}
+    if plan["schema_version"] == 2:
+        from .environment_closure import tree_digests
+        for name in ("primary_program", "reanalysis_program"):
+            keys |= tree_digests(api.strict_loads(store.read(plan[name]["sha256"]), "source tree manifest"))
+        keys |= {row["sha256"] for row in plan["environment_requirements"]["project"]}
+    return keys
+
+
 def binding_artifacts(store: Store, event: dict[str, Any]) -> set[str]:
     """CAS closure of a pack binding: code, envelopes, programs, input and capture."""
     p = event["payload"]
@@ -138,8 +151,7 @@ def binding_artifacts(store: Store, event: dict[str, Any]) -> set[str]:
     plan = api.strict_loads(store.read(p["execution_plan"]), "execution plan")
     keys = {p["pack_code_digest"], p["pack_manifest"], p["catalog"], p["host_inputs"],
             p["protocol_draft"], p["execution_plan"], p["environment"],
-            *(row["sha256"] for row in code["files"]),
-            *(plan[name]["sha256"] for name in ("primary_program", "reanalysis_program", "input"))}
+            *(row["sha256"] for row in code["files"]), *plan_keys(store, plan)}
     if p["capture"] is not None:
         bundle = api.strict_loads(store.read(p["capture"]), "capture bundle")
         keys.add(p["capture"])
@@ -177,7 +189,7 @@ def pinned_bytes(store: Store, history: list[dict[str, Any]]) -> set[str]:
         code = api.strict_loads(store.read(p["pack_code_digest"]), "pack code manifest")
         plan = api.strict_loads(store.read(p["execution_plan"]), "execution plan")
         pinned.update(row["sha256"] for row in code["files"])
-        pinned.update(plan[name]["sha256"] for name in ("primary_program", "reanalysis_program", "input"))
+        pinned.update(plan_keys(store, plan))
         if p["capture"] is not None:
             bundle = api.strict_loads(store.read(p["capture"]), "capture bundle")
             pinned.add(p["capture"])
@@ -191,9 +203,11 @@ def analysis_artifacts(event: dict[str, Any]) -> set[str]:
 
 
 def review_excluded(store: Store, event: dict[str, Any]) -> set[str]:
-    """Pack bytes kept out of a blind_initial_review_v1 context.
+    """Pack bytes kept out of a blind initial review context.
 
-    Pack source, envelopes, host inputs and reports are excluded. Protocol data
+    Pack source, envelopes, host inputs and reports are excluded. A profile v2
+    binding also excludes each source-tree file and each closure project file,
+    so a copy of those bytes cannot pass as an observed output. Protocol data
     and captured files are not listed: like other unobserved data they are only
     absent from the allowlist, and stay allowed where they are observed outputs.
     """
@@ -205,6 +219,9 @@ def review_excluded(store: Store, event: dict[str, Any]) -> set[str]:
             p["protocol_draft"], p["execution_plan"], *(row["sha256"] for row in code["files"])}
     if p["capture"] is not None:
         keys.add(p["capture"])
+    plan = api.strict_loads(store.read(p["execution_plan"]), "execution plan")
+    if plan.get("schema_version") == 2:
+        keys |= plan_keys(store, plan) - {plan["input"]["sha256"]}
     return keys
 
 
@@ -248,14 +265,14 @@ def _compile(store: Store, loaded: registry.LoadedPack, parameters: Any, host_in
     request = api.CompileRequest(parameters=chosen, host_inputs=host_inputs, capture=bundle)
     draft = _call(loaded, "compile_protocol", request)
     plan = _call(loaded, "compile_execution", request)
-    require(type(draft) is api.ProtocolDraft and type(plan) is api.ExecutionPlan,
-            "pack compile hooks must return a ProtocolDraft and an ExecutionPlan")
+    require(type(draft) is api.ProtocolDraft and type(plan) in (api.ExecutionPlan, api.ExecutionPlanV2),
+            "pack compile hooks must return a ProtocolDraft and an ExecutionPlan or ExecutionPlanV2")
     return dict(catalog=catalog, parameters=chosen, request=request, draft=draft, plan=plan,
                 capture=bundle)
 
 
 def _check_compilation(store: Store, manifest: api.PackManifest, catalog: api.ParameterCatalog,
-                       draft: api.ProtocolDraft, plan: api.ExecutionPlan,
+                       draft: api.ProtocolDraft, plan: Plan,
                        capture: api.CaptureBundle | None, environment: str) -> None:
     """Kernel checks of a compilation; the same on live admission and replay."""
     require(draft.roster_semantics in manifest.roster_semantics,
@@ -270,23 +287,37 @@ def _check_compilation(store: Store, manifest: api.PackManifest, catalog: api.Pa
     outputs = manifest.output_paths()
     require(api.thaw(plan.outputs) == outputs and api.thaw(catalog.outputs) == outputs,
             "execution plan outputs differ from the pack manifest")
-    declaration = _object(store, environment, "environment declaration")
-    from .execution import BACKEND
-    require(type(declaration) is dict and set(declaration) == {"schema_version", "backend", "fingerprint"}
-            and declaration["schema_version"] == 1 and declaration["backend"] == BACKEND
-            and type(declaration["fingerprint"]) is dict,
-            "pack execution requires a frozen local Python environment")
     frozen = plan.to_dict()
+    if type(plan) is api.ExecutionPlanV2:
+        from .execution_locked import check_outputs, closure_parts
+        check_outputs(frozen["outputs"])
+        declaration, _ = closure_parts(store, environment)
+        requirements = frozen["environment_requirements"]
+        require(declaration["project"] == requirements["project"],
+                "environment closure project differs from the execution plan")
+        require(all(declaration["variables"]["set"].get(name) == value
+                    for name, value in requirements["variables"].items()),
+                "environment closure does not set the variables the execution plan requires")
+    else:
+        declaration = _object(store, environment, "environment declaration")
+        from .execution import BACKEND
+        require(type(declaration) is dict and set(declaration) == {"schema_version", "backend", "fingerprint"}
+                and declaration["schema_version"] == 1 and declaration["backend"] == BACKEND
+                and type(declaration["fingerprint"]) is dict,
+                "pack execution requires a frozen local Python environment")
     bound = {frozen["input"]["sha256"]} | (set() if capture is None else set(capture.blobs()))
     require({split.digest for split in design.data_splits} <= bound,
             "data splits must refer to bytes frozen by this binding")
     require(set(draft.seen_data) <= bound, "declared exposure must refer to bytes frozen by this binding")
     code_like = {frozen["primary_program"]["sha256"], frozen["reanalysis_program"]["sha256"]}
+    if type(plan) is api.ExecutionPlanV2:
+        code_like |= {key for tree in (plan.primary_program, plan.reanalysis_program) for key in tree.blobs()}
+        code_like |= {row["sha256"] for row in frozen["environment_requirements"]["project"]}
     require(not code_like & bound, "program bytes cannot alias the protocol input or captured data")
 
 
 def _protocol_payload(history: list[dict[str, Any]], explanation_set: str,
-                      draft: api.ProtocolDraft, plan: api.ExecutionPlan,
+                      draft: api.ProtocolDraft, plan: Plan,
                       environment: str) -> dict[str, Any]:
     """The protocol payload Kernel.preregister_for_set records for this draft."""
     planning = binding_for(history, explanation_set, current=True)
@@ -306,7 +337,7 @@ def _protocol_payload(history: list[dict[str, Any]], explanation_set: str,
 
 def _binding_payload(*, protocol: dict[str, Any], study_id: str, request: dict[str, Any],
                      keys: dict[str, str], manifest: api.PackManifest, parameters: Any,
-                     draft: api.ProtocolDraft, plan: api.ExecutionPlan) -> dict[str, Any]:
+                     draft: api.ProtocolDraft, plan: Plan) -> dict[str, Any]:
     return dict(schema_version=1, contract_version=api.CONTRACT_VERSION, protocol=protocol["id"],
                 protocol_hash=protocol["hash"], study_id=study_id,
                 explanation_set=request["explanation_set"], pack_id=request["pack_id"],
@@ -490,7 +521,7 @@ class PackPreregistration:
         return dict(protocol=protocol_id, binding=binding, pack_code_digest=pack_code_digest)
 
 
-def _protocol_context(parameters: Any, draft: api.ProtocolDraft, plan: api.ExecutionPlan,
+def _protocol_context(parameters: Any, draft: api.ProtocolDraft, plan: Plan,
                       capture: api.CaptureBundle | None, protocol: dict[str, Any]
                       ) -> api.ProtocolContext:
     return api.ProtocolContext(parameters=parameters, draft=draft, execution_plan=plan.to_dict(),

@@ -19,7 +19,8 @@
     "execution_profiles": {
       "items": {
         "enum": [
-          "trusted_local_python_v1"
+          "trusted_local_python_v1",
+          "uv_locked_python_v2"
         ]
       },
       "maxItems": 8,

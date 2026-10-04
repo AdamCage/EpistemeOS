@@ -20,6 +20,7 @@ import re
 from types import MappingProxyType
 from typing import Any, Callable, ClassVar, Mapping
 
+from .. import environment_closure as closure
 from ..protocols import StatisticalDesign
 from ..store import canonical, digest
 
@@ -27,11 +28,16 @@ from ..store import canonical, digest
 CONTRACT_VERSION = 1
 ROSTER_SEMANTICS = ("rng_seed", "partition_seed", "frozen_unit_index", "deterministic_single")
 SAMPLE_SIZE_SCOPES = ("per_roster_unit", "total")
-EXECUTION_PROFILES = ("trusted_local_python_v1",)
+PLAN_V1_PROFILES = ("trusted_local_python_v1",)
+LOCKED_PROFILE = closure.PROFILE
+EXECUTION_PROFILES = (*PLAN_V1_PROFILES, LOCKED_PROFILE)
 CLOSURE_LEVELS = ("interpreter_fingerprint",)
 HIDDEN_INPUT_ROLES = ("protocol_data", "captured_artifacts")
 CAPABILITIES = ("separate_cwd", "python_isolated_mode", "process_group_timeout",
                 "job_object_timeout", "bounded_output_capture")
+LOCKED_CAPABILITIES = ("separate_cwd", "bounded_output_capture", "process_group_timeout",
+                       "job_object_timeout", "environment_allowlist", "workspace_outside_store",
+                       "locked_environment")
 OUTCOMES = ("supports", "refutes", "inconclusive")
 INFERENCE_MODES = ("unclassified", "descriptive", "exploratory", "confirmatory")
 STATISTICAL_FIELDS = ("estimand", "estimator", "point_estimate", "uncertainty",
@@ -425,11 +431,38 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "wall_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
             "max_output_bytes": {"type": "integer", "minimum": 1, "maximum": 1024 ** 3},
             "required_capabilities": _list({"enum": list(CAPABILITIES)}, maximum=8),
-            "execution_profile": {"enum": list(EXECUTION_PROFILES)},
+            "execution_profile": {"enum": list(PLAN_V1_PROFILES)},
             "environment_requirements": _object({
                 "closure_level": {"enum": list(CLOSURE_LEVELS)}, "image_digest": {"type": "null"},
                 "lock_digest": {"type": "null"}, "accelerator": {"type": "null"},
                 "network_policy": {"type": "null"}, "env_allowlist": {"type": "null"}})})),
+    "execution-plan-v2": _schema(
+        "execution-plan:v2", "EpistemeOS DomainPack execution plan v2",
+        "Frozen form for profile uv_locked_python_v2 (ADR 0019). primary_program and "
+        "reanalysis_program are SHA-256 of canonical source-tree manifests; project lists "
+        "pyproject.toml, uv.lock and the lock's local wheels. The kernel stores every byte. "
+        "The host freezes the environment closure, which must carry exactly these project "
+        "files and set these variables. No network or filesystem sandbox is applied.",
+        _object({
+            "schema_version": {"const": 2}, "primary_program": _BLOB,
+            "reanalysis_program": _BLOB, "input": _BLOB, "outputs": _OUTPUTS,
+            "wall_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+            "max_output_bytes": {"type": "integer", "minimum": 1, "maximum": 1024 ** 3},
+            "required_capabilities": _list({"enum": list(LOCKED_CAPABILITIES)}, maximum=8),
+            "execution_profile": {"const": LOCKED_PROFILE},
+            "environment_requirements": _object({
+                "closure_level": {"const": "uv_lock"},
+                "project": _list(_object({
+                    "path": {"type": "string", "minLength": 1, "maxLength": 1024},
+                    "sha256": _SHA256,
+                    "bytes": {"type": "integer", "minimum": 0, "maximum": MAX_BLOB_BYTES}}),
+                    minimum=2, maximum=256),
+                "variables": {"type": "object", "maxProperties": 64,
+                              "propertyNames": {"type": "string",
+                                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"},
+                              "additionalProperties": {"type": "string", "maxLength": 4096}},
+                "image_digest": {"type": "null"}, "accelerator": {"type": "null"},
+                "network_policy": {"const": "not_enforced"}})})),
     "capture-bundle-v1": _schema(
         "capture-bundle:v1", "EpistemeOS DomainPack capture bundle v1",
         "Frozen form of a read-only capture of a declared local source. Inventory paths are "
@@ -733,6 +766,158 @@ def environment_requirements() -> dict[str, Any]:
     """The only v1 closure: an interpreter fingerprint, all reserved fields null."""
     return dict(closure_level="interpreter_fingerprint",
                 **{name: None for name in _ENVIRONMENT_NULLS})
+
+
+def _closure_rules(build: Callable[[], Any]) -> Any:
+    try:
+        return build()
+    except closure.ClosureError as exc:
+        raise EnvelopeError(str(exc)) from exc
+
+
+def _bounded_files(files: Any, label: str) -> dict[str, bytes]:
+    _require(isinstance(files, Mapping) and bool(files), f"{label} needs files")
+    _require(all(type(data) is bytes and len(data) <= MAX_BLOB_BYTES for data in files.values()),
+             f"{label} files must be bounded bytes")
+    return dict(sorted(files.items()))
+
+
+@dataclass(frozen=True)
+class SourceTree:
+    """A multi-file program (ADR 0019): relative POSIX paths to bytes plus an entry point.
+
+    It runs as ``python -s -B src/<entry_point> inputs/<input_name> --seed N``.
+    The canonical manifest digest is the protocol ``implementation``.
+    """
+
+    entry_point: str
+    files: Any
+    input_name: str = "input.dat"
+
+    def __post_init__(self) -> None:
+        files = _bounded_files(self.files, "source tree")
+        object.__setattr__(self, "files", MappingProxyType(files))
+        self.manifest()
+
+    def manifest(self) -> dict[str, Any]:
+        return _closure_rules(lambda: closure.source_manifest(self.entry_point, self.input_name,
+                                                              self.files))
+
+    def canonical(self) -> bytes:
+        return canonical(self.manifest())
+
+    def digest(self) -> str:
+        return digest(self.canonical())
+
+    def blobs(self) -> dict[str, bytes]:
+        return {self.digest(): self.canonical(), **{digest(data): data for data in self.files.values()}}
+
+    @classmethod
+    def from_frozen(cls, blob: Mapping[str, Any], read: Callable[[str], bytes]) -> SourceTree:
+        data = read(blob["sha256"])
+        _require(len(data) == blob["bytes"], "source tree manifest size mismatch")
+        manifest = _closure_rules(lambda: closure.check_source_manifest(strict_loads(data, "source tree")))
+        _require(canonical(manifest) == data, "source tree manifest must be canonical JSON")
+        files = _closure_rules(lambda: closure.read_rows(manifest["files"], read, label="source tree"))
+        return cls(entry_point=manifest["entry_point"], files=files, input_name=manifest["input_name"])
+
+
+@dataclass(frozen=True)
+class ExecutionPlanV2:
+    """Profile uv_locked_python_v2: two source trees, input and a uv project to lock against.
+
+    ``project`` holds pyproject.toml, uv.lock and exactly the local wheels the
+    lock references. ``variables`` are values the host closure must set; the
+    host chooses inherited names and freezes interpreter, platform and uv.
+    """
+
+    primary_program: SourceTree
+    reanalysis_program: SourceTree
+    input: bytes
+    outputs: Any
+    wall_seconds: int
+    max_output_bytes: int
+    required_capabilities: Any
+    project: Any
+    variables: Any = None
+    execution_profile: str = LOCKED_PROFILE
+
+    SCHEMA: ClassVar[str] = "execution-plan-v2"
+
+    def __post_init__(self) -> None:
+        for name in ("primary_program", "reanalysis_program"):
+            _require(type(getattr(self, name)) is SourceTree, f"execution plan {name} must be a SourceTree")
+        _require(type(self.input) is bytes and 0 < len(self.input) <= MAX_BLOB_BYTES,
+                 "execution plan input must be nonempty bounded bytes")
+        project = _bounded_files(self.project, "closure project")
+        rows = _closure_rules(lambda: closure.file_rows(project, label="closure project"))
+        _closure_rules(lambda: closure.check_project(dict(project=rows), project))
+        object.__setattr__(self, "project", MappingProxyType(project))
+        variables = {} if self.variables is None else self.variables
+        _require(isinstance(variables, Mapping), "execution plan variables must be a mapping")
+        object.__setattr__(self, "variables", MappingProxyType(dict(sorted(variables.items()))))
+        for name in ("outputs", "required_capabilities"):
+            object.__setattr__(self, name, _freeze(strict_json(thaw(getattr(self, name)))))
+        self.check(self.to_dict())
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(schema_version=2, primary_program=_blob(self.primary_program.canonical()),
+                    reanalysis_program=_blob(self.reanalysis_program.canonical()),
+                    input=_blob(self.input), outputs=thaw(self.outputs),
+                    wall_seconds=self.wall_seconds, max_output_bytes=self.max_output_bytes,
+                    required_capabilities=thaw(self.required_capabilities),
+                    execution_profile=self.execution_profile,
+                    environment_requirements=dict(
+                        closure_level="uv_lock",
+                        project=closure.file_rows(dict(self.project), label="closure project"),
+                        variables=dict(self.variables), image_digest=None, accelerator=None,
+                        network_policy="not_enforced"))
+
+    @classmethod
+    def check(cls, value: Any) -> None:
+        value = strict_json(value)
+        _size(value, MAX_ENVELOPE_BYTES, cls.SCHEMA)
+        validate_schema(cls.SCHEMA, value)
+        _require(value["primary_program"]["sha256"] != value["reanalysis_program"]["sha256"],
+                 "reanalysis program must differ from the primary program")
+        _require(len({path.lower() for path in value["outputs"].values()}) == len(value["outputs"]),
+                 "execution plan output paths must be distinct")
+        requirements = value["environment_requirements"]
+        paths = [row["path"] for row in requirements["project"]]
+        _require(paths == sorted(set(paths)) and set(closure.PROJECT_FILES) <= set(paths),
+                 "execution plan project needs sorted pyproject.toml, uv.lock and wheels")
+        _closure_rules(lambda: closure.check_variables(dict(inherit=[], set=requirements["variables"])))
+
+    def blobs(self) -> dict[str, bytes]:
+        return {**self.primary_program.blobs(), **self.reanalysis_program.blobs(),
+                digest(self.input): self.input,
+                **{digest(data): data for data in self.project.values()}}
+
+    @classmethod
+    def from_frozen(cls, value: Any, read: Callable[[str], bytes]) -> ExecutionPlanV2:
+        value = strict_json(value)
+        cls.check(value)
+        data = read(value["input"]["sha256"])
+        _require(len(data) == value["input"]["bytes"], "execution plan input size mismatch")
+        rows = value["environment_requirements"]["project"]
+        project = _closure_rules(lambda: closure.read_rows(rows, read, label="closure project"))
+        return cls(primary_program=SourceTree.from_frozen(value["primary_program"], read),
+                   reanalysis_program=SourceTree.from_frozen(value["reanalysis_program"], read),
+                   input=data, outputs=value["outputs"], wall_seconds=value["wall_seconds"],
+                   max_output_bytes=value["max_output_bytes"],
+                   required_capabilities=value["required_capabilities"], project=project,
+                   variables=value["environment_requirements"]["variables"],
+                   execution_profile=value["execution_profile"])
+
+    def digest(self) -> str:
+        return digest(canonical(self.to_dict()))
+
+
+def plan_from_frozen(value: Any, read: Callable[[str], bytes]) -> ExecutionPlan | ExecutionPlanV2:
+    """Load a frozen execution plan of either schema version."""
+    version = value.get("schema_version") if isinstance(value, dict) else None
+    _require(version in (1, 2), "unsupported execution plan schema version")
+    return (ExecutionPlan if version == 1 else ExecutionPlanV2).from_frozen(value, read)
 
 
 @dataclass(frozen=True)
@@ -1154,7 +1339,7 @@ class DomainPack:
     def describe(self) -> ParameterCatalog: ...
     def validate_parameters(self, parameters: Mapping[str, Any]) -> None: ...
     def compile_protocol(self, request: CompileRequest) -> ProtocolDraft: ...
-    def compile_execution(self, request: CompileRequest) -> ExecutionPlan: ...
+    def compile_execution(self, request: CompileRequest) -> ExecutionPlan | ExecutionPlanV2: ...
     def validate_protocol(self, context: ProtocolContext) -> None: ...
     def capture(self, source: Any) -> CaptureBundle: ...
     def validate_outputs(self, context: AnalysisContext, cas: CasView) -> Any: ...

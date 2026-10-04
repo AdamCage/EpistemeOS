@@ -45,14 +45,24 @@ def _roster(seeds: list[int], executor: str, replicator: str) -> list[dict[str, 
 
 
 def _recipe(store: Store, p: dict[str, Any], protocol: dict[str, Any]) -> None:
+    """Each primary/reanalysis pair is checked under the profile its environment declares."""
+    from . import execution_locked as locked
     require(type(p["required_capabilities"]) is list
             and all(_text(item) for item in p["required_capabilities"])
             and len(set(p["required_capabilities"])) == len(p["required_capabilities"])
-            and set(p["required_capabilities"]) <= CAPABILITIES, "invalid batch capabilities")
+            and set(p["required_capabilities"]) <= CAPABILITIES | locked.CAPABILITIES,
+            "invalid batch capabilities")
     for implementation, environment in ((protocol["implementation"], protocol["environment"]),
                                         (p["reanalysis_implementation"], p["reanalysis_environment"])):
         store.read(implementation)
         declaration = _object(store.read(environment))
+        if locked.is_closure(declaration):
+            require(set(p["required_capabilities"]) <= locked.CAPABILITIES, "invalid batch capabilities")
+            locked.build_spec(store, implementation=implementation, environment=environment,
+                              data=protocol["data"], seed=0, outputs=p["outputs"],
+                              wall_seconds=p["wall_seconds"], max_output_bytes=p["max_output_bytes"])
+            continue
+        require(set(p["required_capabilities"]) <= CAPABILITIES, "invalid batch capabilities")
         require(set(declaration) == {"schema_version", "backend", "fingerprint"}
                 and type(declaration["schema_version"]) is int and declaration["schema_version"] == 1
                 and declaration["backend"] == BACKEND, "batch requires a frozen local Python environment")
@@ -389,8 +399,10 @@ class Batch:
         tree = _get(history, choice["payload"]["tree"], "search_tree")
         protocol = _get(history, choice["payload"]["protocol"], "protocol")
         caps = [] if required_capabilities is None else required_capabilities
+        from .execution_locked import available_capabilities
         available = CAPABILITIES - {"process_group_timeout", "job_object_timeout"}
         available |= {"job_object_timeout"} if os.name == "nt" else {"process_group_timeout"} if os.name == "posix" else set()
+        available |= available_capabilities()
         require(type(caps) is list and all(type(item) is str for item in caps) and set(caps) <= available,
                 "required batch capability unavailable on this platform")
         payload = dict(schema_version=1, selection=selection, selection_hash=choice["hash"],

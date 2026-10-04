@@ -1,0 +1,197 @@
+{
+  "$comment": "Frozen form for profile uv_locked_python_v2 (ADR 0019). primary_program and reanalysis_program are SHA-256 of canonical source-tree manifests; project lists pyproject.toml, uv.lock and the lock's local wheels. The kernel stores every byte. The host freezes the environment closure, which must carry exactly these project files and set these variables. No network or filesystem sandbox is applied.",
+  "$id": "urn:epistemeos:execution-plan:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "environment_requirements": {
+      "additionalProperties": false,
+      "properties": {
+        "accelerator": {
+          "type": "null"
+        },
+        "closure_level": {
+          "const": "uv_lock"
+        },
+        "image_digest": {
+          "type": "null"
+        },
+        "network_policy": {
+          "const": "not_enforced"
+        },
+        "project": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "bytes": {
+                "maximum": 67108864,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "sha256",
+              "bytes"
+            ],
+            "type": "object"
+          },
+          "maxItems": 256,
+          "minItems": 2,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "variables": {
+          "additionalProperties": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$",
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "closure_level",
+        "project",
+        "variables",
+        "image_digest",
+        "accelerator",
+        "network_policy"
+      ],
+      "type": "object"
+    },
+    "execution_profile": {
+      "const": "uv_locked_python_v2"
+    },
+    "input": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "maximum": 67108864,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "max_output_bytes": {
+      "maximum": 1073741824,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "outputs": {
+      "additionalProperties": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+        "type": "string"
+      },
+      "maxProperties": 16,
+      "minProperties": 2,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "required": [
+        "raw_data",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "primary_program": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "maximum": 67108864,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "reanalysis_program": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "maximum": 67108864,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "required_capabilities": {
+      "items": {
+        "enum": [
+          "separate_cwd",
+          "bounded_output_capture",
+          "process_group_timeout",
+          "job_object_timeout",
+          "environment_allowlist",
+          "workspace_outside_store",
+          "locked_environment"
+        ]
+      },
+      "maxItems": 8,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "wall_seconds": {
+      "maximum": 86400,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "primary_program",
+    "reanalysis_program",
+    "input",
+    "outputs",
+    "wall_seconds",
+    "max_output_bytes",
+    "required_capabilities",
+    "execution_profile",
+    "environment_requirements"
+  ],
+  "title": "EpistemeOS DomainPack execution plan v2",
+  "type": "object"
+}

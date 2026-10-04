@@ -132,7 +132,6 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "execution.enqueue": (Execution, Execution.enqueue, frozenset({"executor", "replicator"})),
     "execution.dispatch": (Execution, Execution.dispatch, frozenset({"executor", "replicator"})),
     "execution.dispatch_v2": (Execution, Execution.dispatch_v2, frozenset({"executor", "replicator"})),
-    "execution.dispatch_v2": (Execution, Execution.dispatch_v2, frozenset({"executor", "replicator"})),
     "execution.finalize": (Execution, Execution.finalize, frozenset({"executor", "replicator"})),
     "reproduction.dispatch": (Reproduction, Reproduction.dispatch, frozenset({"executor", "replicator"})),
     "reproduction.finalize": (Reproduction, Reproduction.finalize, frozenset({"executor", "replicator"})),
