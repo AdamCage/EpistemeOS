@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Статус обновлён 3 октября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/DomainBinding/Replanning/Followup/ReviewAssignment/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса.
+Статус обновлён 4 октября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/DomainBinding/Replanning/Followup/ReviewAssignment/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса. `episteme cycle step` не является новым action этой схемы: он сам выбирает одну уже существующую команду, [ADR 0020](decisions/0020-research-cycle-controller.md).
 
 ## Использование
 
@@ -151,6 +151,18 @@ Writable opening аддитивно создаёт таблицу квитанц
 
 Транзакция обеспечивает однократный commit событий при повторной доставке. Внешний запуск, API charge и файловое materialization требуют отдельного outbox/lease протокола M2. При rollback могут остаться неиспользуемые CAS blobs; частичные events и receipt не фиксируются. Actor IDs остаются заявлениями доверенного caller, а hashes/triggers не защищают от владельца всей базы.
 
+
+## Контроллер цикла
+
+`episteme cycle step --root <root> (--study <id> | --claim <id>) [--apply] [--budget N] [--analyst ID] [--reviewer ID]`
+
+Ровно один из `--study` и `--claim`. Контроллер читает сохранённую историю и сам называет рекомендацию. Поле «следующее действие» во входе нет, и отчёт без `--apply` не пишет событие. `--budget` — потолок новых попыток этого вызова (`batch.enqueue_slot` и новый dispatch). Без числа вызов остаётся отчётом даже с `--apply`. Ноль останавливает вызов до следующей попытки. Finalize уже поставленного dispatch, `batch.settle`, допуск анализа и `review.assign` попытку не тратят.
+
+Применённый шаг — одна receipt уже существующей команды. Она снова проверяется на переходе. Повтор того же envelope возвращает ту же receipt. Второй вызов контроллера видит новую историю и тот же переход не повторяет: второе назначение того же review не создаётся, `unknown` и failed попытка не запускаются снова.
+
+Допуск анализа требует caller-declared `--analyst` и `--reviewer`, потому что до записи анализа этих id в истории нет. Назначение берёт reviewer из уже допущенного анализа. Иной `--reviewer` отвергается без записи.
+
+Остановки (`stop` в JSON, код выхода 0): `paper_candidate`, `open_veto`, `open_obligation`, `human_scientific_input`, `budget_exhausted`, `missing_budget`, `blocked`. Если `paper_candidate` держится на synthetic fixture approval, причина это говорит, а `scientific_validity` в отчёте остаётся `not_assessed`. Контроллер не вызывает модель, не отправляет review, не закрывает obligation, не повышает outcome и не собирает paper. Запуск — trusted local runner этого пользователя ОС, без sandbox. Подробности — [ADR 0020](decisions/0020-research-cycle-controller.md).
 
 ## Model proposal commands v1
 

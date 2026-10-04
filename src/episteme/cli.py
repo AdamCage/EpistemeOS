@@ -96,6 +96,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation.add_argument("--root", type=Path, required=True)
     execution_locked.add_arguments(execution_ops)
     reproduction.add_arguments(subcommands)
+    cycle = subcommands.add_parser(
+        "cycle", help="Report or apply one already-legal mechanical step; stop for a scientific decision")
+    cycle_ops = cycle.add_subparsers(dest="operation", required=True)
+    cycle_step = cycle_ops.add_parser("step", help="One step from persisted history; the caller does not name it")
+    cycle_subject = cycle_step.add_mutually_exclusive_group(required=True)
+    cycle_subject.add_argument("--study", help="Persisted study id; the controller finds the frontier")
+    cycle_subject.add_argument("--claim", help="Persisted claim id; the controller finds the frontier")
+    cycle_step.add_argument("--apply", action="store_true",
+                            help="Persist at most one already-legal command; omit to report only")
+    cycle_step.add_argument("--budget", type=int, default=None,
+                            help="Cap on newly executed attempts this invocation; omit to report only")
+    cycle_step.add_argument("--analyst", type=_actor_id,
+                            help="Caller-declared analyst id, required only to admit an analysis")
+    cycle_step.add_argument("--reviewer", type=_actor_id,
+                            help="Caller-declared reviewer id for analysis admission; assignment uses the recorded one")
+    cycle_step.add_argument("--root", type=Path, required=True)
     batches = subcommands.add_parser("batch", help="Resume a frozen local attempt roster; no scientific approval")
     batch_ops = batches.add_subparsers(dest="operation", required=True)
     for name in ("status", "advance"):
@@ -221,6 +237,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 with _opened(args.root, read_only=True) as store:
                     result = verify(store)
                 status = 0 if result["status"] == "matched" else 1
+        elif args.command == "cycle":
+            from .cycle import cycle_step
+            if not (args.root / "state.sqlite3").is_file():
+                raise ValueError("existing research state is required")
+            # A missing budget is a report even with --apply, so the store stays read-only.
+            report_only = (not args.apply) or args.budget is None
+            with _opened(args.root, read_only=report_only) as store:
+                result = cycle_step(store, study=args.study, claim=args.claim, apply=args.apply,
+                                    budget=args.budget, analyst=args.analyst, reviewer=args.reviewer)
+            status = 0
         elif args.command == "batch":
             from .batch import batch_state
             from .batch_controller import advance_batch
