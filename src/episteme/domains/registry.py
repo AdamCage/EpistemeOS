@@ -1,22 +1,16 @@
-"""Explicit DomainPack allowlist and pinning of complete pack code (ADR 0016).
+"""Explicit DomainPack allowlist and pinning of complete pack code (ADR 0016, ADR 0024).
 
 Adding a pack is a reviewed change of ``PACKS``; there is no entry-point or
-directory discovery. ``load_pack`` hashes every file of the pack directory and
-executes exactly those bytes under a private module name, so the code that runs
-is the code that ``pack_code_digest`` identifies.
-
-A pack remains trusted local Python in the kernel process. The manifest detects
-accidental drift and wrong versions; it does not detect malicious code, a
-substituted interpreter or standard library, or reads outside the pack contract.
+directory discovery. ``load_pack`` hashes every file of the pack directory.
+Those bytes are the bytes a hook subprocess executes. This process does not
+exec them. The static import check remains a heuristic, not a security boundary.
+A same-user subprocess is not a sandbox.
 """
 
 from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-import importlib
-import importlib.abc
-import importlib.machinery
 import importlib.util
 from pathlib import Path
 import re
@@ -180,45 +174,6 @@ def import_violations(files: Mapping[str, bytes]) -> list[str]:
     return violations
 
 
-class _Loader(importlib.abc.Loader):
-    def __init__(self, files: Mapping[str, bytes], root: Path):
-        self.files, self.root = files, root
-
-    def create_module(self, spec: importlib.machinery.ModuleSpec) -> None:
-        return None
-
-    def exec_module(self, module: ModuleType) -> None:
-        relative = module.__spec__.loader_state  # type: ignore[union-attr]
-        code = compile(self.files[relative], str(self.root / relative), "exec", dont_inherit=True)
-        exec(code, module.__dict__)
-
-
-class _Finder(importlib.abc.MetaPathFinder):
-    """Serve one private package from in-memory hashed bytes, never from disk."""
-
-    def __init__(self, name: str, files: Mapping[str, bytes], root: Path):
-        self.name, self.files, self.root = name, files, root
-        self.loader = _Loader(files, root)
-
-    def find_spec(self, fullname: str, path: Any = None, target: Any = None
-                  ) -> importlib.machinery.ModuleSpec | None:
-        if fullname != self.name and not fullname.startswith(self.name + "."):
-            return None
-        relative = fullname[len(self.name) + 1:].replace(".", "/") if fullname != self.name else ""
-        candidates = ["__init__.py"] if not relative else [f"{relative}.py", f"{relative}/__init__.py"]
-        for candidate in candidates:
-            if candidate in self.files:
-                package = candidate.endswith("__init__.py")
-                spec = importlib.machinery.ModuleSpec(
-                    fullname, self.loader, origin=str(self.root / candidate),
-                    loader_state=candidate, is_package=package)
-                spec.has_location = True
-                if package:
-                    spec.submodule_search_locations = []
-                return spec
-        return None
-
-
 @dataclass(frozen=True)
 class LoadedPack:
     """A pack executed from exactly the bytes listed in ``code_manifest``."""
@@ -236,9 +191,12 @@ class LoadedPack:
         return self.manifest.pack_version
 
     def hook(self, name: str) -> Callable[..., Any]:
-        _require(name in HOOKS or (name == CAPTURE_HOOK and self.manifest.capture),
+        _require(name in HOOKS or (name == CAPTURE_HOOK and self.manifest.capture)
+                 or name in {"proposal_schema", "proposal_attempts"},
                  f"pack {self.pack_id} has no hook {name}")
-        return getattr(self.module, name)
+        function = getattr(self.module, name, None)
+        _require(callable(function), f"pack {self.pack_id} has no hook {name}")
+        return function
 
     def manifest_json(self) -> dict[str, Any]:
         return self.manifest.to_dict()
@@ -259,8 +217,19 @@ def _package_root(module_name: str) -> Path:
     return Path(next(iter(spec.submodule_search_locations))).resolve()
 
 
+def _bind(files: Mapping[str, bytes], module_name: str, hook_name: str) -> Callable[..., Any]:
+    def call(*args: Any) -> Any:
+        # Imported lazily: this module must stay importable without the worker running.
+        from ..hook_worker import HookFailed, call as run_hook
+        try:
+            return run_hook(files, module_name, hook_name, args)
+        except HookFailed as exc:
+            raise PackError(str(exc)) from exc
+    return call
+
+
 def load_pack(pack_id: str) -> LoadedPack:
-    """Hash the pack directory now and run those bytes; drift yields a new digest."""
+    """Hash the pack directory now. Hook bodies run later, in a subprocess."""
     _require(type(pack_id) is str and _PACK_ID.fullmatch(pack_id) is not None,
              "invalid pack ID")
     _require(pack_id in PACKS, f"pack is not in the explicit registry: {pack_id}")
@@ -277,28 +246,36 @@ def load_pack(pack_id: str) -> LoadedPack:
         _require(not violations, f"pack {pack_id} violates the import contract: "
                  + "; ".join(violations))
         name = f"_episteme_pack_{pack_id}_{key}"
-        if name not in sys.modules:
-            frozen = MappingProxyType(dict(files))
-            sys.meta_path.insert(0, _Finder(name, frozen, root))
-            try:
-                module = importlib.import_module(name)
-            except BaseException:
-                sys.modules.pop(name, None)
-                raise
-        module = sys.modules[name]
-        declared = getattr(module, "MANIFEST", None)
+        from ..hook_worker import HookFailed, probe
         try:
-            parsed = api.PackManifest.from_dict(declared)
-        except ValueError as exc:
+            probed = probe(files, name)
+        except HookFailed as exc:
+            raise PackError(f"pack {pack_id} failed to load: {exc}") from exc
+        try:
+            parsed = api.PackManifest.from_dict(probed["manifest"])
+        except (ValueError, KeyError) as exc:
             raise PackError(f"pack {pack_id} has an invalid manifest: {exc}") from exc
         _require(parsed.pack_id == pack_id, "pack manifest ID differs from its registry key")
-        missing = [hook for hook in HOOKS if not callable(getattr(module, hook, None))]
+        present = set(probed.get("hooks") or [])
+        missing = [hook for hook in HOOKS if hook not in present]
         _require(not missing, f"pack {pack_id} lacks hooks: {', '.join(missing)}")
-        _require(callable(getattr(module, CAPTURE_HOOK, None)) == parsed.capture,
+        _require(bool(probed.get("capture")) == parsed.capture,
                  "pack capture hook must exist exactly when its manifest declares capture")
+        module = ModuleType(name)
+        module.__file__ = str(root / "__init__.py")
+        module.PACK_ID = parsed.pack_id
+        frozen_files = MappingProxyType(dict(files))
+        for hook in HOOKS:
+            setattr(module, hook, _bind(frozen_files, name, hook))
+        if parsed.capture:
+            setattr(module, CAPTURE_HOOK, _bind(frozen_files, name, CAPTURE_HOOK))
+        if probed.get("proposal_schema"):
+            module.proposal_schema = _bind(frozen_files, name, "proposal_schema")
+        if probed.get("proposal_attempts"):
+            module.proposal_attempts = _bind(frozen_files, name, "proposal_attempts")
         loaded = LoadedPack(pack_id=pack_id, manifest=parsed,
                             code_manifest=api.freeze(manifest), pack_code_digest=key,
-                            files=MappingProxyType(dict(files)), module=module, root=root)
+                            files=frozen_files, module=module, root=root)
         _LOADED[pack_id] = loaded
         return loaded
 

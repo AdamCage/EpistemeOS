@@ -115,18 +115,23 @@ def load_proposal_binding(store: Store, key: str, *, live: bool) -> dict[str, An
     bundle = _bundle(store, binding["capture"], pack_id=binding["pack_id"],
                      pack_version=binding["pack_version"], require_capture=False)
     if live:
-        loaded = registry.load_pack(binding["pack_id"])
-        loaded.require_pin(pack_id=binding["pack_id"], pack_version=binding["pack_version"],
-                           pack_code_digest=binding["pack_code_digest"])
-        live_catalog = loaded.hook("describe")()
-        require(type(live_catalog) is api.ParameterCatalog and live_catalog.digest() == binding["catalog"],
-                "pack catalog changed since the proposal binding was frozen")
-        require(canonical(_schema_of(loaded, live_catalog)) == store.read(binding["proposal_schema"]),
-                "pack proposal schema changed since the binding was frozen")
-        if bundle is not None:
-            require(loaded.manifest.capture, "pack does not capture external sources")
-        require(_attempts(loaded, host, bundle) == attempts,
-                "pack proposal attempt bound changed since the binding was frozen")
+        # Inside a command the hooks already ran, and the write lock must not
+        # stay open while a child process runs. Re-check the head and the digest.
+        if store._command_context is not None:
+            domain_packs.require_hook_snapshot(store, binding["pack_code_digest"])
+        else:
+            loaded = registry.load_pack(binding["pack_id"])
+            loaded.require_pin(pack_id=binding["pack_id"], pack_version=binding["pack_version"],
+                               pack_code_digest=binding["pack_code_digest"])
+            live_catalog = loaded.hook("describe")()
+            require(type(live_catalog) is api.ParameterCatalog and live_catalog.digest() == binding["catalog"],
+                    "pack catalog changed since the proposal binding was frozen")
+            require(canonical(_schema_of(loaded, live_catalog)) == store.read(binding["proposal_schema"]),
+                    "pack proposal schema changed since the binding was frozen")
+            if bundle is not None:
+                require(loaded.manifest.capture, "pack does not capture external sources")
+            require(_attempts(loaded, host, bundle) == attempts,
+                    "pack proposal attempt bound changed since the binding was frozen")
     return binding
 
 

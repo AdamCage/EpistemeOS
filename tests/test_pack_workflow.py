@@ -171,7 +171,7 @@ class PackWorkflowTests(unittest.TestCase):
                           p["closure_level"], p["pack_trust"], p["hook_isolation"],
                           p["pack_pinning"], p["hidden_inputs"], p["scientific_validity"]),
                          ("rng_seed", "per_roster_unit", "trusted_local_python_v1",
-                          "interpreter_fingerprint", "trusted_local_code", "in_process",
+                          "interpreter_fingerprint", "trusted_local_code", "subprocess",
                           "pack_code_manifest", ["protocol_data"], "not_assessed"))
         self.assertEqual(json.loads(store.read(p["pack_code_digest"])), api.thaw(loaded.code_manifest))
         for path, data in loaded.files.items():

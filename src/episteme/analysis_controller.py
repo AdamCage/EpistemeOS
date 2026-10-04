@@ -249,8 +249,8 @@ def advance_pack_analysis(store: Store, batch: str, *, planner: Actor, analyst: 
     """Pack path: hooks run outside the write transaction, then two persisted decisions.
 
     The pack is taken from the protocol's pack binding, never from the caller.
-    Hooks are trusted local code in this process; the kernel re-verifies their
-    envelopes, the pinned code and the claim-strength ceiling inside the command.
+    Hooks run in a subprocess before the write transaction. The command admits
+    those bytes only if the chain head and pack digest still match.
     """
     from .domain_packs import analysis_inputs, pack_analyses, require_live_pack, run_hooks
     require(analyst.role == "analyst", "batch analysis controller needs an analyst")

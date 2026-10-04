@@ -21,8 +21,8 @@ from types import MappingProxyType
 from typing import Any, Callable, ClassVar, Mapping
 
 from .. import environment_closure as closure
+from ..codec import canonical, digest
 from ..protocols import StatisticalDesign
-from ..store import canonical, digest
 
 
 CONTRACT_VERSION = 1

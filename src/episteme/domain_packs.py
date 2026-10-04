@@ -8,11 +8,15 @@ batch of such a protocol. It re-verifies the pinned code, every envelope, the
 fields the kernel computes itself and the claim-strength ceiling, and rejects a
 proposal above the ceiling instead of downgrading it.
 
-Packs are trusted local Python executed in this process; events record
-``pack_trust`` and ``hook_isolation`` accordingly. Pinning detects drift and a
-wrong version, not malicious code. Historical replay is structural and never
-imports pack code; ``pack verify`` re-runs hooks separately. Mechanical
-passage is not scientific review: ``scientific_validity`` stays not_assessed.
+Pack hooks run in a fresh subprocess (ADR 0024). The child receives pinned
+source bytes, explicit JSON inputs and allowlisted artifact bytes. It does
+not receive a Store, a SQLite connection, the database path or the parent
+environment. A same-user subprocess is not a sandbox. Events record
+``pack_trust=trusted_local_code`` and ``hook_isolation=subprocess``. Pinning
+detects drift and a wrong version. The static import check remains a
+heuristic. Historical replay is structural and never imports pack code;
+``pack verify`` re-runs hooks in the subprocess. Mechanical passage is not
+scientific review: ``scientific_validity`` stays not_assessed.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from .domains import api, registry
 from .kernel import Actor, Kernel, independent_of, require
 from .planning import binding_for
 from .protocols import StatisticalDesign
-from .store import Store, canonical, digest
+from .store import ConflictError, IntegrityError, Store, canonical, digest
 
 Plan = api.ExecutionPlan | api.ExecutionPlanV2
 
@@ -34,7 +38,10 @@ BINDING = "pack_binding"
 ANALYSIS = "pack_analysis"
 KINDS = {BINDING, ANALYSIS}
 PACK_TRUST = "trusted_local_code"
-HOOK_ISOLATION = "in_process"
+HOOK_ISOLATION = "subprocess"
+# Tests set this to append between hook computation and the write transaction.
+before_pack_commit: Any = None
+_ZERO_HEAD = "0" * 64
 PINNING = "pack_code_manifest"
 IMPLEMENTED_PROFILES = {"trusted_local_python_v1", api.LOCKED_PROFILE}
 MODE_ORDER = {"descriptive": 0, "exploratory": 1, "confirmatory": 2}
@@ -77,13 +84,48 @@ REASON_CONFIRMATORY = ("confirmatory inference needs a complete report, no devia
 
 
 def _call(loaded: registry.LoadedPack, name: str, *args: Any) -> Any:
-    """Run one pack hook; any failure becomes a PackError naming the hook."""
+    """Run one pack hook in the subprocess; any failure names the hook."""
     try:
         return loaded.hook(name)(*args)
     except registry.PackError:
         raise
     except Exception as exc:
         raise registry.PackError(f"pack {loaded.pack_id} hook {name} failed: {exc}") from exc
+
+
+def _head(history: list[dict[str, Any]]) -> str:
+    return history[-1]["hash"] if history else _ZERO_HEAD
+
+
+def hook_snapshot(store: Store, pack_code_digest: str, **extra: Any) -> dict[str, Any]:
+    """The chain head a hook result was computed from. Taken before the child runs."""
+    history = store.events()
+    return {"revision": len(history), "head": _head(history),
+            "pack_code_digest": pack_code_digest, **extra}
+
+
+def require_hook_snapshot(store: Store, pack_code_digest: str) -> dict[str, Any]:
+    """Re-check the head and the pack digest. Do not recompute hooks here."""
+    snap = getattr(store, "_hook_snapshot", None)
+    history = store.events()
+    revision = snap.get("revision") if type(snap) is dict else None
+    prefix_ok = (type(revision) is int and 0 <= revision <= len(history)
+                 and (revision == 0 or history[revision - 1]["hash"] == snap.get("head")))
+    # A longer chain inside this command is its own append. Another prefix means
+    # a concurrent writer, and the hook result is discarded.
+    if type(snap) is not dict or not prefix_ok or (
+            len(history) != revision and store._command_context is None):
+        raise ConflictError("research state changed while pack hooks ran; retry")
+    if snap.get("pack_code_digest") != pack_code_digest:
+        raise ConflictError("pack code changed while pack hooks ran; retry")
+    loaded = snap.get("loaded")
+    if loaded is None:
+        raise IntegrityError("pack hook result is missing its loaded pack")
+    current = registry.code_digest(registry.code_manifest(
+        loaded.pack_id, registry.pack_files(loaded.root)))
+    if current != pack_code_digest:
+        raise ConflictError("pack code changed while pack hooks ran; retry")
+    return snap
 
 
 def _object(store: Store, key: str, label: str) -> Any:
@@ -376,15 +418,8 @@ def _preceding_checks(history: list[dict[str, Any]], explanation_set: str) -> No
     Kernel._get(history, explanation_set, "explanation_set")
 
 
-def admit_binding(store: Store, actor: Actor, request: dict[str, Any]) -> dict[str, str]:
-    """Compile pinned pack code and append a protocol plus its pack binding.
-
-    The caller owns the command receipt. ``pack.preregister`` uses this alone;
-    a pack-scoped model application appends the search node and application
-    in the same transaction. Replay does not call this function.
-    """
-    require(store._command_context is not None and actor.role == "planner",
-            "pack preregistration requires a planner CommandService transaction")
+def _compile_snapshot(store: Store, request: dict[str, Any]) -> dict[str, Any]:
+    """Run preregistration hooks outside any write transaction."""
     _validate_request(request)
     history = store.events()
     pack_bindings(store, history)
@@ -392,7 +427,52 @@ def admit_binding(store: Store, actor: Actor, request: dict[str, Any]) -> dict[s
     loaded = registry.load_pack(request["pack_id"])
     loaded.require_pin(pack_id=request["pack_id"], pack_version=request["pack_version"],
                        pack_code_digest=request["pack_code_digest"])
+    # Re-read so the payload and the snapshot describe the same head. Hooks run after this.
+    history = store.events()
+    snap = hook_snapshot(store, request["pack_code_digest"], loaded=loaded, request=request)
+    if snap["revision"] != len(history) or snap["head"] != _head(history):
+        raise ConflictError("research state changed while pack hooks ran; retry")
     compiled = _compile(store, loaded, request["parameters"], request["host_inputs"], request["capture"])
+    _check_compilation(store, loaded.manifest, compiled["catalog"], compiled["draft"],
+                       compiled["plan"], compiled["capture"], request["environment"])
+    # The kernel reads program and input bytes while checking exposure. They are
+    # not events. Putting them before that check does not open a write transaction.
+    for key, data in compiled["plan"].blobs().items():
+        require(store.put(data) == key, "execution plan bytes CAS digest mismatch")
+    predicted = _protocol_payload(history, request["explanation_set"], compiled["draft"],
+                                  compiled["plan"], request["environment"])
+    # Kernel exposure checks run before the pack's validate_protocol, as they did
+    # when preregistration wrote the protocol first. The pack can only add a rejection.
+    observer = Kernel(store, Actor("pack-binding-validator", "observer"))
+    observer._validate_planning_protocol(history, predicted)
+    observer._validate_typed_protocol(history, predicted)
+    # validate_protocol runs before the protocol event exists. The hash is not the
+    # future event hash; current packs read the payload, not this placeholder.
+    _call(loaded, "validate_protocol", _protocol_context(
+        compiled["parameters"], compiled["draft"], compiled["plan"], compiled["capture"],
+        {"payload": predicted, "hash": _ZERO_HEAD}))
+    snap["compiled"] = compiled
+    return snap
+
+
+def admit_binding(store: Store, actor: Actor, request: dict[str, Any]) -> dict[str, str]:
+    """Append a protocol plus its pack binding from hooks already computed.
+
+    The caller owns the command receipt. ``pack.preregister`` uses this alone;
+    a pack-scoped model application appends the search node and application
+    in the same transaction. Replay does not call this function. Hooks are not
+    run here: the write transaction must not stay open while the child runs.
+    """
+    require(store._command_context is not None and actor.role == "planner",
+            "pack preregistration requires a planner CommandService transaction")
+    _validate_request(request)
+    snap = require_hook_snapshot(store, request["pack_code_digest"])
+    if canonical(snap["request"]) != canonical(request):
+        raise IntegrityError("prepared pack request does not match the command")
+    loaded, compiled = snap["loaded"], snap["compiled"]
+    history = store.events()
+    pack_bindings(store, history)
+    _preceding_checks(history, request["explanation_set"])
     _check_compilation(store, loaded.manifest, compiled["catalog"], compiled["draft"],
                        compiled["plan"], compiled["capture"], request["environment"])
     for data in loaded.files.values():
@@ -428,8 +508,6 @@ def admit_binding(store: Store, actor: Actor, request: dict[str, Any]) -> dict[s
         reanalysis_environment=request["environment"], outputs=frozen["outputs"],
         wall_seconds=frozen["wall_seconds"], max_output_bytes=frozen["max_output_bytes"],
         required_capabilities=frozen["required_capabilities"]), protocol["payload"])
-    _call(loaded, "validate_protocol", _protocol_context(
-        compiled["parameters"], draft, plan, compiled["capture"], protocol))
     payload = _binding_payload(protocol=protocol, study_id=store._command_context["study_id"],
                                request=request, keys=keys, manifest=loaded.manifest,
                                parameters=compiled["parameters"], draft=draft, plan=plan)
@@ -621,11 +699,14 @@ def _protocol_context(parameters: Any, draft: api.ProtocolDraft, plan: Plan,
 
 
 def require_live_pack(store: Store, binding: dict[str, Any]) -> registry.LoadedPack:
-    """Load the pinned pack now and re-run its pure protocol validation.
+    """Load the pinned pack and re-run protocol validation outside a write transaction.
 
-    Host inputs and captured bytes are not passed: they stay with compilation.
+    Inside a command the validation already ran before the lock; this only
+    re-checks the head and the pack digest. Host inputs stay with compilation.
     """
     p = binding["payload"]
+    if store._command_context is not None:
+        return require_hook_snapshot(store, p["pack_code_digest"])["loaded"]
     loaded = registry.load_pack(p["pack_id"])
     loaded.require_pin(pack_id=p["pack_id"], pack_version=p["pack_version"],
                        pack_code_digest=p["pack_code_digest"])
@@ -1055,14 +1136,15 @@ class PackAnalysis:
                        recomputations=recomputations, report=report,
                        statistical_report=statistical_report, reviewer_actor=reviewer_actor)
         history = self.store.events()
+        snap = require_hook_snapshot(self.store, request["pack_code_digest"])
         prior = _analysis_index(self.store, history)
         admitted = _admission(self.store, history, request, self.store._command_context["study_id"])
         require(not any(event["payload"]["task_id"] == admitted["task_id"] for event in prior.values()),
                 "pack analysis task already applied")
-        # The live pack must still be exactly the pinned code (decision 3 of ADR 0016),
-        # and the admitted envelopes must be what that code computes on this snapshot.
-        loaded = require_live_pack(self.store, admitted["facts"]["binding"])
-        rerun = run_hooks(loaded, *_hook_inputs(self.store, admitted["facts"]))
+        # Hooks already ran against snap. Re-checking the head above is the retry
+        # boundary; do not start the child again while this transaction is open.
+        require_live_pack(self.store, admitted["facts"]["binding"])
+        rerun = snap["hooks"]
         require(all(canonical(rerun[name]) == canonical(request[name]) for name in
                     ("checks", "recomputations", "report", "statistical_report")),
                 "submitted analysis differs from what the pinned pack computes on this snapshot")
@@ -1107,6 +1189,148 @@ def store_capture(store: Store, pack_id: str, source: Any) -> dict[str, Any]:
                 pack_code_digest=loaded.pack_code_digest, source_label=bundle.source_label,
                 files=len(bundle.files), audit=api.thaw(bundle.audit), events_written=0,
                 meaning="captured bytes stored in CAS without events; bind them with pack.preregister")
+
+
+def _prepare_analyse(store: Store, request: dict[str, Any], study_id: str) -> dict[str, Any]:
+    """Run analysis hooks before the write transaction and keep the head they used."""
+    history = store.events()
+    admitted = _admission(store, history, request, study_id)
+    facts = admitted["facts"]
+    pin = facts["binding"]["payload"]
+    loaded = registry.load_pack(pin["pack_id"])
+    loaded.require_pin(pack_id=pin["pack_id"], pack_version=pin["pack_version"],
+                       pack_code_digest=pin["pack_code_digest"])
+    snap = hook_snapshot(store, pin["pack_code_digest"], loaded=loaded)
+    pinned = facts["pinned"]
+    _call(loaded, "validate_protocol", _protocol_context(
+        pin["parameters"], pinned["draft"], pinned["plan"], pinned["capture"], facts["protocol"]))
+    hooks = run_hooks(loaded, *_hook_inputs(store, facts))
+    require(all(canonical(hooks[name]) == canonical(request[name]) for name in
+                ("checks", "recomputations", "report", "statistical_report")),
+            "submitted analysis differs from what the pinned pack computes on this snapshot")
+    snap["hooks"] = hooks
+    return snap
+
+
+def _prepare_batch_plan(store: Store, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate a pack protocol before ``batch.plan`` takes the write lock."""
+    history = store.events()
+    selection = payload.get("selection")
+    if type(selection) is not str:
+        return None
+    try:
+        choice = Kernel._get(history, selection, "search_selection")
+        node = Kernel._get(history, choice["payload"]["node"], "experiment_node")
+        protocol = Kernel._get(history, node["payload"]["protocol"], "protocol")
+    except (ValueError, KeyError):
+        return None
+    binding = pack_bindings(store, history).get(protocol["id"])
+    if binding is None:
+        return None
+    return _validate_bound_protocol(store, binding, protocol)
+
+
+def _prepare_pack_request(store: Store, payload: dict[str, Any]) -> dict[str, Any]:
+    """Run schema-3 proposal hooks before ``agent.request_pack_experiment`` locks."""
+    from . import pack_proposals
+    frozen = pack_proposals.load_proposal_binding(store, payload["proposal_binding"], live=False)
+    loaded = registry.load_pack(frozen["pack_id"])
+    loaded.require_pin(pack_id=frozen["pack_id"], pack_version=frozen["pack_version"],
+                       pack_code_digest=frozen["pack_code_digest"])
+    snap = hook_snapshot(store, frozen["pack_code_digest"], loaded=loaded)
+    pack_proposals.load_proposal_binding(store, payload["proposal_binding"], live=True)
+    pack_proposals.context(store, store.events(), budget=payload["budget"],
+                           explanation_set=payload["explanation_set"], tree=payload["tree"],
+                           proposal_binding=payload["proposal_binding"], current=True, live=True)
+    return snap
+
+
+def _validate_bound_protocol(store: Store, binding: dict[str, Any],
+                            protocol: dict[str, Any]) -> dict[str, Any]:
+    p = binding["payload"]
+    loaded = registry.load_pack(p["pack_id"])
+    loaded.require_pin(pack_id=p["pack_id"], pack_version=p["pack_version"],
+                       pack_code_digest=p["pack_code_digest"])
+    snap = hook_snapshot(store, p["pack_code_digest"], loaded=loaded)
+    pinned = _pinned(store, p)
+    _call(loaded, "validate_protocol", _protocol_context(
+        p["parameters"], pinned["draft"], pinned["plan"], pinned["capture"], protocol))
+    return snap
+
+
+def _prepare_proposal_batch(store: Store, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate the pack a ``proposal.prepare_next`` is about to batch.
+
+    ``select_next`` appends inside that command, so the check has to use the
+    decision the search would record, not a selection id that does not exist yet.
+    """
+    from .search import Search
+    history = store.events()
+    tree = payload.get("tree")
+    if type(tree) is not str:
+        return None
+    try:
+        decision = Search._decision(history, tree)
+        protocol_id = decision.get("protocol")
+        if type(protocol_id) is not str:
+            return None
+        protocol = Kernel._get(history, protocol_id, "protocol")
+    except (ValueError, KeyError):
+        return None
+    binding = pack_bindings(store, history).get(protocol["id"])
+    if binding is None:
+        return None
+    return _validate_bound_protocol(store, binding, protocol)
+
+
+def _prepare_dispatch(store: Store, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Re-check a schema-3 pack before ``agent.dispatch`` takes the write lock."""
+    from . import pack_proposals
+    history = store.events()
+    request_id = payload.get("request")
+    if type(request_id) is not str:
+        return None
+    try:
+        event = Kernel._get(history, request_id, "agent_request")
+    except (ValueError, KeyError):
+        return None
+    p = event["payload"]
+    if p.get("schema_version") != 3:
+        return None
+    frozen = pack_proposals.load_proposal_binding(store, p["proposal_binding"], live=False)
+    loaded = registry.load_pack(frozen["pack_id"])
+    loaded.require_pin(pack_id=frozen["pack_id"], pack_version=frozen["pack_version"],
+                       pack_code_digest=frozen["pack_code_digest"])
+    snap = hook_snapshot(store, frozen["pack_code_digest"], loaded=loaded)
+    pack_proposals.context(store, history, budget=p["budget"], explanation_set=p["explanation_set"],
+                           tree=p["tree"], proposal_binding=p["proposal_binding"],
+                           current=True, live=True)
+    return snap
+
+
+def prepare_for_command(store: Store, action: str, payload: dict[str, Any],
+                        context: dict[str, Any]) -> dict[str, Any] | None:
+    """Compute pack hooks for one command. Returns None when the command has none.
+
+    The caller starts the write transaction only after this returns. A moved
+    chain head then fails the command instead of recomputing inside the lock.
+    """
+    if action == "pack.preregister":
+        return _compile_snapshot(store, payload)
+    if action == "pack.analyse":
+        return _prepare_analyse(store, payload, context["study_id"])
+    if action == "batch.plan":
+        return _prepare_batch_plan(store, payload)
+    if action == "proposal.prepare_next":
+        return _prepare_proposal_batch(store, payload)
+    if action == "agent.request_pack_experiment":
+        return _prepare_pack_request(store, payload)
+    if action == "agent.dispatch":
+        return _prepare_dispatch(store, payload)
+    if action == "agent.apply_experiment":
+        from .agents import prepare_pack_application
+        return prepare_pack_application(store, payload)
+    return None
 
 
 VERIFIED_PARTS = ("catalog", "protocol_draft", "execution_plan", "validate_protocol",
@@ -1214,8 +1438,8 @@ def run_hooks(loaded: registry.LoadedPack, context: api.AnalysisContext, cas: ap
               ) -> dict[str, Any]:
     """Run the analysis hooks over one CasView; returns their command envelopes.
 
-    The controller calls this outside the write transaction; ``pack.analyse``
-    calls it again on the same snapshot and admits only identical bytes.
+    Callers run this before the write transaction. ``pack.analyse`` admits the
+    bytes from that call and does not start the child again inside the lock.
     """
     checks = _call(loaded, "validate_outputs", context, cas)
     require(type(checks) in (list, tuple) and all(type(check) is api.OutputCheck for check in checks),

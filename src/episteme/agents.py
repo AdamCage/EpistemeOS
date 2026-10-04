@@ -530,6 +530,38 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
     return states
 
 
+def prepare_pack_application(store: Store, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Run schema-3 pack hooks before ``agent.apply_experiment`` takes the write lock.
+
+    Schema 2 has no pack hooks. A missing response is left to the command, which
+    then fails without a prepared compilation.
+    """
+    from .domain_packs import _compile_snapshot
+    history = store.events()
+    try:
+        request_event = _get(history, payload["request"], "agent_request")
+    except (ValueError, KeyError):
+        return None
+    p = request_event["payload"]
+    if p.get("schema_version") != 3:
+        return None
+    state = _index(store, history).get(payload["request"])
+    response = None if state is None else state.get("response")
+    if response is None or response["payload"]["assessment"]["proposal_status"] != "proposed":
+        return None
+    pack_proposals.context(store, history, budget=p["budget"], explanation_set=p["explanation_set"],
+                           tree=p["tree"], proposal_binding=p["proposal_binding"],
+                           current=True, live=True)
+    raw_key = response["payload"]["assessment"]["artifacts"]["proposal"]
+    proposal = _proposal(store, state, store.read(raw_key))
+    experiment = proposal["experiment"]
+    if experiment is None:
+        return None
+    pack_proposals.load_proposal_binding(store, p["proposal_binding"], live=True)
+    return _compile_snapshot(store, pack_proposals.preregister_request(
+        store, p, experiment["parameters"]))
+
+
 class Agents:
     def __init__(self, store: Store, actor: Actor):
         self.store, self.actor = store, actor

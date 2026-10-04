@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections import Counter
 from contextlib import contextmanager
-import hashlib
 import json
 import os
 import re
@@ -28,6 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from .codec import canonical, digest
+
 
 class IntegrityError(ValueError):
     """Stored evidence or the event chain failed verification."""
@@ -35,11 +36,6 @@ class IntegrityError(ValueError):
 
 class ConflictError(ValueError):
     """A stale writer must reload state before retrying its decision."""
-
-
-def canonical(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -62,10 +58,6 @@ def _canonical_json(text: str) -> Any:
     if text != canonical(parsed).decode():
         raise IntegrityError("stored JSON is not canonical")
     return parsed
-
-
-def digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _clone(value: Any) -> Any:

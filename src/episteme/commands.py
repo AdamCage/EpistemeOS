@@ -20,6 +20,7 @@ from .execution import Execution
 from .batch import Batch
 from .batch_analysis import BatchAnalysis
 from .domain_binding import DomainBinding
+from . import domain_packs
 from .domain_packs import PackAnalysis, PackPreregistration
 from .agents import Agents
 from .proposal_execution import ProposalExecution
@@ -323,7 +324,23 @@ explicit default denote the same request within this API version.
             target = target_type(self.store, Actor(context.actor, context.role))
             return handler(target, **payload)
 
+        # Pack hooks run before the write lock. Replay returns the stored result
+        # and does not start a child. Other actions do not prepare hooks.
+        snapshot = None
+        if action in {"pack.preregister", "pack.analyse", "batch.plan", "proposal.prepare_next",
+                      "agent.request_pack_experiment", "agent.dispatch",
+                      "agent.apply_experiment"}:
+            known = any(row["command_id"] == context.command_id for row in self.store.receipts())
+            if not known:
+                snapshot = domain_packs.prepare_for_command(
+                    self.store, action, payload, context.to_dict())
+        self.store._hook_snapshot = snapshot
         try:
-            return self.store.command(context.to_dict(), normalized, invoke)
-        except TypeError as exc:
-            raise ValueError(f"invalid {action} payload: {exc}") from exc
+            if snapshot is not None and domain_packs.before_pack_commit is not None:
+                domain_packs.before_pack_commit()
+            try:
+                return self.store.command(context.to_dict(), normalized, invoke)
+            except TypeError as exc:
+                raise ValueError(f"invalid {action} payload: {exc}") from exc
+        finally:
+            self.store._hook_snapshot = None
