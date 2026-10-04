@@ -375,25 +375,29 @@ class _Projection:
                                       "explanation_set": "explanation_set"},
             }[kind]
             version = p.get("schema_version")
-            if kind == "agent_request" and version == 2:
+            if kind == "agent_request" and version in {2, 3}:
                 fields.update(explanation_set="explanation_set", tree="search_tree")
-            elif kind == "agent_application" and version == 2:
+            elif kind == "agent_application" and version in {2, 3}:
                 fields = {"request": "agent_request", "response": "agent_response",
                           "protocol": "protocol", "experiment_node": "experiment_node"}
+                if version == 3:
+                    fields["pack_binding"] = "pack_binding"
             for field, target_kind in fields.items():
                 referenced = self.ref(p[field], target_kind, Relation.AGENT_REFERENCE, field)
                 if field + "_hash" in p:
                     self.hash_ref(referenced, p[field + "_hash"], field + "_hash")
             if kind == "agent_application":
-                if version == 2:
+                if version in {2, 3}:
                     request = self.events[p["request"]]
                     protocol = self.events[p["protocol"]]
                     node = self.events[p["experiment_node"]]
-                    if (request["payload"].get("schema_version") != 2
+                    if (request["payload"].get("schema_version") != version
                             or protocol["payload"].get("planning", {}).get("explanation_set")
                             != request["payload"]["explanation_set"]
                             or node["payload"].get("tree") != request["payload"]["tree"]
-                            or node["payload"].get("protocol") != p["protocol"]):
+                            or node["payload"].get("protocol") != p["protocol"]
+                            or (version == 3 and self.events[p["pack_binding"]]["payload"].get("protocol")
+                                != p["protocol"])):
                         self.fail("agent experiment application differs from its frozen request")
                     for field in ("protocol", "experiment_node"):
                         self.ref(p["response"], "agent_response", Relation.AGENT_GENERATED,

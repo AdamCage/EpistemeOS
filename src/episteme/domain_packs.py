@@ -376,6 +376,67 @@ def _preceding_checks(history: list[dict[str, Any]], explanation_set: str) -> No
     Kernel._get(history, explanation_set, "explanation_set")
 
 
+def admit_binding(store: Store, actor: Actor, request: dict[str, Any]) -> dict[str, str]:
+    """Compile pinned pack code and append a protocol plus its pack binding.
+
+    The caller owns the command receipt. ``pack.preregister`` uses this alone;
+    a pack-scoped model application appends the search node and application
+    in the same transaction. Replay does not call this function.
+    """
+    require(store._command_context is not None and actor.role == "planner",
+            "pack preregistration requires a planner CommandService transaction")
+    _validate_request(request)
+    history = store.events()
+    pack_bindings(store, history)
+    _preceding_checks(history, request["explanation_set"])
+    loaded = registry.load_pack(request["pack_id"])
+    loaded.require_pin(pack_id=request["pack_id"], pack_version=request["pack_version"],
+                       pack_code_digest=request["pack_code_digest"])
+    compiled = _compile(store, loaded, request["parameters"], request["host_inputs"], request["capture"])
+    _check_compilation(store, loaded.manifest, compiled["catalog"], compiled["draft"],
+                       compiled["plan"], compiled["capture"], request["environment"])
+    for data in loaded.files.values():
+        store.put(data)
+    require(store.put_json(api.thaw(loaded.code_manifest)) == request["pack_code_digest"],
+            "pack code manifest CAS digest mismatch")
+    keys = dict(pack_manifest=store.put(loaded.manifest.canonical()),
+                catalog=store.put(compiled["catalog"].canonical()),
+                host_inputs=store.put_json(request["host_inputs"]),
+                protocol_draft=store.put(compiled["draft"].canonical()))
+    for key, data in compiled["plan"].blobs().items():
+        require(store.put(data) == key, "execution plan bytes CAS digest mismatch")
+    keys["execution_plan"] = store.put_json(compiled["plan"].to_dict())
+    draft, plan = compiled["draft"], compiled["plan"]
+    frozen = plan.to_dict()
+    kernel = Kernel(store, actor)
+    protocol_id = kernel._preregister_for_set(
+        pack_path=True,
+        explanation_set=request["explanation_set"], design=draft.design, metric=draft.metric,
+        analysis_plan=draft.analysis_plan, stopping_rule=draft.stopping_rule,
+        seeds=list(draft.roster), run_limit=draft.run_limit,
+        implementation=frozen["primary_program"]["sha256"], environment=request["environment"],
+        data=frozen["input"]["sha256"], replication_tolerance=draft.replication_tolerance,
+        statistical_design=api.thaw(draft.statistical_design), seen_data=list(draft.seen_data))
+    updated = store.events()
+    protocol = Kernel._get(updated, protocol_id, "protocol")
+    require(protocol["payload"] == _protocol_payload(history, request["explanation_set"], draft, plan,
+                                                     request["environment"]),
+            "recorded protocol differs from the pack compilation")
+    from .batch import _recipe as validate_batch_recipe
+    validate_batch_recipe(store, dict(
+        reanalysis_implementation=frozen["reanalysis_program"]["sha256"],
+        reanalysis_environment=request["environment"], outputs=frozen["outputs"],
+        wall_seconds=frozen["wall_seconds"], max_output_bytes=frozen["max_output_bytes"],
+        required_capabilities=frozen["required_capabilities"]), protocol["payload"])
+    _call(loaded, "validate_protocol", _protocol_context(
+        compiled["parameters"], draft, plan, compiled["capture"], protocol))
+    payload = _binding_payload(protocol=protocol, study_id=store._command_context["study_id"],
+                               request=request, keys=keys, manifest=loaded.manifest,
+                               parameters=compiled["parameters"], draft=draft, plan=plan)
+    binding = kernel._write(updated, BINDING, payload, {"planner"})
+    return dict(protocol=protocol_id, binding=binding, pack_code_digest=request["pack_code_digest"])
+
+
 def _binding_index(store: Store, history: list[dict[str, Any]], *,
                    receipts: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Structurally replay every pack binding on its historical prefix."""
@@ -384,68 +445,149 @@ def _binding_index(store: Store, history: list[dict[str, Any]], *,
         # Without supplied receipts, skip the costly read for histories without packs.
         # Graph construction passes receipts, so forged pack receipts still fail there.
         return {}
-    relevant = [row for row in (store.receipts() if receipts is None else receipts)
-                if row["request"]["action"] == "pack.preregister"
-                and row["after_revision"] <= len(history)]
+    rows = [row for row in (store.receipts() if receipts is None else receipts)
+            if row["after_revision"] <= len(history)]
     by_protocol: dict[str, dict[str, Any]] = {}
     seen: set[str] = set()
-    for receipt in relevant:
-        context, command = receipt["context"], receipt["request"]
-        require(command["version"] == 1 and context["role"] == "planner",
-                "pack binding needs a planner command")
-        request = command["payload"]
-        _validate_request(request)
-        before = history[:receipt["before_revision"]]
-        created = history[receipt["before_revision"]:receipt["after_revision"]]
-        require(len(created) == 2 and [event["kind"] for event in created] == ["protocol", BINDING]
-                and receipt["event_ids"] == [event["id"] for event in created],
-                "pack binding needs its exact protocol and binding receipt")
-        protocol, event = created
-        require(all((item["actor"], item["role"]) == (context["actor"], "planner") for item in created),
-                "pack binding actor differs from its command")
-        p = event["payload"]
-        require(set(p) == _BINDING_FIELDS, "invalid pack binding fields")
-        pinned = _pinned(store, p)
-        require(pinned["code"]["pack_id"] == request["pack_id"]
-                and p["pack_code_digest"] == request["pack_code_digest"]
-                and canonical(pinned["host"]) == canonical(request["host_inputs"])
-                and p["capture"] == request["capture"],
-                "pack binding differs from its command request")
-        parameters = pinned["catalog"].validate_parameters(request["parameters"])
-        require(p["capture"] is None or (pinned["manifest"].capture
-                                         and pinned["capture"].digest() == p["capture"]),
-                "pack capture differs from its declaration or canonical digest")
-        _check_compilation(store, pinned["manifest"], pinned["catalog"], pinned["draft"],
-                           pinned["plan"], pinned["capture"], request["environment"])
-        expected_protocol = _protocol_payload(before, request["explanation_set"], pinned["draft"],
-                                              pinned["plan"], request["environment"])
-        require(protocol["payload"] == expected_protocol,
-                "pack protocol differs from its pinned compilation")
-        observer = Kernel(store, Actor("pack-binding-validator", "observer"))
-        observer._validate_planning_protocol(before, expected_protocol)
-        observer._validate_typed_protocol(before, expected_protocol)
-        from .batch import _recipe as validate_batch_recipe
-        validate_batch_recipe(store, execution_fields(store, event), expected_protocol)
-        keys = dict(pack_manifest=p["pack_manifest"], catalog=p["catalog"],
-                    host_inputs=p["host_inputs"], protocol_draft=p["protocol_draft"],
-                    execution_plan=p["execution_plan"])
-        expected = _binding_payload(protocol=protocol, study_id=context["study_id"], request=request,
-                                    keys=keys, manifest=pinned["manifest"], parameters=parameters,
-                                    draft=pinned["draft"], plan=pinned["plan"])
-        require(p == expected, "pack binding differs from its frozen command and envelopes")
-        require(digest(pinned["manifest"].canonical()) == p["pack_manifest"]
-                and pinned["catalog"].digest() == p["catalog"]
-                and pinned["draft"].digest() == p["protocol_draft"]
-                and pinned["plan"].digest() == p["execution_plan"],
-                "pack binding envelope digests are not canonical")
-        require(receipt["result"] == dict(protocol=protocol["id"], binding=event["id"],
-                                          pack_code_digest=p["pack_code_digest"]),
-                "pack binding receipt result differs from its events")
-        require(protocol["id"] not in by_protocol, "duplicate pack binding for protocol")
-        by_protocol[protocol["id"]] = event
-        seen.add(event["id"])
+    for receipt in rows:
+        action = receipt["request"]["action"]
+        if action == "pack.preregister":
+            _replay_preregister(store, history, receipt, by_protocol, seen)
+        elif action == "agent.apply_experiment":
+            _replay_model_binding(store, history, receipt, by_protocol, seen)
     require(seen == set(events), "pack binding lacks its original command receipt")
     return by_protocol
+
+
+def _accept_recorded_binding(store: Store, history: list[dict[str, Any]], receipt: dict[str, Any],
+                             *, protocol: dict[str, Any], event: dict[str, Any],
+                             request: dict[str, Any], result: Any,
+                             by_protocol: dict[str, dict[str, Any]], seen: set[str]) -> None:
+    """Structural checks shared by pack.preregister and a pack-scoped model application."""
+    context = receipt["context"]
+    before = history[:receipt["before_revision"]]
+    p = event["payload"]
+    require(set(p) == _BINDING_FIELDS, "invalid pack binding fields")
+    pinned = _pinned(store, p)
+    require(pinned["code"]["pack_id"] == request["pack_id"]
+            and p["pack_code_digest"] == request["pack_code_digest"]
+            and canonical(pinned["host"]) == canonical(request["host_inputs"])
+            and p["capture"] == request["capture"],
+            "pack binding differs from its command request")
+    parameters = pinned["catalog"].validate_parameters(request["parameters"])
+    require(p["capture"] is None or (pinned["manifest"].capture
+                                     and pinned["capture"].digest() == p["capture"]),
+            "pack capture differs from its declaration or canonical digest")
+    _check_compilation(store, pinned["manifest"], pinned["catalog"], pinned["draft"],
+                       pinned["plan"], pinned["capture"], request["environment"])
+    expected_protocol = _protocol_payload(before, request["explanation_set"], pinned["draft"],
+                                          pinned["plan"], request["environment"])
+    require(protocol["payload"] == expected_protocol,
+            "pack protocol differs from its pinned compilation")
+    observer = Kernel(store, Actor("pack-binding-validator", "observer"))
+    observer._validate_planning_protocol(before, expected_protocol)
+    observer._validate_typed_protocol(before, expected_protocol)
+    from .batch import _recipe as validate_batch_recipe
+    validate_batch_recipe(store, execution_fields(store, event), expected_protocol)
+    keys = dict(pack_manifest=p["pack_manifest"], catalog=p["catalog"],
+                host_inputs=p["host_inputs"], protocol_draft=p["protocol_draft"],
+                execution_plan=p["execution_plan"])
+    expected = _binding_payload(protocol=protocol, study_id=context["study_id"], request=request,
+                                keys=keys, manifest=pinned["manifest"], parameters=parameters,
+                                draft=pinned["draft"], plan=pinned["plan"])
+    require(p == expected, "pack binding differs from its frozen command and envelopes")
+    require(digest(pinned["manifest"].canonical()) == p["pack_manifest"]
+            and pinned["catalog"].digest() == p["catalog"]
+            and pinned["draft"].digest() == p["protocol_draft"]
+            and pinned["plan"].digest() == p["execution_plan"],
+            "pack binding envelope digests are not canonical")
+    require(receipt["result"] == result, "pack binding receipt result differs from its events")
+    require(protocol["id"] not in by_protocol, "duplicate pack binding for protocol")
+    by_protocol[protocol["id"]] = event
+    seen.add(event["id"])
+
+
+def _replay_preregister(store: Store, history: list[dict[str, Any]], receipt: dict[str, Any],
+                        by_protocol: dict[str, dict[str, Any]], seen: set[str]) -> None:
+    context, command = receipt["context"], receipt["request"]
+    require(command["version"] == 1 and context["role"] == "planner",
+            "pack binding needs a planner command")
+    request = command["payload"]
+    _validate_request(request)
+    created = history[receipt["before_revision"]:receipt["after_revision"]]
+    require(len(created) == 2 and [event["kind"] for event in created] == ["protocol", BINDING]
+            and receipt["event_ids"] == [event["id"] for event in created],
+            "pack binding needs its exact protocol and binding receipt")
+    protocol, event = created
+    require(all((item["actor"], item["role"]) == (context["actor"], "planner") for item in created),
+            "pack binding actor differs from its command")
+    require(set(event["payload"]) == _BINDING_FIELDS, "invalid pack binding fields")
+    _accept_recorded_binding(
+        store, history, receipt, protocol=protocol, event=event, request=request,
+        result=dict(protocol=protocol["id"], binding=event["id"],
+                    pack_code_digest=event["payload"]["pack_code_digest"]),
+        by_protocol=by_protocol, seen=seen)
+
+
+def _replay_model_binding(store: Store, history: list[dict[str, Any]], receipt: dict[str, Any],
+                          by_protocol: dict[str, dict[str, Any]], seen: set[str]) -> None:
+    """A schema-2 application has no pack binding and is ignored here."""
+    created = history[receipt["before_revision"]:receipt["after_revision"]]
+    if not any(event["kind"] == BINDING for event in created):
+        return
+    context, command = receipt["context"], receipt["request"]
+    require(command["version"] == 1 and context["role"] == "planner"
+            and set(command["payload"]) == {"request"} and type(command["payload"]["request"]) is str,
+            "model pack application needs its agent request")
+    require(len(created) == 4
+            and [event["kind"] for event in created] == ["protocol", BINDING, "experiment_node", "agent_application"]
+            and receipt["event_ids"] == [event["id"] for event in created],
+            "model pack application needs protocol, binding, node and application")
+    require(all((item["actor"], item["role"]) == (context["actor"], "planner") for item in created),
+            "model pack application actor differs from its command")
+    protocol, event, node, application = created
+    require(set(event["payload"]) == _BINDING_FIELDS, "invalid pack binding fields")
+    before = history[:receipt["before_revision"]]
+    agent_request = Kernel._get(before, command["payload"]["request"], "agent_request")
+    require(application["payload"].get("schema_version") == 3
+            and application["payload"]["request"] == agent_request["id"]
+            and agent_request["payload"].get("schema_version") == 3
+            and application["payload"]["protocol"] == protocol["id"]
+            and application["payload"]["pack_binding"] == event["id"]
+            and application["payload"]["experiment_node"] == node["id"]
+            and node["payload"]["protocol"] == protocol["id"],
+            "model application does not bind its pack protocol")
+    from .experiment_proposals_v2 import validate_proposal
+    response = Kernel._get(before, application["payload"]["response"], "agent_response")
+    frozen_context = _object(store, agent_request["payload"]["context"], "proposal context")
+    parsed = validate_proposal(
+        store.read(response["payload"]["assessment"]["artifacts"]["proposal"]),
+        frozen_context["hypothesis_ids"], pack_id=agent_request["payload"]["pack_id"],
+        parameters_schema=frozen_context["proposal_schema"]["parameters_schema"])
+    require(parsed["status"] == "proposed"
+            and parsed["experiment"]["parameters"] == event["payload"]["parameters"],
+            "pack binding parameters differ from the frozen proposal")
+    proposal_binding = _object(store, agent_request["payload"]["proposal_binding"], "proposal binding")
+    p = event["payload"]
+    require(proposal_binding["pack_id"] == p["pack_id"]
+            and proposal_binding["pack_version"] == p["pack_version"]
+            and proposal_binding["pack_code_digest"] == p["pack_code_digest"]
+            and proposal_binding["catalog"] == p["catalog"]
+            and proposal_binding["host_inputs"] == p["host_inputs"]
+            and proposal_binding["capture"] == p["capture"]
+            and proposal_binding["environment"] == p["environment"]
+            and agent_request["payload"]["pack_id"] == p["pack_id"]
+            and agent_request["payload"]["catalog"] == p["catalog"]
+            and agent_request["payload"]["pack_code_digest"] == p["pack_code_digest"],
+            "pack binding differs from the frozen proposal binding")
+    request = dict(explanation_set=agent_request["payload"]["explanation_set"],
+                   pack_id=p["pack_id"], pack_version=p["pack_version"],
+                   pack_code_digest=p["pack_code_digest"], parameters=p["parameters"],
+                   host_inputs=_object(store, p["host_inputs"], "host inputs"),
+                   capture=p["capture"], environment=p["environment"])
+    _validate_request(request)
+    _accept_recorded_binding(store, history, receipt, protocol=protocol, event=event, request=request,
+                             result=application["id"], by_protocol=by_protocol, seen=seen)
 
 
 def pack_bindings(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -464,61 +606,10 @@ class PackPreregistration:
                     pack_code_digest: str, parameters: dict[str, Any],
                     host_inputs: dict[str, Any], capture: str | None,
                     environment: str) -> dict[str, str]:
-        require(self.store._command_context is not None and self.actor.role == "planner",
-                "pack preregistration requires a planner CommandService transaction")
-        request = dict(explanation_set=explanation_set, pack_id=pack_id, pack_version=pack_version,
-                       pack_code_digest=pack_code_digest, parameters=parameters,
-                       host_inputs=host_inputs, capture=capture, environment=environment)
-        _validate_request(request)
-        history = self.store.events()
-        pack_bindings(self.store, history)
-        _preceding_checks(history, explanation_set)
-        loaded = registry.load_pack(pack_id)
-        loaded.require_pin(pack_id=pack_id, pack_version=pack_version,
-                           pack_code_digest=pack_code_digest)
-        compiled = _compile(self.store, loaded, parameters, host_inputs, capture)
-        _check_compilation(self.store, loaded.manifest, compiled["catalog"], compiled["draft"],
-                           compiled["plan"], compiled["capture"], environment)
-        for data in loaded.files.values():
-            self.store.put(data)
-        require(self.store.put_json(api.thaw(loaded.code_manifest)) == pack_code_digest,
-                "pack code manifest CAS digest mismatch")
-        keys = dict(pack_manifest=self.store.put(loaded.manifest.canonical()),
-                    catalog=self.store.put(compiled["catalog"].canonical()),
-                    host_inputs=self.store.put_json(host_inputs),
-                    protocol_draft=self.store.put(compiled["draft"].canonical()))
-        for key, data in compiled["plan"].blobs().items():
-            require(self.store.put(data) == key, "execution plan bytes CAS digest mismatch")
-        keys["execution_plan"] = self.store.put_json(compiled["plan"].to_dict())
-        draft, plan = compiled["draft"], compiled["plan"]
-        frozen = plan.to_dict()
-        kernel = Kernel(self.store, self.actor)
-        protocol_id = kernel._preregister_for_set(
-            pack_path=True,
-            explanation_set=explanation_set, design=draft.design, metric=draft.metric,
-            analysis_plan=draft.analysis_plan, stopping_rule=draft.stopping_rule,
-            seeds=list(draft.roster), run_limit=draft.run_limit,
-            implementation=frozen["primary_program"]["sha256"], environment=environment,
-            data=frozen["input"]["sha256"], replication_tolerance=draft.replication_tolerance,
-            statistical_design=api.thaw(draft.statistical_design), seen_data=list(draft.seen_data))
-        updated = self.store.events()
-        protocol = Kernel._get(updated, protocol_id, "protocol")
-        require(protocol["payload"] == _protocol_payload(history, explanation_set, draft, plan,
-                                                         environment),
-                "recorded protocol differs from the pack compilation")
-        from .batch import _recipe as validate_batch_recipe
-        validate_batch_recipe(self.store, dict(
-            reanalysis_implementation=frozen["reanalysis_program"]["sha256"],
-            reanalysis_environment=environment, outputs=frozen["outputs"],
-            wall_seconds=frozen["wall_seconds"], max_output_bytes=frozen["max_output_bytes"],
-            required_capabilities=frozen["required_capabilities"]), protocol["payload"])
-        _call(loaded, "validate_protocol", _protocol_context(
-            compiled["parameters"], draft, plan, compiled["capture"], protocol))
-        payload = _binding_payload(protocol=protocol, study_id=self.store._command_context["study_id"],
-                                   request=request, keys=keys, manifest=loaded.manifest,
-                                   parameters=compiled["parameters"], draft=draft, plan=plan)
-        binding = kernel._write(updated, BINDING, payload, {"planner"})
-        return dict(protocol=protocol_id, binding=binding, pack_code_digest=pack_code_digest)
+        return admit_binding(self.store, self.actor, dict(
+            explanation_set=explanation_set, pack_id=pack_id, pack_version=pack_version,
+            pack_code_digest=pack_code_digest, parameters=parameters, host_inputs=host_inputs,
+            capture=capture, environment=environment))
 
 
 def _protocol_context(parameters: Any, draft: api.ProtocolDraft, plan: Plan,

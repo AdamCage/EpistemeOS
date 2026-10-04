@@ -621,6 +621,18 @@ class PackManifest(_Envelope):
         return {label: output["path"] for label, output in self.outputs.items()}
 
 
+def match_parameters(schema: Any, parameters: Any) -> dict[str, Any]:
+    """Check one parameter object against a pack schema.
+
+    The schema is data pinned by the kernel. This does not import or run a pack.
+    """
+    supported_schema(schema)
+    value = strict_json(parameters)
+    _require(type(value) is dict, "pack parameters must be a JSON object")
+    _check(thaw(schema), value, "$parameters", {})
+    return value
+
+
 @dataclass(frozen=True)
 class ParameterCatalog(_Envelope):
     schema_version: int
@@ -640,10 +652,7 @@ class ParameterCatalog(_Envelope):
         supported_schema(value["parameters_schema"])
 
     def validate_parameters(self, parameters: Any) -> dict[str, Any]:
-        value = strict_json(parameters)
-        _require(type(value) is dict, "pack parameters must be a JSON object")
-        _check(thaw(self.parameters_schema), value, "$parameters", {})
-        return value
+        return match_parameters(thaw(self.parameters_schema), parameters)
 
 
 @dataclass(frozen=True)
@@ -1338,6 +1347,21 @@ class DomainPack:
 
     def describe(self) -> ParameterCatalog: ...
     def validate_parameters(self, parameters: Mapping[str, Any]) -> None: ...
+    def proposal_schema(self) -> Mapping[str, Any]:
+        """Optional versioned parameter schema for a model proposal.
+
+        The kernel owns the proposal envelope, the persisted transition and the
+        claim-strength ceiling. This hook only repeats the catalog's parameter
+        schema; a pack that omits it cannot be used on the model path.
+        """
+
+    def proposal_attempts(self, host_inputs: Mapping[str, Any], capture: Any) -> int:
+        """Optional attempt count fixed before the model chooses parameters.
+
+        Live application requires this to equal ``compile_protocol``'s run
+        limit. The model cannot raise it, and it is not a claim.
+        """
+
     def compile_protocol(self, request: CompileRequest) -> ProtocolDraft: ...
     def compile_execution(self, request: CompileRequest) -> ExecutionPlan | ExecutionPlanV2: ...
     def validate_protocol(self, context: ProtocolContext) -> None: ...

@@ -78,6 +78,20 @@ def validate_parameters(parameters):
         raise ValueError("tabular classification pack takes no parameters")
 
 
+def proposal_schema():
+    """The model has no free parameters. The comparison is the pack's, not the model's."""
+    return {"schema_version": 1, "parameters_schema": PARAMETERS_SCHEMA}
+
+
+def proposal_attempts(host_inputs, capture):
+    """One primary run and one same-data reanalysis, fixed before any model text."""
+    if api.thaw(host_inputs) != {}:
+        raise ValueError("tabular classification pack takes no host inputs")
+    if capture is None or set(capture.files) != {"train.csv", "holdout.csv"}:
+        raise ValueError("tabular classification pack requires a captured train.csv and holdout.csv")
+    return 2
+
+
 def _files(request):
     if api.thaw(request.host_inputs) != {}:
         raise ValueError("tabular classification pack takes no host inputs")

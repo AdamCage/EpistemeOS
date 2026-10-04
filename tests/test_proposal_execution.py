@@ -217,9 +217,9 @@ class ProposalExecutionTests(unittest.TestCase):
         batch = CommandService(self.store).execute(self.prepare())
         selection, plan = self.store.events()[-2:]
         prefix = self.store.events()[:-2]
-        with patch("episteme.agents.synthetic_causal.compile_recipe",
+        with patch("episteme.legacy_experiment.synthetic_causal.compile_recipe",
                    side_effect=AssertionError("historical compiler called")), \
-             patch("episteme.agents.synthetic_causal.describe",
+             patch("episteme.legacy_experiment.synthetic_causal.describe",
                    side_effect=AssertionError("historical catalog called")):
             validate_prepared(self.store, prefix, selection, plan)
             self.assertEqual(batch_state(self.store, batch)["batch"], batch)

@@ -108,6 +108,7 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "agent.register_budget": (Agents, Agents.register_budget, frozenset({"planner"})),
     "agent.request_hypotheses": (Agents, Agents.request_hypotheses, frozenset({"planner"})),
     "agent.request_experiment": (Agents, Agents.request_experiment, frozenset({"planner"})),
+    "agent.request_pack_experiment": (Agents, Agents.request_pack_experiment, frozenset({"planner"})),
     "agent.dispatch": (Agents, Agents.dispatch, frozenset({"planner"})),
     "agent.finalize": (Agents, Agents.finalize, frozenset({"planner"})),
     "agent.apply_hypotheses": (Agents, Agents.apply_hypotheses, frozenset({"planner"})),
@@ -203,9 +204,11 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "batch_analysis": ("batch", "settlement", "terminal", "protocol", "claim"),
             "pack_analysis": ("batch", "settlement", "terminal", "protocol", "binding", "claim"),
             "agent_request": (("question", "budget", "explanation_set", "tree")
-                              if p.get("schema_version") == 2 else ("question", "budget")),
+                              if p.get("schema_version") in {2, 3} else ("question", "budget")),
             "agent_dispatch": ("request",), "agent_response": ("request",),
-            "agent_application": (("request", "protocol", "experiment_node")
+            "agent_application": (("request", "protocol", "experiment_node", "pack_binding")
+                                  if p.get("schema_version") == 3
+                                  else ("request", "protocol", "experiment_node")
                                   if p.get("schema_version") == 2 else ("request",)),
             "review_assignment": ("claim",),
             "review_dispatch": ("assignment", "claim"),

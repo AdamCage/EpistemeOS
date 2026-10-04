@@ -29,6 +29,7 @@
         "version": {"const": 1},
         "action": {"enum": [
           "agent.register_budget", "agent.request_hypotheses", "agent.request_experiment",
+          "agent.request_pack_experiment",
           "agent.dispatch", "agent.finalize", "agent.apply_hypotheses", "agent.apply_experiment",
           "execution.enqueue", "execution.dispatch", "execution.dispatch_v2", "execution.finalize",
           "reproduction.dispatch", "reproduction.finalize",

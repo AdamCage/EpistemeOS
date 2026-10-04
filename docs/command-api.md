@@ -160,15 +160,18 @@ Writable opening аддитивно создаёт таблицу квитанц
 |---|---|
 | `agent.register_budget` | `study_id`, `max_calls` (1–100 admission в одном budget). |
 | `agent.request_hypotheses` | `budget`, `question`, `assignee`, `provider` CAS digest; `wall_seconds=120` (1–600), `max_output_bytes=1048576` (1 KiB–4 MiB). |
-| `agent.request_experiment` | `budget`, `explanation_set`, `tree`, `recipe_binding`, `assignee`, `provider` CAS digest; те же optional лимиты. |
+| `agent.request_experiment` | `budget`, `explanation_set`, `tree`, `recipe_binding`, `assignee`, `provider` CAS digest; те же optional лимиты. Событие `agent_request` schema 2 и контракт `experiment-proposal-v1`. |
+| `agent.request_pack_experiment` | `budget`, `explanation_set`, `tree`, `proposal_binding`, `assignee`, `provider` CAS digest; те же optional лимиты. Событие `agent_request` schema 3. Отдельное action, чтобы нормализованные defaults не меняли fingerprint schema 2. |
 | `agent.dispatch` | `request`, `workspace_token` (32 hex); один dispatch, original authority marker, current question. |
 | `agent.finalize` | `request`, `manifest` CAS digest; original completion и captured bytes проверяются. |
 | `agent.apply_hypotheses` | `request`; proposed response, current question, atomic hypotheses/set/application. |
-| `agent.apply_experiment` | `request`; proposed response, current ExplanationSet/tree/recipe, atomic protocol/node/application. |
+| `agent.apply_experiment` | `request`. Для schema 2: proposed response, current ExplanationSet/tree/recipe, atomic protocol/node/application. Для schema 3: та же команда атомарно пишет protocol, `pack_binding`, experiment node и application; claim, review и run не создаются. |
 
 `episteme agent provider --root <root> --model <model>` сохраняет binary/version/profile descriptor без model call; optional `--reasoning-effort` и `--executable`. Для budget/request используется обычный command envelope. Study metadata сверяется через request/question/budget, включая существующие связи. Replay исходного envelope возвращает исторический результат и не запускает провайдера.
 
-CLI `agent status|work|reconcile|advance <request> --root <root>` использует сохранённое назначение. `work` вызывает модель только после нового dispatch; `reconcile` никогда не запускает её; `advance` дополнительно применяет proposed response. Invalid/abstained/failed не создают hypotheses; unknown не разрешает повтор. Status `applied` не является scientific success. Contracts и границы — [ADR 0007](decisions/0007-model-proposals.md).
+CLI `agent status|work|reconcile|advance <request> --root <root>` использует сохранённое назначение. `work` вызывает модель только после нового dispatch; `reconcile` никогда не запускает её; `advance` дополнительно применяет proposed response. Для `agent_request` schema 3 применяется `agent.apply_experiment`, не `agent.apply_hypotheses`. Invalid/abstained/failed не создают hypotheses; unknown не разрешает повтор. Status `applied` не является scientific success. `proposal.prepare_next` по-прежнему принимает только application schema 2. Contracts и границы — [ADR 0007](decisions/0007-model-proposals.md), [ADR 0008](decisions/0008-experiment-proposals.md) и шаг 9 [ADR 0016](decisions/0016-domain-pack-contract.md).
+
+`proposal_binding` — CAS-объект, записанный до вызова модели. В нём pack id, версия, digest кода, digest каталога, digest схемы параметров, host inputs, необязательный capture и заранее посчитанное число попыток. Контекст модели получает каталог и схему параметров, но не host inputs и не bytes захвата. Ответ — [experiment-proposal-v2](../schemas/experiment-proposal-v2.schema.json): ядро проверяет конверт, порядок hypotheses и компоненты поиска; параметры сверяются с закреплённой схемой пакета. Пакет компилирует принятое предложение в protocol draft и execution plan. Модель не задаёт режим protocol, силу claim, actor или review. `scientific_validity` остаётся `not_assessed`.
 
 ## Proposal selection и review-driven follow-up
 

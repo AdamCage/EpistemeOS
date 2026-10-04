@@ -372,14 +372,14 @@ class ExperimentAgentTests(unittest.TestCase):
         expected = advance_agent(self.store, request)
         self.assertEqual(expected["status"], "applied")
         original_graph = ResearchGraph.from_store(self.store).snapshot_hash
-        with patch("episteme.agents.synthetic_causal.compile_recipe",
+        with patch("episteme.legacy_experiment.synthetic_causal.compile_recipe",
                    side_effect=AssertionError("historical replay called today's compiler")), \
-             patch("episteme.agents.synthetic_causal.describe",
+             patch("episteme.legacy_experiment.synthetic_causal.describe",
                    side_effect=AssertionError("historical replay called today's catalog")):
             self.assertEqual(agent_state(self.store, request), expected)
             self.assertEqual(ResearchGraph.from_store(self.store).snapshot_hash, original_graph)
         before = self.store.export(), self.store.export_receipts()
-        with patch("episteme.agents.synthetic_causal.compile_recipe",
+        with patch("episteme.legacy_experiment.synthetic_causal.compile_recipe",
                    side_effect=AssertionError("new request called today's compiler")):
             with self.assertRaisesRegex(AssertionError, "new request called today's compiler"):
                 self.request()

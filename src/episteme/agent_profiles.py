@@ -10,6 +10,7 @@ from types import MappingProxyType
 
 from . import agent_proposals as v1
 from . import experiment_proposals as experiment_v1
+from . import experiment_proposals_v2 as experiment_v2
 
 DEFAULT_PROFILE = "hypothesis-proposal-v1"
 _PROFILES = MappingProxyType({
@@ -18,6 +19,9 @@ _PROFILES = MappingProxyType({
     "experiment-proposal-v1": (
         experiment_v1.SYSTEM_PROMPT, deepcopy(experiment_v1.STRUCTURED_OUTPUT_SCHEMA),
         experiment_v1.validate_proposal),
+    "experiment-proposal-v2": (
+        experiment_v2.SYSTEM_PROMPT, deepcopy(experiment_v2.STRUCTURED_OUTPUT_SCHEMA),
+        experiment_v2.validate_proposal),
 })
 
 

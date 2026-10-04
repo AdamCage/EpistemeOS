@@ -208,7 +208,7 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 
 ## Ход реализации
 
-Шаги 1–6 и шаг 8 реализованы. Шаги 7, 9 и 10 остаются. Проблемы review integrity закрыл шаг 7 [ADR 0018](0018-claim-families-and-review-admission.md). Медленная повторная проверка receipts в `analysis advance` здесь не исправляется.
+Шаги 1–6, 8 и 9 реализованы. Шаг 10 остаётся. Проблемы review integrity закрыл [ADR 0018](0018-claim-families-and-review-admission.md); отображение roster в отчётах из шага 7 туда не входило. Медленная повторная проверка receipts в `analysis advance` здесь не исправляется.
 
 | Шаг | Состояние |
 |---|---|
@@ -220,15 +220,16 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 | 5. CLI по привязке, `pack describe`, `pack verify` | Реализован и локально проверен в `a1ae131`: `episteme analysis advance` берёт пакет или legacy adapter из привязки protocol, `--adapter` стал необязательным утверждением; read-only `episteme pack describe PACK_ID` и `episteme pack verify --root ROOT`; `tests/test_pack_cli.py`. |
 | 6. Фасад `afterlife_seed_v1` | Реализован и локально проверен: пакет [`domains/packs/afterlife_seed_v1`](../../src/episteme/domains/packs/afterlife_seed_v1) зарегистрирован и проходит conformance suite; `episteme pack capture` сохраняет захваченные bytes в CAS без событий; `tests/test_afterlife_pack.py`. На восстановленной копии реального пилота ADR 0015 пакетный путь дал те же девять долей и тот же statement, что legacy claim (validation.md). |
 | 8. `tabular_classification_v1` | Реализован и локально проверен: пакет [`domains/packs/tabular_classification_v1`](../../src/episteme/domains/packs/tabular_classification_v1) в явном allowlist, весь каталог закрепляется `code_manifest`, профиль `trusted_local_python_v1`. Путь `pack.preregister` → batch → `pack.analyse` → `review.assign` на сгенерированной таблице проходит до назначения reviewer. Verdict и paper не создаются. Числа — в validation.md. |
+| 9. Обобщение модельного пути ADR 0008 | Реализован и локально проверен. `agent_request` schema 3 и конверт `experiment-proposal-v2`: пакет объявляет схему параметров и компилирует принятое предложение, ядро записывает protocol, `pack_binding` и узел. `agents.py` и `experiment_proposals.py` не импортируют конкретный пакет. Schema 2 и golden histories не переписывались. Числа — в validation.md. |
 
 Критерии универсальности выполнены частично:
 - пункты 2 и 7 — для трёх зарегистрированных пакетов; схемы raw data у них разные;
-- пункт 1 — с явным списком legacy-исключений `agents.py`, `experiment_proposals.py` и `cli.py`;
+- пункт 1 — `agents.py`, `experiment_proposals_v2.py` и `pack_proposals.py` не импортируют конкретный пакет. В списке исключений статического теста остаются `experiment_proposals.py` (замороженный текст `experiment-proposal-v1` называет recipe) и `legacy_experiment.py` (compiler schema 2). `cli.py` из списка вышел: адаптер анализа берётся из реестра;
 - пункт 3 — только до `review.assign`: fixture review и paper scaffold через пакетный путь не проверялись, restart и backup/restore проверены только для synthetic;
 - пункт 4 — полностью для synthetic, для afterlife и tabular — подмены raw data и метрики в conformance suite; tabular дополнительно отвергает confirmatory proposal без interval и с нарушенным допущением;
 - пункт 5 — synthetic и afterlife остаются `exploratory`/`inconclusive`; положительную ветвь потолка проверяет `tabular_classification_v1` на сгенерированной таблице, не на научной выборке;
 - пункт 6 — `roster_semantics` и факты replication записываются, включая `deterministic_single` у третьего пакета; отображение в отчётах — шаг 7.
-Шаги 7, 9 и 10 остаются.
+Шаг 10 остаётся. Отображение `roster_semantics` в отчётах из шага 7 по-прежнему не сделано.
 
 ### Отклонения от предложения и уточнения шага 1
 
@@ -271,7 +272,7 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 
 ### Отклонения от предложения и уточнения шага 5
 
-- **Уточнение.** `analysis advance` определяет анализ по привязке protocol и для legacy-путей: ручной `domain.bind` даёт записанный в нём `adapter_id`, модельное применение ADR 0008 — `domain` его compilation, `pack_binding` — пакетный путь. `--adapter` больше не выбирает код: без флага используется привязка, а флаг, отличный от неё, отвергается без новых событий. Это заменяет описанное в ADR 0015 поведение «без флага — synthetic adapter». Соответствие legacy `adapter_id` классам legacy-адаптеров остаётся в `cli.py`, одном из явно перечисленных legacy-исключений статического теста.
+- **Уточнение.** `analysis advance` определяет анализ по привязке protocol и для legacy-путей: ручной `domain.bind` даёт записанный в нём `adapter_id`, модельное применение ADR 0008 — `domain` его compilation, `pack_binding` — пакетный путь. `--adapter` больше не выбирает код: без флага используется привязка, а флаг, отличный от неё, отвергается без новых событий. Это заменяет описанное в ADR 0015 поведение «без флага — synthetic adapter». Соответствие legacy `adapter_id` классам legacy-адаптеров остаётся в реестре `LEGACY_ANALYSIS_ADAPTERS`. `cli.py` больше не входит в исключения статического теста.
 - **Уточнение.** `pack verify` открывает Store только на чтение. Сначала выполняется структурный replay, затем для каждой привязки — повторные `describe`, compile hooks (сравниваются digests каталога, draft и plan) и `validate_protocol`, для каждого анализа — analysis hooks на префиксе его receipt (сравниваются digests checks, recomputations, report и statistical report). Если живой код отличается от pin, hooks не исполняются, а строка получает `live pack code differs from the pin`. Код возврата 1 означает любое расхождение. `pack describe` Store не открывает.
 - **Отклонение (перенос).** Команда захвата `pack capture` добавлена не здесь, а вместе с первым пакетом, которому она нужна, на шаге 6.
 
@@ -294,6 +295,19 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 - **Уточнение.** Таблицы генерирует [`examples/tabular_classification_v1/generate.py`](../../examples/tabular_classification_v1/generate.py): 48 строк, целочисленные `x1,x2,label`. У `planted` метка равна 1 при `x1 >= 0`. У `null` метка всегда 0. У train и holdout разные формулы `x2`, поэтому файлы не совпадают даже после нормализации пробелов. Это не научный набор данных и не копия публичной таблицы. На `planted` правило даёт `supports` (разность 0.5). На `null` разность 0 и исход `inconclusive`. Текст claim говорит, что это правило на захваченных строках, а не эффект в популяции.
 - **Уточнение.** В `assumptions` три проверки со статусом `holds`: обучение только на training-файле, полный holdout без исключений, фиксированные квантиль и alpha. Допущение «строки — выборка из популяции» не помечается `holds`: оно записано в limitations. `scientific_validity` остаётся `not_assessed`. Потолок принимает полный confirmatory report и по-прежнему отвергает proposal без interval или с допущением `violated`.
 - **Уточнение.** Повторный анализ — вторая программа того же пакета по тем же scored rows. Ядро пишет `single_deterministic_unit`, `same_data_reanalysis`, `context=not_established`. Hooks не получают Store.
+
+### Отклонения от предложения и уточнения шага 9
+
+Отдельный ADR не добавлен. Разделение «ядро допускает переход, пакет проверяет параметры и компилирует план» уже записано здесь и в [ADR 0008](0008-experiment-proposals.md). Этот шаг его исполняет.
+
+- **Отклонение.** Новое admission — action `agent.request_pack_experiment`, а не новая сигнатура `agent.request_experiment`. Command API v1 включает нормализованные defaults в fingerprint. Добавление поля в старую сигнатуру сделало бы исторические receipts schema 2 невоспроизводимыми. Событие по-прежнему `agent_request`, schema_version 3.
+- **Уточнение.** Конверт `experiment-proposal-v2` принадлежит ядру: status, reason, limitations, action, predictions, contrast, rationale и components. Пакет объявляет только `proposal_schema` версии 1, и эта схема обязана совпадать с `parameters_schema` каталога. Необязательный `proposal_attempts` считает число попыток по host inputs до выбора параметров моделью. На apply оно обязано совпасть с `run_limit` скомпилированного draft.
+- **Уточнение.** Принятое предложение компилируется существующими `compile_protocol` и `compile_execution`. Одна receipt `agent.apply_experiment` пишет `protocol`, `pack_binding`, `experiment_node` и `agent_application` schema 3. Replay привязки структурный и код пакета не импортирует. Текст protocol равен draft пакета: в него не дописывается contrast модели, иначе digest draft разошёлся бы с повторным `compile_protocol`. Contrast и rationale остаются в proposal artifact и узле дерева.
+- **Уточнение.** Модель не задаёт `mode`, `outcome` или `inference_mode`. Режим protocol берётся из statistical design пакета. Для `tabular_classification_v1` это `confirmatory` как заранее зарегистрированный дизайн, не как claim. События claim, review и run не создаются. `scientific_validity` остаётся `not_assessed`. Потолок силы claim по-прежнему применяется только в `pack.analyse`.
+- **Уточнение.** Host inputs и bytes захвата не входят в контекст модели. Для synthetic это скрытый world. Число попыток в контексте есть, список seeds — нет: schema 2 по-прежнему показывает seeds.
+- **Уточнение.** `synthetic_causal_v1` и `tabular_classification_v1` объявляют схему. `afterlife_seed_v1` её не объявляет, и модельный путь его отвергает. `proposal.prepare_next` по-прежнему принимает только application schema 2 и не превращает schema 3 в batch.
+- **Уточнение.** `agents.py` и `experiment_proposals.py` не импортируют пакет. Статический тест это проверяет. Исключения: `experiment_proposals.py` хранит литерал recipe замороженной schema v1; `legacy_experiment.py` импортирует `domains.synthetic_causal` только для schema 2. Replay уже записанного application schema 2 compiler не вызывает.
+- **Ограничение.** Демонстрация — fixture-ответ, уже совпадающий со схемой пакета. Сети и вызова модели нет. Выход не является научным результатом. Полная матрица универсальности остаётся шагом 10.
 
 ## Ограничения
 

@@ -60,6 +60,19 @@ def validate_parameters(parameters):
     compiler.parameters(api.thaw(parameters))
 
 
+def proposal_schema():
+    """Parameter schema a model may fill. It does not choose the hidden world."""
+    return {"schema_version": 1, "parameters_schema": compiler.PARAMETERS_SCHEMA}
+
+
+def proposal_attempts(host_inputs, capture):
+    """Host seeds fix the attempt count before the model chooses parameters."""
+    if capture is not None:
+        raise ValueError("synthetic causal pack takes no captured source")
+    _, seeds, _ = compiler.host(api.thaw(host_inputs))
+    return 2 * len(seeds)
+
+
 def _compiled(request):
     chosen = compiler.parameters(api.thaw(request.parameters))
     world, seeds, tolerance = compiler.host(api.thaw(request.host_inputs))

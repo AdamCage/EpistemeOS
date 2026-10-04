@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime
 import math
-from pathlib import Path
 import re
 import sys
 from typing import Any
 
 from .agent_profiles import DEFAULT_PROFILE, profile
 from . import experiment_proposals
+from . import experiment_proposals_v2
+from . import legacy_experiment
+from . import pack_proposals
 from .codex_provider import PROGRAM, validate_provider
-from .domains import synthetic_causal
-from .execution import BACKEND, _object
+from .execution import _object
 from .execution_authority import establish_authority, require_authority
 from .kernel import Actor, Kernel, require
 from .planning import Planning, _Index as PlanningIndex, binding_for, planning_context
@@ -23,7 +24,6 @@ from .store import Store, canonical
 
 
 KINDS = {"agent_budget", "agent_request", "agent_dispatch", "agent_response", "agent_application"}
-COMPILER_SOURCE_BYTES = Path(synthetic_causal.__file__).read_bytes()
 
 
 def _text(value: Any) -> bool:
@@ -47,54 +47,25 @@ def _context(history: list[dict[str, Any]], question: str, *, current: bool,
 def _proposal(store: Store, state: dict[str, Any], raw: bytes) -> dict[str, Any]:
     context = _object(store.read(state["request"]["payload"]["context"]))
     validate = profile(context["prompt_version"])[2]
+    if context["prompt_version"] == experiment_proposals_v2.PROMPT_VERSION:
+        return validate(raw, context["hypothesis_ids"], pack_id=context["pack_id"],
+                        parameters_schema=context["proposal_schema"]["parameters_schema"])
     if context["task"] == "experiment_proposal":
         return validate(raw, context["hypothesis_ids"])
     return validate(raw)
 
 
 def _recipe_binding(store: Store, key: str, *, current: bool) -> dict[str, Any]:
-    binding = _object(store.read(key))
-    require(set(binding) == {"schema_version", "recipe_id", "catalog", "world", "seeds",
-                             "environment", "replication_tolerance"}
-            and type(binding["schema_version"]) is int and binding["schema_version"] == 1
-            and binding["recipe_id"] == experiment_proposals.RECIPE_ID,
-            "invalid frozen experiment recipe binding")
-    require(type(binding["catalog"]) is dict and binding["catalog"].get("id") == binding["recipe_id"],
-            "invalid frozen recipe catalog")
-    require(type(binding["world"]) is dict and set(binding["world"]) ==
-            {"treatment_effect", "confounding_strength", "noise_std"}, "invalid synthetic world")
-    require(type(binding["seeds"]) is list and 1 <= len(binding["seeds"]) <= 64
-            and all(type(seed) is int and -(2**31) <= seed < 2**31 for seed in binding["seeds"])
-            and len(set(binding["seeds"])) == len(binding["seeds"]), "invalid frozen experiment seeds")
-    tolerance = binding["replication_tolerance"]
-    require(type(tolerance) in (int, float) and math.isfinite(tolerance) and tolerance >= 0,
-            "invalid frozen replication tolerance")
-    environment = _object(store.read(binding["environment"]))
-    require(set(environment) == {"schema_version", "backend", "fingerprint"}
-            and type(environment["schema_version"]) is int and environment["schema_version"] == 1
-            and environment["backend"] == BACKEND and type(environment["fingerprint"]) is dict,
-            "experiment requires a frozen local Python environment")
-    if current:
-        require(environment["fingerprint"] == fingerprint(),
-                "experiment environment no longer matches this local runner")
-        require(binding["catalog"] == synthetic_causal.describe(),
-                "experiment recipe catalog changed since it was frozen")
-        # Validation is domain-owned.  Do not expose the host world to the model.
-        synthetic_causal.compile_recipe(dict(n_samples=32, assignment="randomized",
-                                             analysis="difference_in_means"), binding["world"])
-    return binding
+    return legacy_experiment.recipe_binding(store, key, current=current)
 
 
 def freeze_recipe_binding(store: Store, *, world: dict[str, Any], seeds: list[int],
                           environment: str,
-                          replication_tolerance: float = synthetic_causal.DEFAULT_REANALYSIS_TOLERANCE) -> str:
-    """Freeze host-owned synthetic world and execution policy before a model call."""
-    binding = dict(schema_version=1, recipe_id=experiment_proposals.RECIPE_ID,
-                   catalog=synthetic_causal.describe(), world=world, seeds=seeds,
-                   environment=environment, replication_tolerance=replication_tolerance)
-    key = store.put_json(binding)
-    _recipe_binding(store, key, current=True)
-    return key
+                          replication_tolerance: float = legacy_experiment.DEFAULT_REANALYSIS_TOLERANCE) -> str:
+    """Freeze the historical synthetic recipe. Pack proposals use ``freeze_proposal_binding``."""
+    return legacy_experiment.freeze_recipe_binding(
+        store, world=world, seeds=seeds, environment=environment,
+        replication_tolerance=replication_tolerance)
 
 
 def _experiment_context(store: Store, history: list[dict[str, Any]], *,
@@ -332,7 +303,7 @@ def _completion(store: Store, state: dict[str, Any], manifest: str) -> dict[str,
     else:
         try:
             proposal = _proposal(store, state, store.read(blobs["proposal"]))
-            if state["request"]["payload"]["schema_version"] == 2:
+            if state["request"]["payload"]["schema_version"] in {2, 3}:
                 message = _proposal(store, state, _last_completed_message(store.read(blobs["stdout"])))
                 require(message == proposal, "provider message differs from captured proposal file")
             status = proposal["status"]
@@ -433,7 +404,7 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
             continue
         version = p.get("schema_version")
         require(event["role"] == "planner" and type(version) is int
-                and version in ({1, 2} if kind in {"agent_request", "agent_application"} else {1}),
+                and version in ({1, 2, 3} if kind in {"agent_request", "agent_application"} else {1}),
                 "agent transition role/schema mismatch")
         before = history[:offset]
         if kind == "agent_budget":
@@ -446,7 +417,10 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
             common = {"schema_version", "budget", "budget_hash", "question", "question_hash", "assignee",
                       "provider", "specification", "context", "execution_authority"}
             additional = {"explanation_set", "explanation_set_hash", "tree", "tree_hash", "recipe_binding"}
-            require(set(p) == (common | additional if version == 2 else common), "invalid agent request fields")
+            pack_fields = {"explanation_set", "explanation_set_hash", "tree", "tree_hash",
+                           "proposal_binding", "pack_id", "pack_version", "pack_code_digest", "catalog"}
+            expected = common | (pack_fields if version == 3 else additional if version == 2 else set())
+            require(set(p) == expected, "invalid agent request fields")
             require(p["budget"] in budgets and p["budget_hash"] == budgets[p["budget"]]["hash"], "unknown agent budget")
             budget = budgets[p["budget"]]
             require(sum(s["request"]["payload"]["budget"] == p["budget"] for s in states.values()) < budget["payload"]["max_calls"],
@@ -456,18 +430,32 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
                 context = _experiment_context(store, before, budget=p["budget"],
                     explanation_set=p["explanation_set"], tree=p["tree"],
                     recipe_binding=p["recipe_binding"], current=True)
+            elif version == 3:
+                context = pack_proposals.context(store, before, budget=p["budget"],
+                    explanation_set=p["explanation_set"], tree=p["tree"],
+                    proposal_binding=p["proposal_binding"], current=True, live=False)
+            else:
+                context = _context(before, p["question"], current=True, version=frozen.get("prompt_version"))
+            if version in {2, 3}:
                 require(context["explanation_set"]["hash"] == p["explanation_set_hash"]
                         and context["search_tree"]["hash"] == p["tree_hash"]
                         and context["planning_binding"]["question"] == p["question"],
                         "experiment request references differ from frozen planning context")
-            else:
-                context = _context(before, p["question"], current=True, version=frozen.get("prompt_version"))
+                if version == 3:
+                    require(context["pack_id"] == p["pack_id"]
+                            and context["pack_version"] == p["pack_version"]
+                            and p["pack_code_digest"] == pack_proposals.load_proposal_binding(
+                                store, p["proposal_binding"], live=False)["pack_code_digest"]
+                            and p["catalog"] == pack_proposals.load_proposal_binding(
+                                store, p["proposal_binding"], live=False)["catalog"],
+                            "experiment request pin differs from its proposal binding")
             require(context["question"]["hash"] == p["question_hash"]
                     and context["question"]["payload"]["study_id"] == budget["payload"]["study_id"]
                     and frozen == context, "request context/study differs from frozen question")
             require(_text(p["assignee"]) and type(p["execution_authority"]) is str
                     and re.fullmatch(r"[0-9a-f]{64}", p["execution_authority"]), "invalid agent assignment/authority")
-            receipt([event], "agent.request_experiment" if version == 2 else "agent.request_hypotheses")
+            receipt([event], {2: "agent.request_experiment", 3: "agent.request_pack_experiment"}.get(
+                version, "agent.request_hypotheses"))
             states[event["id"]] = dict(request=event, spec=_specification(store, p), dispatch=None, response=None, application=None)
         else:
             require(p.get("request") in states, "agent event needs a prior request")
@@ -481,6 +469,12 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
                         and re.fullmatch(r"[0-9a-f]{32}", p["workspace_token"]), "agent already dispatched or invalid token")
                 if request["payload"]["schema_version"] == 2:
                     _experiment_current(store, before, request["payload"], adapter_current=False)
+                elif request["payload"]["schema_version"] == 3:
+                    pack_proposals.context(store, before, budget=request["payload"]["budget"],
+                        explanation_set=request["payload"]["explanation_set"],
+                        tree=request["payload"]["tree"],
+                        proposal_binding=request["payload"]["proposal_binding"],
+                        current=True, live=False)
                 else:
                     _context(before, request["payload"]["question"], current=True)
                 receipt([event], "agent.dispatch")
@@ -495,6 +489,11 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
             else:
                 if version == 2:
                     _validate_experiment_application(store, history, offset, state, event, receipt)
+                    state["application"] = event
+                    continue
+                if version == 3:
+                    pack_proposals.validate_application(store, history, offset, state, event)
+                    receipt(history[offset - 3:offset + 1], "agent.apply_experiment")
                     state["application"] = event
                     continue
                 require(request["payload"]["schema_version"] == 1,
@@ -607,6 +606,48 @@ class Agents:
         _specification(self.store, p)
         return self._write("agent_request", p, version=2)
 
+    def request_pack_experiment(self, *, budget: str, explanation_set: str, tree: str,
+                                proposal_binding: str, assignee: str, provider: str,
+                                wall_seconds: int = 120, max_output_bytes: int = 1048576) -> str:
+        """Admit one model call against a pack proposal binding.
+
+        The event is agent_request schema 3. The command is separate from
+        ``request_experiment`` so historical schema-2 fingerprints stay stable.
+        """
+        history = self._history()
+        states = _index(self.store, history)
+        admission = _get(history, budget, "agent_budget")
+        require(sum(s["request"]["payload"]["budget"] == budget for s in states.values())
+                < admission["payload"]["max_calls"], "model call admission budget exhausted")
+        require(_text(assignee), "experiment agent assignee required")
+        frozen = pack_proposals.load_proposal_binding(self.store, proposal_binding, live=True)
+        context = pack_proposals.context(self.store, history, budget=budget,
+            explanation_set=explanation_set, tree=tree, proposal_binding=proposal_binding,
+            current=True, live=True)
+        backend = _object(self.store.read(provider))
+        validate_provider(backend)
+        context_key = self.store.put_json(context)
+        prompt, schema, _ = profile(context["prompt_version"])
+        data = self.store.put_json(dict(provider=backend, prompt=prompt + "\n\n" + canonical(context).decode(),
+                                        output_schema=schema))
+        spec = self.store.put_json(dict(schema_version=1,
+            command=[sys.executable, "-I", "-S", "program.py", "input.dat", "--seed", "0"],
+            outputs={"proposal": "proposal.json"}, wall_seconds=wall_seconds,
+            max_output_bytes=max_output_bytes,
+            expected_inputs={"program.py": self.store.put(PROGRAM), "input.dat": data},
+            environment_fingerprint=fingerprint()))
+        p = dict(budget=budget, budget_hash=admission["hash"],
+                 question=context["question"]["id"], question_hash=context["question"]["hash"],
+                 explanation_set=explanation_set, explanation_set_hash=context["explanation_set"]["hash"],
+                 tree=tree, tree_hash=context["search_tree"]["hash"],
+                 proposal_binding=proposal_binding, pack_id=frozen["pack_id"],
+                 pack_version=frozen["pack_version"], pack_code_digest=frozen["pack_code_digest"],
+                 catalog=frozen["catalog"], assignee=assignee, provider=provider,
+                 specification=spec, context=context_key,
+                 execution_authority=establish_authority(self.store))
+        _specification(self.store, p)
+        return self._write("agent_request", p, version=3)
+
     def _assigned(self, request: str) -> dict[str, Any]:
         states = _index(self.store, self._history())
         require(request in states, "unknown agent request")
@@ -617,8 +658,16 @@ class Agents:
     def dispatch(self, *, request: str, workspace_token: str) -> str:
         state = self._assigned(request)
         require_authority(self.store, state["request"]["payload"]["execution_authority"])
-        if state["request"]["payload"]["schema_version"] == 2:
+        version = state["request"]["payload"]["schema_version"]
+        if version == 2:
             _experiment_current(self.store, self.store.events(), state["request"]["payload"])
+        elif version == 3:
+            payload = state["request"]["payload"]
+            current = pack_proposals.context(self.store, self.store.events(), budget=payload["budget"],
+                explanation_set=payload["explanation_set"], tree=payload["tree"],
+                proposal_binding=payload["proposal_binding"], current=True, live=True)
+            require(_object(self.store.read(payload["context"])) == current,
+                    "experiment proposal context is stale")
         else:
             _context(self.store.events(), state["request"]["payload"]["question"], current=True)
         require(state["dispatch"] is None and type(workspace_token) is str and re.fullmatch(r"[0-9a-f]{32}",workspace_token),
@@ -657,10 +706,12 @@ class Agents:
     def apply_experiment(self, *, request: str) -> str:
         state = self._assigned(request)
         request_event, response = state["request"], state["response"]
-        require(request_event["payload"]["schema_version"] == 2 and response is not None
+        require(request_event["payload"]["schema_version"] in {2, 3} and response is not None
                 and state["application"] is None, "experiment response missing or already applied")
         require(response["payload"]["assessment"]["proposal_status"] == "proposed",
                 "experiment response is not applicable")
+        if request_event["payload"]["schema_version"] == 3:
+            return self._apply_pack_experiment(state)
         p = request_event["payload"]
         _experiment_current(self.store, self.store.events(), p)
         raw_key = response["payload"]["assessment"]["artifacts"]["proposal"]
@@ -668,13 +719,11 @@ class Agents:
         experiment = proposal["experiment"]
         require(experiment is not None, "proposed experiment is missing")
         binding = _recipe_binding(self.store, p["recipe_binding"], current=True)
-        require(Path(synthetic_causal.__file__).read_bytes() == COMPILER_SOURCE_BYTES,
-                "loaded experiment compiler source changed on disk")
-        compiled = synthetic_causal.compile_recipe(experiment["parameters"], binding["world"])
+        compiled, source = legacy_experiment.compile_proposal(experiment["parameters"], binding["world"])
         source_keys = dict(implementation=self.store.put(compiled["implementation"]),
             reanalysis_implementation=self.store.put(compiled["reanalysis_implementation"]),
             data=self.store.put(compiled["data"]),
-            compiler_source=self.store.put(COMPILER_SOURCE_BYTES))
+            compiler_source=self.store.put(source))
         summary = {key:compiled[key] for key in ("domain", "parameters", "metric", "outputs",
                     "design", "analysis_plan", "stopping_rule", "statistical_design")}
         design = compiled["design"] + "\nFrozen model contrast: " + experiment["discriminating_contrast"]
@@ -703,6 +752,39 @@ class Agents:
             experiment_node_hash=node_event["hash"], limitations=proposal["limitations"],
             scientific_validity="not_assessed"), version=2)
 
+    def _apply_pack_experiment(self, state: dict[str, Any]) -> str:
+        """Freeze a pack protocol, its binding and one search node. No claim is written."""
+        from .domain_packs import admit_binding
+        request_event, response = state["request"], state["response"]
+        p = request_event["payload"]
+        current = pack_proposals.context(self.store, self.store.events(), budget=p["budget"],
+            explanation_set=p["explanation_set"], tree=p["tree"],
+            proposal_binding=p["proposal_binding"], current=True, live=True)
+        require(_object(self.store.read(p["context"])) == current, "experiment proposal context is stale")
+        raw_key = response["payload"]["assessment"]["artifacts"]["proposal"]
+        proposal = _proposal(self.store, state, self.store.read(raw_key))
+        experiment = proposal["experiment"]
+        require(experiment is not None, "proposed experiment is missing")
+        frozen = pack_proposals.load_proposal_binding(self.store, p["proposal_binding"], live=True)
+        admitted = admit_binding(self.store, self.actor, pack_proposals.preregister_request(
+            self.store, p, experiment["parameters"]))
+        node = Search(self.store, self.actor).add_node(
+            p["tree"], protocol=admitted["protocol"], action=experiment["action"],
+            components=experiment["components"], estimated_cost=frozen["planned_attempts"],
+            rationale=experiment["rationale"])
+        history = self.store.events()
+        plan_event = _get(history, admitted["protocol"], "protocol")
+        require(plan_event["payload"]["run_limit"] == frozen["planned_attempts"],
+                "compiled protocol run limit differs from the frozen proposal attempt bound")
+        node_event = _get(history, node, "experiment_node")
+        return self._write("agent_application", dict(
+            request=request_event["id"], request_hash=request_event["hash"],
+            response=response["id"], response_hash=response["hash"],
+            pack_binding=admitted["binding"], protocol=admitted["protocol"],
+            protocol_hash=plan_event["hash"], experiment_node=node,
+            experiment_node_hash=node_event["hash"], limitations=proposal["limitations"],
+            scientific_validity="not_assessed"), version=3)
+
 
 def agent_context(store: Store, history: list[dict[str, Any]], entity_ids: set[str]) -> list[dict[str, Any]]:
     states = _index(store, history)
@@ -712,7 +794,7 @@ def agent_context(store: Store, history: list[dict[str, Any]], entity_ids: set[s
         if applied is None:
             continue
         p = applied["payload"]
-        if p["schema_version"] == 2:
+        if p["schema_version"] in {2, 3}:
             if not ({p["protocol"], p["experiment_node"]} & entity_ids):
                 continue
             request = state["request"]["payload"]
@@ -720,6 +802,8 @@ def agent_context(store: Store, history: list[dict[str, Any]], entity_ids: set[s
             included.add(request["tree"])
             included.add(p["protocol"])
             included.add(p["experiment_node"])
+            if p["schema_version"] == 3:
+                included.add(p["pack_binding"])
             included.update(state[key]["id"] for key in ("request","dispatch","response","application"))
             included.update(event["id"] for event in planning_context(history,
                 _object(store.read(request["context"]))["planning_binding"]))
@@ -743,6 +827,8 @@ def agent_artifacts(store: Store, event: dict[str, Any]) -> set[str]:
         if p["schema_version"] == 2:
             keys.add(p["recipe_binding"])
             keys.add(_recipe_binding(store, p["recipe_binding"], current=False)["environment"])
+        elif p["schema_version"] == 3:
+            keys.update(pack_proposals.binding_artifacts(store, p["proposal_binding"]))
         return keys
     if event["kind"] == "agent_response":
         return {p["manifest"],*p["assessment"]["artifacts"].values()}
@@ -769,7 +855,7 @@ def agent_state(store: Store, request: str) -> dict[str, Any]:
         errors=assessment["errors"] if assessment else [], usage=assessment["usage"] if assessment else None,
         isolation="trusted local CLI; fresh context request, not authenticated or clean-room",
         scientific_validity="not_assessed")
-    if state["request"]["payload"]["schema_version"] == 2:
+    if state["request"]["payload"]["schema_version"] in {2, 3}:
         result.update(protocol=application.get("protocol") if application else None,
                       experiment_node=application.get("experiment_node") if application else None)
     return result
