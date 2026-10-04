@@ -63,13 +63,15 @@ def _record_hash(data: bytes) -> str:
 
 def build_wheel(directory: Path, name: str = "episteme_fixture_dep", version: str = "0.1.0",
                 body: bytes = b"VALUE = 41\n\ndef answer():\n    return VALUE + 1\n") -> Path:
-    """A minimal valid pure-Python wheel, built deterministically with zipfile."""
+    """A minimal valid pure-Python wheel with one console script, built with zipfile."""
     directory.mkdir(parents=True, exist_ok=True)
     dist = f"{name}-{version}.dist-info"
     files = {
         f"{name}/__init__.py": body,
         f"{dist}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode(),
         f"{dist}/WHEEL": b"Wheel-Version: 1.0\nGenerator: episteme-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        # The installer turns this into a launcher that embeds the venv interpreter path.
+        f"{dist}/entry_points.txt": f"[console_scripts]\nepisteme-fixture = {name}:answer\n".encode(),
     }
     rows = [f"{path},{_record_hash(data)},{len(data)}" for path, data in files.items()]
     files[f"{dist}/RECORD"] = ("\n".join([*rows, f"{dist}/RECORD,,"]) + "\n").encode()

@@ -30,6 +30,7 @@ from .review_submission import ReviewSubmission
 from .followup import Followup
 from .followup_execution import FollowupExecution
 from .reporting import PaperBuilder
+from .reproduction import Reproduction
 from .search import Search
 from .store import Store, canonical
 
@@ -133,6 +134,8 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "execution.dispatch_v2": (Execution, Execution.dispatch_v2, frozenset({"executor", "replicator"})),
     "execution.dispatch_v2": (Execution, Execution.dispatch_v2, frozenset({"executor", "replicator"})),
     "execution.finalize": (Execution, Execution.finalize, frozenset({"executor", "replicator"})),
+    "reproduction.dispatch": (Reproduction, Reproduction.dispatch, frozenset({"executor", "replicator"})),
+    "reproduction.finalize": (Reproduction, Reproduction.finalize, frozenset({"executor", "replicator"})),
     "planning.question": (Planning, Planning.question, frozenset({"planner"})),
     "planning.explanation_set": (Planning, Planning.explanation_set, frozenset({"planner"})),
     "kernel.hypothesis": (Kernel, Kernel.hypothesis, frozenset({"planner"})),

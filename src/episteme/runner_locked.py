@@ -160,8 +160,8 @@ def materialize_environment(declaration: dict[str, Any], closure: Path, venv: Pa
     seconds = time.monotonic() - started
     probe = probe_interpreter(venv, declaration, host, tmp, deadline)
     lock = rules.lock_summary((closure / "uv.lock").read_bytes())
-    distributions = installed_distributions(venv, probe, lock)
-    inventory = inventory_tree(venv)
+    distributions, generated = installed_distributions(venv, probe, lock)
+    inventory = inventory_tree(venv, generated)
     record = dict(
         schema_version=1, kind="realized_environment", closure=_hash(_canonical(declaration)),
         installer=dict(tool="uv", version=observed, executable=uv, executable_sha256=_file_sha256(Path(uv)),
@@ -208,16 +208,22 @@ def _record_hash(value: str) -> str | None:
     return base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).hex()
 
 
-def installed_distributions(venv: Path, probe: dict[str, Any], lock: dict[str, Any]) -> list[dict[str, Any]]:
+def installed_distributions(venv: Path, probe: dict[str, Any], lock: dict[str, Any]
+                            ) -> tuple[list[dict[str, Any]], set[str]]:
     """Every installed dist-info: verified RECORD hashes and a content digest.
 
-    The content digest leaves out installer-written files, so the same wheel
-    installed on another host by the same lock yields the same value.
+    The content digest leaves out installer-written files and whatever RECORD
+    places in the venv script directory: console-script launchers and scripts
+    with rewritten shebangs embed the venv interpreter path. The same wheel
+    installed elsewhere by the same lock therefore yields the same value.
+    Returns the rows and the venv-relative paths of those generated scripts.
     """
     locked = {(row["name"], row["version"]) for row in lock["packages"]}
     rows = []
+    generated: set[str] = set()
     sites = sorted({Path(probe["purelib"]).resolve(), Path(probe["platlib"]).resolve()})
     root = venv.resolve()
+    scripts = _bin(root)
     for site in sites:
         if not site.is_dir():
             continue
@@ -242,7 +248,9 @@ def installed_distributions(venv: Path, probe: dict[str, Any], lock: dict[str, A
                     continue
                 if not target.is_file() or _file_sha256(target) != expected:
                     verified = False
-                if Path(path).parent.name != info.name or Path(path).name not in _VOLATILE:
+                if target.is_relative_to(scripts):
+                    generated.add(target.relative_to(root).as_posix())
+                elif Path(path).parent.name != info.name or Path(path).name not in _VOLATILE:
                     content.append([path, expected])
             installer = info / "INSTALLER"
             rows.append(dict(name=name, version=version, dist_info=info.name,
@@ -251,7 +259,7 @@ def installed_distributions(venv: Path, probe: dict[str, Any], lock: dict[str, A
                              content_sha256=_hash(_canonical(sorted(content)))))
             if not verified:
                 raise SetupError(f"installed files differ from RECORD: {name} {version}")
-    return rows
+    return rows, generated
 
 
 def _portable(path: str) -> bool:
@@ -264,12 +272,13 @@ def _portable(path: str) -> bool:
     return not (len(parts) >= 2 and parts[-2].endswith(".dist-info") and parts[-1] in _VOLATILE)
 
 
-def inventory_tree(root: Path) -> dict[str, Any]:
+def inventory_tree(root: Path, generated: set[str] = frozenset()) -> dict[str, Any]:
     """Every file and link below ``root`` with its digest; links are not followed.
 
     ``sha256`` covers everything and detects changes within one job directory.
-    ``portable_sha256`` omits activation scripts, pyvenv.cfg and installer-written
-    dist-info files, so equal installed content compares equal across locations.
+    ``portable_sha256`` omits activation scripts, pyvenv.cfg, installer-written
+    dist-info files and the ``generated`` scripts, so equal installed content
+    compares equal across locations.
     """
     entries, total = [], 0
     pending = [root]
@@ -290,7 +299,7 @@ def inventory_tree(root: Path) -> dict[str, Any]:
                 total += info.st_size
     entries.sort(key=lambda row: row["path"])
     portable = [row if "sha256" in row else dict(path=row["path"], link=True)
-                for row in entries if _portable(row["path"])]
+                for row in entries if _portable(row["path"]) and row["path"] not in generated]
     return dict(files=entries, count=len(entries), bytes=total, sha256=_hash(_canonical(entries)),
                 portable_sha256=_hash(_canonical(portable)))
 

@@ -183,6 +183,10 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
         result = Kernel._result(history, state["run"]["id"])
         require(result is None or state["finalized"] is not None,
                 "managed run result has no verified execution finalization")
+    from .reproduction import KINDS as REPRODUCTION_KINDS
+    if any(event["kind"] in REPRODUCTION_KINDS for event in history):
+        from .reproduction import validate
+        validate(store, history, jobs)
     return jobs
 
 
@@ -253,9 +257,13 @@ def _check_completion(store: Store, state: dict[str, Any], manifest: str,
 
 
 def execution_context(store: Store, history: list[dict[str, Any]], run_ids: set[str]) -> list[dict[str, Any]]:
+    from .reproduction import context as reproduction_context
     states = _index(store, history)
     selected = {e["id"] for state in states.values() if state["run"]["id"] in run_ids
                 for e in (state["job"], state["dispatch"], state["finalized"]) if e is not None}
+    # Reproductions of these runs are context for review, never evidence of the claim.
+    selected.update(id for state in states.values() if state["run"]["id"] in run_ids
+                    for id in reproduction_context(state))
     return [event for event in history if event["id"] in selected]
 
 
@@ -275,6 +283,9 @@ def execution_artifacts(store: Store, event: dict[str, Any]) -> set[str]:
             from .execution_locked import completion_artifacts
             keys |= completion_artifacts(record)
         return keys
+    if event["kind"].startswith("execution_reproduction"):
+        from .reproduction import artifacts
+        return artifacts(store, event)
     return set()
 
 
@@ -470,9 +481,19 @@ def reconcile_job(store: Store, job: str) -> dict[str, Any]:
         CommandService(store).execute(_envelope(store, state, "execution.finalize", dict(job=job, manifest=manifest)))
         locked.cleanup(workspace)
         return job_state(store, job)
+    manifest = _import_completion(store, state, workspace)
+    if manifest is None:
+        return job_state(store, job)
+    _check_completion(store, state, manifest)
+    CommandService(store).execute(_envelope(store, state, "execution.finalize", dict(job=job, manifest=manifest)))
+    return job_state(store, job)
+
+
+def _import_completion(store: Store, state: dict[str, Any], workspace: Path) -> str | None:
+    """Import a finished v1 completion and its outputs into CAS; None while unknown."""
     completion = workspace / "completion.json"
     if not completion.is_file():
-        return job_state(store, job)
+        return None
     from .runner_backend import plain_file
     require(plain_file(completion) and completion.stat().st_size <= 1024 * 1024, "unsafe or oversized completion")
     with completion.open("rb") as stream:
@@ -481,7 +502,7 @@ def reconcile_job(store: Store, job: str) -> dict[str, Any]:
     record = _object(data)
     require(record.get("identity") == _identity(state), "completion identity mismatch")
     if record.get("status") == "unknown":
-        return job_state(store, job)
+        return None
     # Hash and import bytes from only the registered basenames; no manifest-controlled traversal.
     entries = record.get("outputs")
     require(type(entries) is dict and set(entries) <= set(state["spec"]["outputs"]), "invalid completion outputs")
@@ -496,7 +517,4 @@ def reconcile_job(store: Store, job: str) -> dict[str, Any]:
         require(len(content) == item.get("bytes") and digest(content) == item.get("sha256"), "completion output hash mismatch")
         self_key = store.put(content)
         require(self_key == item["sha256"], "output changed during capture")
-    manifest = store.put(data)
-    _check_completion(store, state, manifest)
-    CommandService(store).execute(_envelope(store, state, "execution.finalize", dict(job=job, manifest=manifest)))
-    return job_state(store, job)
+    return store.put(data)

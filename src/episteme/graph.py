@@ -55,6 +55,8 @@ class NodeKind(str, Enum):
     EXECUTION_JOB = "execution_job"
     EXECUTION_DISPATCH = "execution_dispatch"
     EXECUTION_FINALIZED = "execution_finalized"
+    EXECUTION_REPRODUCTION_DISPATCH = "execution_reproduction_dispatch"
+    EXECUTION_REPRODUCTION = "execution_reproduction"
     RESEARCH_QUESTION = "research_question"
     EXPLANATION_SET = "explanation_set"
     HYPOTHESIS = "hypothesis"
@@ -106,6 +108,7 @@ class Relation(str, Enum):
     EXECUTION_DISPATCH = "execution_dispatch"
     EXECUTION_RESULT = "execution_result"
     EXECUTION_ARTIFACT = "execution_artifact"
+    EXECUTION_REPRODUCED = "execution_reproduced"
     REVIEW_EXECUTION = "review_execution"
     QUESTION_PARENT = "question_parent"
     EXPLANATION_QUESTION = "explanation_question"
@@ -480,6 +483,11 @@ class _Projection:
                 if kind == "execution_finalized":
                     self.ref(p["dispatch"], "execution_dispatch", Relation.EXECUTION_DISPATCH, "dispatch")
                     self.ref(p["result"], "result", Relation.EXECUTION_RESULT, "result")
+                elif kind == "execution_reproduction_dispatch":
+                    self.ref(p["finalized"], "execution_finalized", Relation.EXECUTION_REPRODUCED, "finalized")
+                elif kind == "execution_reproduction":
+                    self.ref(p["dispatch"], "execution_reproduction_dispatch", Relation.EXECUTION_DISPATCH,
+                             "dispatch")
             for key in sorted(execution_artifacts(self.store, e)):
                 self.blob(key, Relation.EXECUTION_ARTIFACT, "execution_provenance")
             return

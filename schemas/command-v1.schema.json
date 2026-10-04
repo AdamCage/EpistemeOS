@@ -31,6 +31,7 @@
           "agent.register_budget", "agent.request_hypotheses", "agent.request_experiment",
           "agent.dispatch", "agent.finalize", "agent.apply_hypotheses", "agent.apply_experiment",
           "execution.enqueue", "execution.dispatch", "execution.dispatch_v2", "execution.finalize",
+          "reproduction.dispatch", "reproduction.finalize",
           "batch.plan", "batch.enqueue_slot", "batch.settle", "analysis.apply", "domain.bind", "proposal.prepare_next",
           "pack.preregister", "pack.analyse",
           "replanning.record_review", "replanning.resolve_obligation",

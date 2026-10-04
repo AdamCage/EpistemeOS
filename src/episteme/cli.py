@@ -20,7 +20,7 @@ from .reporting import PaperBuilder, export_store, inspect_store
 from .recovery import backup, restore
 from .store import Store
 from .execution import freeze_environment, job_state, reconcile_job, work_job
-from . import execution_locked
+from . import execution_locked, reproduction
 from .execution_locked import OPERATIONS as LOCKED_OPERATIONS, add_arguments as add_locked_arguments
 from .execution_locked import run_cli as run_locked_cli
 
@@ -95,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             operation.add_argument("job", help="Recorded execution_job ID")
         operation.add_argument("--root", type=Path, required=True)
     execution_locked.add_arguments(execution_ops)
+    reproduction.add_arguments(subcommands)
     batches = subcommands.add_parser("batch", help="Resume a frozen local attempt roster; no scientific approval")
     batch_ops = batches.add_subparsers(dest="operation", required=True)
     for name in ("status", "advance"):
@@ -230,6 +231,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             status = 0
         elif args.command == "execution" and args.operation in execution_locked.OPERATIONS:
             result, status = execution_locked.run_cli(args)
+        elif args.command == "reproduce":
+            result, status = reproduction.run_cli(args)
         elif args.command == "execution":
             if args.operation != "environment" and not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
