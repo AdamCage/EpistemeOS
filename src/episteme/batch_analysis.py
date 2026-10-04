@@ -1,7 +1,10 @@
 """Receipt-backed admission of one frozen analysis proposal for a completed batch.
 
-The adapter is a trusted local caller. Its report is provenance for a bounded
-claim, not a scientific verdict. A separate planner command assigns review.
+The adapter is trusted local code. Since ADR 0018 the command recomputes the
+proposal with the registered adapter on the same snapshot and admits only an
+identical one; this shows which code produced the claim, not that it is right.
+Its report is provenance for a bounded claim, not a scientific verdict. A
+separate planner command assigns review.
 """
 
 from __future__ import annotations
@@ -26,6 +29,14 @@ _EVENT_FIELDS = {"schema_version", "batch", "batch_hash", "settlement", "settlem
                  "task_id", "reviewer_actor", "runs", "results", "scientific_validity"}
 _REQUEST_FIELDS = {"batch", "expected_settlement", "proposal", "adapter_source_digest",
                    "reviewer_actor"}
+# Schema 2 records that the command recomputed the proposal; schema 1 did not.
+PROPOSAL_ORIGIN = "recomputed_by_registered_adapter_at_admission"
+UNVERIFIED_ORIGIN = "caller_submitted_unverified"
+
+
+def analysis_provenance(event: dict[str, Any]) -> str:
+    """How the admitted proposal was established; historical schema 1 was never recomputed."""
+    return event["payload"].get("proposal_origin", UNVERIFIED_ORIGIN)
 
 
 def _proposal(value: Any) -> dict[str, Any]:
@@ -140,9 +151,10 @@ def _context(store: Store, history: list[dict[str, Any]], *, batch: str,
 
 def _payload(state: dict[str, Any], claim: dict[str, Any], proposal: dict[str, Any],
              proposal_digest: str, adapter_source_digest: str, task_id: str,
-             reviewer_actor: str) -> dict[str, Any]:
+             reviewer_actor: str, *, schema_version: int = 2) -> dict[str, Any]:
     plan, settlement, terminal = state["plan"], state["settlement"], state["terminal"]
-    return dict(schema_version=1, batch=plan["id"], batch_hash=plan["hash"],
+    origin = {} if schema_version == 1 else dict(proposal_origin=PROPOSAL_ORIGIN)
+    return dict(schema_version=schema_version, **origin, batch=plan["id"], batch_hash=plan["hash"],
                 settlement=settlement["id"], settlement_hash=settlement["hash"],
                 terminal=terminal["id"], terminal_hash=terminal["hash"],
                 protocol=plan["payload"]["protocol"], protocol_hash=plan["payload"]["protocol_hash"],
@@ -192,9 +204,15 @@ def _index(store: Store, history: list[dict[str, Any]], *,
         protocol = Kernel._get(before, state["plan"]["payload"]["protocol"], "protocol")
         require(claim["payload"] == _claim_payload(protocol, proposal, state["settlement"]["payload"]["runs"]),
                 "analysis claim differs from frozen proposal and full roster")
+        # Schema 1 events predate recomputation at admission and stay valid
+        # history; replay checks structure only and never reruns adapter code.
+        version = analysis["payload"].get("schema_version")
+        require(version in (1, 2), "unsupported batch analysis schema")
         expected = _payload(state, claim, proposal, proposal_digest,
-                            args["adapter_source_digest"], task_id, args["reviewer_actor"])
-        require(set(analysis["payload"]) == _EVENT_FIELDS and analysis["payload"] == expected,
+                            args["adapter_source_digest"], task_id, args["reviewer_actor"],
+                            schema_version=version)
+        fields = _EVENT_FIELDS if version == 1 else _EVENT_FIELDS | {"proposal_origin"}
+        require(set(analysis["payload"]) == fields and analysis["payload"] == expected,
                 "analysis event differs from frozen evidence")
         require(store.read(proposal_digest) == canonical(proposal),
                 "analysis proposal artifact differs from original command")
@@ -240,6 +258,18 @@ class BatchAnalysis:
         require(pack_lineage(history, protocol["id"]) is None,
                 "a pack-bound protocol lineage admits analyses only through pack.analyse")
         validated = _proposal(proposal)
+        # ADR 0018: admit only what the registered adapter computes on this snapshot,
+        # as pack.analyse does for pinned pack hooks.
+        from .domains.registry import legacy_analysis_adapter
+        adapter, source = legacy_analysis_adapter(validated["adapter_id"])
+        require((adapter.adapter_id, adapter.adapter_version)
+                == (validated["adapter_id"], validated["adapter_version"]),
+                "analysis adapter identity differs from the registered adapter")
+        require(digest(source) == adapter_source_digest,
+                "analysis adapter source differs from the registered adapter module")
+        recomputed = _proposal(adapter.propose(self.store, state))
+        require(canonical(recomputed) == canonical(validated),
+                "submitted proposal differs from what the registered adapter computes on this snapshot")
         require(self.store.put_json(validated) == proposal_digest,
                 "analysis proposal digest mismatch")
         kernel = Kernel(self.store, self.actor)

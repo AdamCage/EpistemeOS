@@ -874,14 +874,14 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 
 Раздел обновляется по мере исправлений; разделы 1–8 описывают снимок `da6aa2a` и не меняются. Исправления семантики review, claims и paper ведёт [ADR 0018](decisions/0018-claim-families-and-review-admission.md), принятый 4 октября 2026 года координирующим агентом по делегированию пользователя. «Исправлено» означает: PoC находки стал регрессионным тестом, который падает на коде до исправления и проходит после него; номера прогонов — в [validation.md](validation.md). Шаг ADR указан по его разделу 9.
 
-Последняя проверка: 4 октября 2026, шаг 3 ADR 0018.
+Последняя проверка: 4 октября 2026, шаг 4 ADR 0018.
 
 | ID | Статус | Где исправляется |
 | --- | --- | --- |
 | A-01 | **исправлено** (шаг 2): veto и obligations действуют на семейство claim; PoC — `test_resubmitted_claim_inherits_family_veto_and_obligations` (typed и legacy reject), перерегистрация на тех же bytes — `test_reregistered_protocol_on_same_bytes_joins_the_family` | ADR 0018, шаг 2 |
 | A-02 | **исправлено** (шаг 2): resolution засчитывается только для своего claim; PoC — `test_resolution_applies_only_to_the_claim_it_evaluated`, lineage потомка — `test_descendant_protocol_paper_needs_its_own_resolution` | ADR 0018, шаг 2 |
 | A-03 | **исправлено** (шаг 3): привязка пакета управляет линией `parent`; PoC — `test_amendment_of_pack_bound_protocol_is_rejected`, путь через `followup.apply` — `test_followup_of_pack_bound_claim_is_rejected`, перерегистрация закреплённых bytes — `test_legacy_root_cannot_reuse_pack_pinned_bytes`, история эпохи `da6aa2a` — `test_stray_claim_on_pack_lineage_fails_gate` | ADR 0018, шаг 3 |
-| A-04 | не исправлено | ADR 0018, шаг 4 |
+| A-04 | **исправлено для новых admissions** (шаг 4): `analysis.apply` пересчитывает proposal зарегистрированным адаптером; PoC — `test_analysis_apply_rejects_a_proposal_the_adapter_did_not_compute`. Approval по историческому анализу schema 1 без пересчёта — шаг 7 | ADR 0018, шаги 4 и 7 |
 | A-05 | не исправлено | ADR 0018, шаг 8 |
 | A-06 | не исправлено | ADR 0018, шаг 7 |
 | A-07 | не исправлено | ADR 0018, шаг 8 |

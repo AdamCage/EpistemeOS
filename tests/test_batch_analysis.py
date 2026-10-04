@@ -215,6 +215,44 @@ class BatchAnalysisTests(unittest.TestCase):
         with Store(recovered, read_only=True) as store:
             self.assertEqual(analysis_state(store, batch)["status"], "awaiting_review")
 
+    def _apply(self, batch, proposal, source_digest):
+        state = batch_index(self.store, self.store.events())[batch]
+        return CommandService(self.store).execute(dict(
+            context=dict(command_id=f"direct-{uuid4().hex}", expected_revision=len(self.store.events()),
+                         actor=self.analyst.id, role="analyst", study_id=self.fixture.study,
+                         correlation_id="adr0018-a04", causation_id=None),
+            request=dict(version=1, action="analysis.apply", payload=dict(
+                batch=batch, expected_settlement=state["settlement"]["id"], proposal=proposal,
+                adapter_source_digest=source_digest, reviewer_actor=self.reviewer))))
+
+    def test_analysis_apply_rejects_a_proposal_the_adapter_did_not_compute(self):
+        # Audit finding A-04: an analyst's own proposal under the adapter's ID and digest.
+        batch = self._complete()
+        state = batch_index(self.store, self.store.events())[batch]
+        honest = self.adapter.propose(self.store, state)
+        self.assertEqual((honest["outcome"], honest["inference_mode"]), ("inconclusive", "exploratory"))
+        source = self.store.put(Path(inspect.getfile(type(self.adapter))).read_bytes())
+        forged = dict(honest, outcome="supports",
+                      statement="The treatment causes the outcome in this population.")
+        drifted = self.store.put(b"# a different adapter source\n")
+        before = self.store.export(), self.store.export_receipts()
+        with self.assertRaisesRegex(ValueError, "registered adapter computes"):
+            self._apply(batch, forged, source)
+        self.assertEqual((self.store.export(), self.store.export_receipts()), before)
+        with self.assertRaisesRegex(ValueError, "adapter source differs"):
+            self._apply(batch, honest, drifted)
+        self.assertEqual((self.store.export(), self.store.export_receipts()), before)
+        admitted = self._apply(batch, honest, source)
+        history = self.store.events()
+        analysis = Kernel._get(history, admitted["analysis"], "batch_analysis")
+        self.assertEqual(analysis["payload"]["schema_version"], 2)
+        self.assertEqual(analysis["payload"]["proposal_origin"],
+                         "recomputed_by_registered_adapter_at_admission")
+        self.assertEqual(Kernel._get(history, admitted["claim"], "claim")["payload"]["outcome"],
+                         "inconclusive")
+        self.assertIn(admitted["analysis"], analysis_index(self.store, history))
+        ResearchGraph.from_store(self.store)
+
 
 if __name__ == "__main__":
     unittest.main()

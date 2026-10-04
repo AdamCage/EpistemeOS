@@ -36,6 +36,29 @@ PACKS: dict[str, str] = {
     "afterlife_seed_v1": "episteme.domains.packs.afterlife_seed_v1",
 }
 
+# adapter_id -> (module, class) of the legacy batch analysis adapters that
+# analysis.apply recomputes (ADR 0013-0015, ADR 0018). Explicit, no discovery.
+LEGACY_ANALYSIS_ADAPTERS: dict[str, tuple[str, str]] = {
+    "synthetic_causal_v1": ("episteme.domains.synthetic_batch_analysis",
+                            "SyntheticCausalBatchAnalysisAdapter"),
+    "afterlife_seed_v1": ("episteme.domains.afterlife_seed_batch_analysis",
+                          "AfterlifeSeedBatchAnalysisAdapter"),
+}
+
+
+def legacy_analysis_adapter(adapter_id: str) -> tuple[Any, bytes]:
+    """A registered legacy adapter instance and the bytes of its module source.
+
+    The source digest identifies the code that will run; like a pack, the
+    adapter remains trusted local code in the kernel process.
+    """
+    if adapter_id not in LEGACY_ANALYSIS_ADAPTERS:
+        raise ValueError(f"no registered legacy analysis adapter: {adapter_id}")
+    module_name, class_name = LEGACY_ANALYSIS_ADAPTERS[adapter_id]
+    module = importlib.import_module(module_name)
+    return getattr(module, class_name)(), Path(module.__file__).read_bytes()
+
+
 HOOKS = ("describe", "validate_parameters", "compile_protocol", "compile_execution",
          "validate_protocol", "validate_outputs", "recompute_metrics", "analyse")
 CAPTURE_HOOK = "capture"

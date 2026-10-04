@@ -164,8 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "analysis":
             from .analysis_controller import (advance_batch_analysis, advance_pack_analysis,
                                               analysis_state, bound_analysis)
-            from .domains.synthetic_batch_analysis import SyntheticCausalBatchAnalysisAdapter
-            from .domains.afterlife_seed_batch_analysis import AfterlifeSeedBatchAnalysisAdapter
+            from .domains.registry import legacy_analysis_adapter
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
             with _opened(args.root, read_only=args.operation == "status") as store:
@@ -182,12 +181,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if bound["kind"] == "pack":
                         result = advance_pack_analysis(store, args.batch, **actors)
                     else:
-                        legacy = {"synthetic_causal_v1": SyntheticCausalBatchAnalysisAdapter,
-                                  "afterlife_seed_v1": AfterlifeSeedBatchAnalysisAdapter}
-                        if bound["id"] not in legacy:
-                            raise ValueError(f"no legacy analysis adapter for {bound['id']}")
-                        result = advance_batch_analysis(store, args.batch, adapter=legacy[bound["id"]](),
-                                                        **actors)
+                        adapter, _ = legacy_analysis_adapter(bound["id"])
+                        result = advance_batch_analysis(store, args.batch, adapter=adapter, **actors)
             status = 0
         elif args.command == "pack":
             from .domain_packs import describe_pack, store_capture, verify
