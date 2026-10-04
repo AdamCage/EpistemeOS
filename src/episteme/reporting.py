@@ -110,7 +110,14 @@ def paper_status(store: Store, history: list[dict[str, Any]], paper: dict[str, A
 
 
 def inspect_store(store: Store) -> dict[str, Any]:
-    return _summary(store, store.events())
+    """Re-verify the chain and receipts, then summarize. This is not a Graph replay.
+
+    ``events()`` already checks the chain (ADR 0017). Receipts are checked here
+    so a tampered delivery ledger fails inspect instead of being omitted.
+    """
+    history = store.events()
+    store.receipts()
+    return _summary(store, history)
 
 
 def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict[str, Any]]:

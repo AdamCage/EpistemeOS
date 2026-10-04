@@ -12,7 +12,7 @@ uv run episteme command --root .research/command-example --input command.json
 uv run episteme receipts --root .research/command-example
 ```
 
-Оба первых вызова возвращают одинаковый event ID. Повтор после перезапуска либо других событий также возвращает первоначальный результат. Отдельный query `inspect`/`gate` показывает актуальное состояние. `meaning="historical_command_commit"` не означает актуального approval или успешного исполнения эксперимента.
+Оба первых вызова возвращают одинаковый event ID. Повтор после перезапуска либо других событий также возвращает первоначальный результат. `inspect` заново проверяет цепочку и квитанции, затем показывает состояние; это не replay Graph. `gate` считает mechanical gate claim и сам квитанции не перепроверяет. `meaning="historical_command_commit"` не означает актуального approval или успешного исполнения эксперимента.
 
 В Python:
 

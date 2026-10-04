@@ -5,9 +5,13 @@ Fixtures are synthetic. These checks do not establish scientific validity.
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
+import os
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from uuid import uuid4
@@ -322,6 +326,53 @@ class ReturnedRecordTests(unittest.TestCase):
             self.assertEqual(store.receipts()[0]["context"]["actor"], ACTOR)
             self.assertEqual((store.verification_counts["event_rows_verified"],
                               store.verification_counts["receipt_rows_verified"]), verified)
+
+
+def invoke(*args: str) -> tuple[int, dict]:
+    environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
+    process = subprocess.run(
+        [sys.executable, "-m", "episteme", *args], env=environment, capture_output=True,
+        text=True, encoding="utf-8", timeout=60, check=False)
+    raw = process.stdout if process.returncode == 0 else process.stderr
+    return process.returncode, json.loads(raw)
+
+
+class InspectVerificationTests(unittest.TestCase):
+    """A-19: inspect fails when the chain or a receipt does not verify."""
+
+    def store_with_note(self) -> Path:
+        temporary = TemporaryDirectory(prefix="episteme-inspect-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "state"
+        with Store(root) as store:
+            note(store, "fixture note")
+        return root
+
+    def test_inspect_fails_on_a_flipped_payload_bit(self):
+        root = self.store_with_note()
+        with closing(sqlite3.connect(root / "state.sqlite3")) as database:
+            database.execute("DROP TRIGGER events_no_update")
+            text = database.execute("SELECT payload FROM events").fetchone()[0]
+            flipped = text.replace("fixture", "fixturE", 1)
+            self.assertNotEqual(flipped, text)
+            database.execute("UPDATE events SET payload = ?", (flipped,))
+            database.commit()
+        status, body = invoke("inspect", "--root", str(root))
+        self.assertEqual(status, 2)
+        self.assertIn("event chain corrupt", body["error"])
+
+    def test_inspect_fails_on_a_tampered_receipt(self):
+        root = self.store_with_note()
+        status, body = invoke("inspect", "--root", str(root))
+        self.assertEqual(status, 0)
+        self.assertEqual(body["event_count"], 1)
+        with closing(sqlite3.connect(root / "state.sqlite3")) as database:
+            database.execute("DROP TRIGGER command_receipts_no_update")
+            database.execute("UPDATE command_receipts SET hash = ?", ("f" * 64,))
+            database.commit()
+        status, body = invoke("inspect", "--root", str(root))
+        self.assertEqual(status, 2)
+        self.assertIn("checksum mismatch", body["error"])
 
 
 if __name__ == "__main__":
