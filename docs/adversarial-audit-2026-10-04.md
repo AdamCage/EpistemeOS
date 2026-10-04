@@ -874,7 +874,7 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 
 Раздел обновляется по мере исправлений; разделы 1–8 описывают снимок `da6aa2a` и не меняются. Исправления семантики review, claims и paper ведёт [ADR 0018](decisions/0018-claim-families-and-review-admission.md), принятый 4 октября 2026 года координирующим агентом по делегированию пользователя. «Исправлено» означает: PoC находки стал регрессионным тестом, который падает на коде до исправления и проходит после него; номера прогонов — в [validation.md](validation.md). Шаг ADR указан по его разделу 9.
 
-Последняя проверка: 4 октября 2026, шаг 10 ADR 0018 (все шаги ADR реализованы).
+Последняя проверка семантики review: 4 октября 2026, шаг 10 ADR 0018 (все шаги ADR реализованы). Хранилище перепроверено на `12a0404` и правится [ADR 0023](decisions/0023-storage-integrity.md).
 
 | ID | Статус | Где исправляется |
 | --- | --- | --- |
@@ -890,13 +890,13 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 | A-10 | **исправлено** (шаг 7): решения засчитывают approval только из проверенной цепочки `review.submit`; review с ролью не `reviewer` или от contributor по точной строке делает историю недействительной для Graph, `next_action` и paper. PoC — `test_raw_executor_approval_is_rejected_by_graph_and_decisions`, `test_raw_reviewer_approval_is_advisory`. Владелец файлов, способный переписать всю цепочку вместе с receipts, остаётся за границей модели угроз | ADR 0018, шаг 7 |
 | A-11 | вне ADR 0018 | будущий ADR профиля исполнения; ADR 0017 код пакетов не менял |
 | A-12 | вне ADR 0018 | будущий ADR профиля исполнения; ADR 0017 код исполнения не менял |
-| A-13 | вне ADR 0018; **перепроверить** | ADR 0017 переписал проверку цепочки в `store.py`; triggers и `INSERT OR REPLACE` он не менял |
+| A-13 | **исправлено** (ADR 0023, шаг 1): на `12a0404` `INSERT OR REPLACE` ещё переписывал строку при установленных triggers. `BEFORE INSERT` отвергает повтор ключа и разрыв `seq` у events и повтор `command_id` у receipts; UPDATE/DELETE по-прежнему отвергаются. Обычный append проходит. Повторное чтение проверяет каждую строку один раз, как в ADR 0017. PoC — `test_insert_or_replace_cannot_rewrite_events_or_receipts`. Согласованная перепись файла базы остаётся границей без внешнего checkpoint | ADR 0023 |
 | A-14 | **исправлено** (шаги 6 и 8): повторное назначение того же reviewer на тот же basis разрешено, пока нет submission, а завершённый неотправленный отрицательный ответ считается veto; тесты — `test_reassignment_after_unsubmitted_response`, `test_unsubmitted_negative_response_vetoes`. Шаг 8 закрыл остаток: manifest v2 перечисляет `linked_open_findings` вне семейства, approval schema 3 подтверждает только их, а замечания внутри семейства обеспечивает veto. Тест — `test_blind_v2_lists_linked_open_findings_for_acknowledgement` | ADR 0018, шаги 6 и 8 |
-| A-15 | вне ADR 0018 | ADR 0017 `recovery.py` не менял |
-| A-16 | вне ADR 0018; **перепроверить** | ADR 0017 менял `store.py`; открытие Store и triggers, судя по diff, прежние |
+| A-15 | вне ADR 0018; **воспроизводится** на `12a0404` (команды внешнего digest нет) | ADR 0023 |
+| A-16 | вне ADR 0018; **воспроизводится** на `12a0404`: trigger с телом `SELECT 1` переживает reopen, DELETE принимается | ADR 0023 |
 | A-17 | **не исправлено ADR 0017** (проверено) | см. ниже |
-| A-18 | вне ADR 0018; **перепроверить** | ADR 0017 переписал разбор строк событий в `store.py` |
-| A-19 | вне ADR 0018; **перепроверить** | ADR 0017 переписал проверку receipts в `store.py`; `inspect` и `gate` в `cli.py` он оборачивал только в read scope |
+| A-18 | вне ADR 0018; **воспроизводится** на `12a0404`: неканонический текст payload с повторным ключом проходит `events()` | ADR 0023 |
+| A-19 | цепочка в `inspect` **уже закрыта ADR 0017** (на `12a0404` перевёрнутый бит payload даёт exit 2, `event chain corrupt`); квитанции `inspect` не читает и подмена receipt даёт exit 0 — это остаётся открытым | ADR 0017 для цепочки; ADR 0023 для квитанций |
 | A-20 | вне ADR 0018; перепроверить | ADR 0017 менял `Store.read` (memo в read scope); `put` прежний |
 | A-21 | вне ADR 0018 | изменения ADR 0017 в `cli.py` механические (read scope) |
 | A-22 | **исправлено** (шаги 5 и 7): канонические ASCII IDs и сравнение независимости по нормализованному ключу; PoC — `test_noncanonical_reviewer_variants_are_rejected`, граница команд — `test_noncanonical_actor_ids_are_rejected`. Исторический approval неканонического reviewer не засчитывается (шаг 7), тест — `test_historical_noncanonical_reviewer_cannot_approve`. Совпадение analyst с planner или executor по-прежнему допустимо (документированная граница) | ADR 0018, шаги 5 и 7 |

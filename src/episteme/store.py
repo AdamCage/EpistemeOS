@@ -1,7 +1,9 @@
 """Append-only event storage and content-addressed artifacts.
 
 This protects against accidental mutation, not a malicious process with filesystem
-access. An external checkpoint is necessary to detect a rewritten/truncated history.
+access. BEFORE INSERT triggers reject a duplicate key and a sequence gap, so
+INSERT OR REPLACE cannot rewrite a row while those triggers remain. An external
+checkpoint is still necessary to detect a rewritten or truncated history.
 
 Each Store instance keeps the event chain and receipts it has verified. A read
 reuses them only while a fingerprint of the database (SQLite data_version and
@@ -218,6 +220,10 @@ class Store:
                 BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
             CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
                 BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS events_no_insert BEFORE INSERT ON events
+                BEGIN SELECT RAISE(ABORT, 'events are append-only')
+                WHERE EXISTS (SELECT 1 FROM events WHERE seq = NEW.seq OR id = NEW.id)
+                   OR NEW.seq != COALESCE((SELECT MAX(seq) FROM events), 0) + 1; END;
             """)
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(events)")}
         if "schema_version" not in columns:
@@ -239,6 +245,11 @@ class Store:
                 CREATE TRIGGER IF NOT EXISTS command_receipts_no_delete
                     BEFORE DELETE ON command_receipts
                     BEGIN SELECT RAISE(ABORT, 'command receipts are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS command_receipts_no_insert
+                    BEFORE INSERT ON command_receipts
+                    BEGIN SELECT RAISE(ABORT, 'command receipts are append-only')
+                    WHERE EXISTS (SELECT 1 FROM command_receipts
+                                  WHERE command_id = NEW.command_id); END;
                 """)
                 self._receipt_table_known = True
         except BaseException:
