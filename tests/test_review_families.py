@@ -288,6 +288,87 @@ class ReconsiderationTests(unittest.TestCase):
             self.assertEqual(reader.next_action(claim_c)["action"], "replan")
 
 
+class AttemptLedgerTests(unittest.TestCase):
+    """Audit finding A-05: attempts under another protocol on the same bytes."""
+
+    def lab(self):
+        from tests.test_scientific_workflow import ScientificWorkflowTests
+        lab = ScientificWorkflowTests(
+            methodName="test_typed_null_result_preserves_mode_and_remains_scientifically_unassessed")
+        lab.setUp()
+        self.addCleanup(lab.doCleanups)
+        return lab
+
+    def attempt(self, lab, protocol, mean, *, status="completed", finish=True):
+        run = lab.executor.start_run(protocol, seed=7, implementation=lab.code,
+                                     environment=lab.environment, command=["x"])
+        if finish:
+            lab.executor.finish_run(run, status=status, outputs={
+                "raw_data": lab.data, "metrics": lab.store.put_json({"mean_difference": mean}),
+                "log": lab.store.put(f"fixture attempt {mean}".encode())})
+        return run
+
+    def paper(self, lab, claim):
+        writer = PaperBuilder(lab.store, Actor("writer-1", "writer"))
+        paper = writer.build(title="Fixture draft", claims=[claim],
+                             expected_bases={claim: current_basis(lab.store, claim)})
+        payload = Kernel._get(lab.store.events(), paper, "paper")["payload"]
+        return lab.store.read(payload["manuscript"]).decode("utf-8")
+
+    def test_foreign_attempt_on_same_bytes_reaches_blind_bundle_and_paper(self):
+        for typed in (True, False):
+            with self.subTest(typed=typed):
+                lab = self.lab()
+                design = {} if typed else dict(statistical_design=None)
+                first = lab.protocol(**design)
+                bad = self.attempt(lab, first, -9)
+                second = lab.protocol(**design)
+                claim = lab.claim_fixture(second, outcome="supports")
+                approved = submit_review(lab.store, claim, reviewer="fixture-reviewer")
+                manifest = json.loads(lab.store.read(approved["bundle"]))
+                self.assertEqual(manifest["policy"], "blind_initial_review_v2")
+                self.assertIn(first, [row["id"] for row in manifest.get("family", {}).get("protocols", [])])
+                rows = {row["run"]: row for row in manifest.get("family", {}).get("attempts", [])}
+                self.assertEqual((rows[bad]["status"], rows[bad]["metric_value"]), ("completed", -9))
+                self.assertEqual(lab.planner.next_action(claim)["action"], "paper_candidate")
+                manuscript = self.paper(lab, claim)
+                self.assertIn(f"| {bad} | {first} | 7 | primary attempt 1 | completed | mean_difference | -9 |",
+                              manuscript)
+
+    def test_unfinished_attempt_in_family_is_disclosed(self):
+        lab = self.lab()
+        first = lab.protocol(statistical_design=None)
+        unfinished = self.attempt(lab, first, 0, finish=False)
+        second = lab.protocol(statistical_design=None)
+        claim = lab.claim_fixture(second)
+        approved = submit_review(lab.store, claim, reviewer="fixture-reviewer")
+        manifest = json.loads(lab.store.read(approved["bundle"]))
+        rows = {row["run"]: row for row in manifest.get("family", {}).get("attempts", [])}
+        self.assertEqual(rows.get(unfinished, {}).get("status"), "incomplete_manual_run")
+        self.assertEqual(lab.planner.next_action(claim)["action"], "paper_candidate")
+        self.assertIn(f"Kernel disclosure: Family attempts without a recorded outcome", self.paper(lab, claim))
+
+    def test_family_attempt_after_approval_stales_it(self):
+        lab = self.lab()
+        first = lab.protocol(statistical_design=None)
+        second = lab.protocol(statistical_design=None)
+        claim = lab.claim_fixture(second)
+        approve(lab.store, claim, reviewer="fixture-reviewer")
+        self.assertEqual(lab.planner.next_action(claim)["action"], "paper_candidate")
+        self.attempt(lab, first, -9)
+        decision = lab.planner.next_action(claim)
+        self.assertEqual(decision["action"], "scientific_review", decision)
+        self.assertEqual([row["defect"] for row in decision.get("advisory_approvals", [])],
+                         ["approval predates later attempts in the claim family"])
+        before = lab.store.events()
+        with self.assertRaisesRegex(ValueError, "not eligible for paper"):
+            self.paper(lab, claim)
+        self.assertEqual(lab.store.events(), before)
+        # A fresh assignment sees the new attempt, and its approval counts again.
+        approve(lab.store, claim, reviewer="fixture-second-reviewer")
+        self.assertEqual(lab.planner.next_action(claim)["action"], "paper_candidate")
+
+
 class RawReviewTests(unittest.TestCase):
     """Audit finding A-10: review events appended around the command layer."""
 

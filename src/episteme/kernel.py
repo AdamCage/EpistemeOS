@@ -770,6 +770,18 @@ class Kernel:
                     successful_replicas.add(original["id"])
             except (GateError, IntegrityError, KeyError) as exc:
                 failures.append(str(exc))
+        design = p.get("statistical_design")
+        if design is not None and design["stopping_rule"]["kind"] == "fixed_sample":
+            # ADR 0018 §4.5: a fixed sample admits no new attempt once a seed's outcome was recorded.
+            observed: set[int] = set()
+            for run in primary:
+                seed = run["payload"]["seed"]
+                if seed in observed:
+                    failures.append(f"seed retried after an observed outcome: seed {seed}")
+                    break
+                result = self._result(history, run["id"])
+                if result is not None and {"raw_data", "metrics"} & set(result["payload"]["outputs"]):
+                    observed.add(seed)
         successful_primary = {e["id"] for e in primary if e["id"] in completed}
         seeds = {e["payload"]["seed"] for e in primary if e["id"] in completed}
         if seeds != set(p["seeds"]):
@@ -797,7 +809,7 @@ class Kernel:
     def _record_review(self, claim: str, *, verdict: str, rationale: str,
                        actions: list[str], expected_basis: str,
                        link_assessments: dict[str, dict[str, Any]] | None,
-                       allow_approval: bool = False) -> str:
+                       allow_approval: bool = False, acknowledgement_v3: bool = False) -> str:
         history = self._history()
         gate = self.gate(claim)
         # gate() may observe a newer state; never admit that against stale history.
@@ -817,10 +829,17 @@ class Kernel:
         require(verdict != "approve" or not actions, "approval cannot have unresolved actions")
         payload = dict(claim=claim, verdict=verdict, rationale=rationale, actions=actions, basis_hash=basis)
         if link_assessments is not None:
+            required = self._context_findings(history, claim)[1]
+            if acknowledgement_v3:
+                # ADR 0018 §4.3: only open opinions about linked claims outside the family.
+                from .review_assignment import linked_open_findings
+                required = {row["id"] for row in linked_open_findings(self.store, history, claim,
+                                                                      in_replay=False)}
+                admissible_refs = admissible_refs | required
             self._validate_assessments(link_assessments, set(context.link_ids), admissible_refs, verdict)
             if verdict == "approve":
                 acknowledged = {id for assessment in link_assessments.values() for id in assessment["evidence"]}
-                require(self._context_findings(history, claim)[1] <= acknowledged,
+                require(required <= acknowledged,
                         "approval must explicitly acknowledge every open review in the linked context")
                 accepted_replacements = {
                     self._get(history, id, "claim_link")["payload"]["target"]
@@ -840,7 +859,8 @@ class Kernel:
                                      [e for e in history if e["seq"] <= source["seq"]])
                     checked = self._gate_local(basis_history, source["id"])
                     require(checked["passed"], f"accepted link has mechanically unqualified source: {id}")
-            payload.update(review_schema_version=2, link_assessments=link_assessments)
+            payload.update(review_schema_version=3 if acknowledgement_v3 else 2,
+                           link_assessments=link_assessments)
         require(self.actor.role == "reviewer", f"{self.actor.role} cannot create review")
         require(verdict != "approve" or allow_approval, APPROVAL_PATH)
         return self._write(history, "review", payload, {"reviewer"})

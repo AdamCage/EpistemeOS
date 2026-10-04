@@ -209,6 +209,10 @@ class Admission:
         if (submission["payload"]["schema_version"] == 1
                 and Admission(self.store, prefix, replay=False).own_findings(actor, claim)["opinions"]):
             return "approval did not withdraw the reviewer's own open opinions"
+        # §4.1: a terminal result the reviewer's context did not contain makes the approval stale.
+        seen = Admission(self.store, self.history[:self.position[assignment["id"]]], replay=False)
+        if seen.family_ledger_digest(claim) != self.family_ledger_digest(claim):
+            return "approval predates later attempts in the claim family"
         return None
 
     def approvals(self, claim: str, basis: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -338,6 +342,121 @@ def admission(store: Store, history: list[dict[str, Any]], *, replay: bool = Tru
     if key not in cache:
         cache[key] = Admission(store, history, replay=replay)
     return cache[key]
+
+
+def _finite_metric(store: Store, key: str | None, metric: str) -> float | None:
+    if key is None:
+        return None
+    try:
+        value = json.loads(store.read(key)).get(metric)
+    except (UnicodeError, ValueError, AttributeError):
+        return None
+    if type(value) in (int, float) and value == value and abs(value) != float("inf"):
+        return value
+    return None
+
+
+def attempt_ledger(store: Store, history: list[dict[str, Any]], claim: str) -> dict[str, Any]:
+    """Every attempt of the claim's family and related registrations (ADR 0018 §4.1).
+
+    Related registrations share a hypothesis with the lineage but no protocol
+    edge; they are disclosed and never enter ``family_ledger_digest``. No entry
+    is labelled an exact rerun or new-data replication: current gates admit
+    only another program's analysis of the same data.
+    """
+    projection = admission(store, history, replay=False)
+    family = projection.lineage(claim)
+    lineage = set(family)
+    protocols = {event["id"]: event for event in history if event["kind"] == "protocol"}
+    hypotheses = {id for protocol in family for id in protocols[protocol]["payload"]["hypotheses"]}
+    related = [id for id, event in protocols.items() if id not in lineage
+               and hypotheses & set(event["payload"]["hypotheses"])]
+    runs = [event for event in history if event["kind"] == "run"
+            and event["payload"]["protocol"] in lineage | set(related)]
+    results = {event["payload"]["run"]: event for event in history if event["kind"] == "result"}
+    keys: dict[str, set[str]] = {id: set(protocol_data(protocols[id]["payload"])) for id in family}
+    for run in runs:
+        raw = results.get(run["id"], {}).get("payload", {}).get("outputs", {}).get("raw_data")
+        if run["payload"]["protocol"] in keys and isinstance(raw, str):
+            keys[run["payload"]["protocol"]].add(raw)
+    target = projection.claim_protocol[claim]
+    followups = {event["payload"]["protocol"] for event in history if event["kind"] == "replan_followup"}
+
+    def edge(id: str) -> str:
+        if id == target:
+            return "claim_protocol"
+        if protocols[id]["payload"].get("parent") in lineage:
+            return "amendment"
+        if id in followups:
+            return "follow_up"
+        if any(keys[id] & keys[other] for other in family if other != id):
+            return "shared_bytes"
+        return "supersedes"
+
+    jobs = {event["payload"]["run"]: event["id"] for event in history if event["kind"] == "execution_job"}
+    dispatched = {event["payload"]["job"] for event in history if event["kind"] == "execution_dispatch"}
+    finalized = {event["payload"]["job"] for event in history if event["kind"] == "execution_finalized"}
+    repetition = {}
+    for event in history:
+        if event["kind"] == "pack_binding":
+            from .domain_packs import replication
+            repetition[event["payload"]["protocol"]] = replication(event)["roster_repetition"]
+    numbers: dict[tuple[str, int], int] = {}
+    attempts = []
+    for run in runs:
+        p = run["payload"]
+        result = results.get(run["id"])
+        outputs = {} if result is None else result["payload"]["outputs"]
+        status = (result["payload"]["status"] if result is not None
+                  else ("unknown" if jobs[run["id"]] in dispatched else "queued") if run["id"] in jobs
+                  else "incomplete_manual_run")
+        row = dict(run=run["id"], run_hash=run["hash"], protocol=p["protocol"], seed=p["seed"],
+                   kind="reanalysis" if p["replicate_of"] else "primary",
+                   replicate_of=p["replicate_of"], status=status,
+                   result=None if result is None else result["id"],
+                   raw_data=outputs.get("raw_data"), metrics=outputs.get("metrics"),
+                   primary_metric=protocols[p["protocol"]]["payload"]["metric"],
+                   metric_value=_finite_metric(store, outputs.get("metrics"),
+                                               protocols[p["protocol"]]["payload"]["metric"]),
+                   reason=(result["payload"].get("reason", "")[:512]
+                           if status in {"failed", "cancelled"} else None),
+                   outputs_origin=("managed" if jobs.get(run["id"]) in finalized and result is not None
+                                   else "caller_declared"),
+                   roster_repetition=repetition.get(p["protocol"], "undeclared"),
+                   tier="family" if p["protocol"] in lineage else "related_registration")
+        if p["replicate_of"]:
+            original = results.get(p["replicate_of"])
+            row.update(replication_mode="same_data_reanalysis",
+                       metrics_artifact_shared_with_original=(
+                           original is not None and "metrics" in outputs
+                           and outputs["metrics"] == original["payload"]["outputs"].get("metrics")))
+        else:
+            numbers[(p["protocol"], p["seed"])] = numbers.get((p["protocol"], p["seed"]), 0) + 1
+            row["primary_attempt"] = numbers[(p["protocol"], p["seed"])]
+        attempts.append(row)
+    family_rows = [row for row in attempts if row["tier"] == "family"]
+    disclosures = []
+    pending = [row["run"] for row in family_rows
+               if row["status"] in {"unknown", "queued", "incomplete_manual_run"}]
+    if pending:
+        disclosures.append("Family attempts without a recorded outcome (unknown, queued or unfinished "
+                           f"manual runs): {', '.join(pending)}.")
+    retried = sorted({(row["protocol"], row["seed"]) for row in family_rows
+                      if row.get("primary_attempt", 1) > 1})
+    if retried:
+        disclosures.append("Seeds with more than one primary attempt: " + ", ".join(
+            f"seed {seed} of {protocol}" for protocol, seed in retried) + ".")
+    declared = [row["run"] for row in family_rows if row["result"] is not None
+                and row["outputs_origin"] == "caller_declared"]
+    if declared:
+        disclosures.append(f"Family evidence with caller-declared outputs, not managed execution records: "
+                           f"{len(declared)} runs.")
+    return dict(schema_version=1, claim=claim,
+                family_protocols=[dict(id=id, hash=protocols[id]["hash"], edge=edge(id)) for id in family],
+                related_registrations=[dict(id=id, hash=protocols[id]["hash"], edge="shared_hypotheses")
+                                       for id in related],
+                attempts=attempts, family_ledger_digest=projection.family_ledger_digest(claim),
+                disclosures=disclosures)
 
 
 def opinion_summary(opinion: dict[str, Any]) -> dict[str, Any]:

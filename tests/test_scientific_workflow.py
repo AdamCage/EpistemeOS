@@ -324,6 +324,39 @@ class ScientificWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(GateError, "already exposed"):
             self.protocol(design=self.design("confirmatory"))
 
+    def retried_seed(self, protocol, *, first_outputs=True):
+        """A failed seed-7 attempt, then a completed retry and its reanalysis (audit A-07 PoC)."""
+        failed = self.executor.start_run(protocol, seed=7, implementation=self.code,
+                                         environment=self.environment, command=["x"])
+        outputs = {"log": self.store.put(b"numerical instability")}
+        if first_outputs:
+            outputs.update(raw_data=self.store.put(b"raw -5.0"),
+                           metrics=self.store.put_json({"mean_difference": -5.0}))
+        self.executor.finish_run(failed, status="failed", outputs=outputs, reason="numerical instability")
+        claim = self.claim_fixture(protocol)
+        return failed, claim
+
+    def test_failed_attempt_metric_and_retried_seed_appear_in_paper(self):
+        from episteme.reporting import PaperBuilder
+        from review_paths import approve, current_basis
+        failed, claim = self.retried_seed(self.protocol(statistical_design=None))
+        self.assertTrue(self.planner.gate(claim)["passed"])
+        approve(self.store, claim, reviewer="fixture-independent-reviewer")
+        paper = PaperBuilder(self.store, Actor("fixture-writer", "writer")).build(
+            title="Fixture draft", claims=[claim], expected_bases={claim: current_basis(self.store, claim)})
+        manuscript = self.store.read(self.event(paper)["payload"]["manuscript"]).decode("utf-8")
+        self.assertIn(f"| {failed} | failed: numerical instability | 7 | mean_difference | -5.0 |", manuscript)
+        self.assertIn("Seeds with more than one primary attempt: seed 7", manuscript)
+
+    def test_fixed_sample_retry_after_observed_outcome_fails_gate(self):
+        _, claim = self.retried_seed(self.protocol())
+        gate = self.planner.gate(claim)
+        self.assertFalse(gate["passed"])
+        self.assertIn("seed retried after an observed outcome: seed 7", gate["failures"])
+        # A technical retry that recorded no outcome stays admissible and is only disclosed.
+        _, technical = self.retried_seed(self.protocol(), first_outputs=False)
+        self.assertTrue(self.planner.gate(technical)["passed"], self.planner.gate(technical)["failures"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,40 @@ class ClaimWorkflowTests(unittest.TestCase):
                 link_assessments=self.assessments(claim) if assessments is None else assessments)
         return reviewer.review(claim, **args)
 
+    def test_blind_v2_lists_linked_open_findings_for_acknowledgement(self):
+        # Audit finding A-14: a blind reviewer cannot acknowledge a review it never received.
+        from review_paths import assign, deliver, FIXTURE_RATIONALE
+        cases = (("contradicts", "paper_candidate"), ("supersedes", "replan"))
+        for relation, expected in cases:
+            with self.subTest(relation=relation):
+                a, b = self.branch(f"A-{relation}"), self.branch(f"B-{relation}")
+                rejected = self.review(a, actor="fixture-r1-reviewer", verdict="request_changes")
+                link = self.link(b, a, relation)
+                assigned = assign(self.store, b, reviewer="fixture-r2-reviewer")
+                manifest = json.loads(self.store.read(assigned["bundle"]))
+                listed = [row["id"] for row in manifest.get("linked_open_findings", [])]
+                # Outside the family the open review is listed; inside, the family veto covers it.
+                self.assertEqual(listed, [rejected] if relation == "contradicts" else [])
+                assessments = self.assessments(b)
+                assessments[link]["evidence"] += listed
+                study = "fixture-review-study"
+                delivered = deliver(self.store, assigned["assignment"], dict(
+                    verdict="approve", rationale=FIXTURE_RATIONALE, findings=[],
+                    link_assessments=assessments), study=study)
+                try:
+                    submitted = CommandService(self.store).execute(dict(
+                        context=dict(command_id=f"a14-{relation}", expected_revision=len(self.store.events()),
+                                     actor="fixture-r2-reviewer", role="reviewer", study_id=study,
+                                     correlation_id="a14", causation_id=None),
+                        request=dict(version=1, action="review.submit", payload=dict(
+                            assignment=assigned["assignment"], response=delivered["response"],
+                            expected_basis=self.bases(b)[b]))))
+                except ValueError as exc:
+                    self.fail(f"blind approval refused: {exc}")
+                self.assertEqual(self.event(submitted["review"])["payload"]["review_schema_version"], 3)
+                self.assertEqual(self.reader.next_action(b)["action"], expected)
+                ResearchGraph.from_store(self.store)
+
     def approved(self, claim, *, actor="fixture-independent-reviewer", assessments=None):
         """Fixture approval through assignment, delivery and review.submit."""
         link_assessments = None

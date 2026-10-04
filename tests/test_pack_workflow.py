@@ -222,7 +222,12 @@ class PackWorkflowTests(unittest.TestCase):
         excluded = domain_packs.review_excluded(store, self.binding(store)) | \
             domain_packs.review_excluded(store, Kernel._get(history, result["analysis"], "pack_analysis"))
         self.assertFalse(set(manifest["allowed_artifact_digests"]) & excluded)
-        self.assertEqual(manifest["policy"], "blind_initial_review_v1")
+        self.assertEqual(manifest["policy"], "blind_initial_review_v2")
+        [pack_report] = manifest["pack_reports"]
+        self.assertEqual(pack_report["analysis"], result["analysis"])
+        self.assertNotIn("details", pack_report["statistical_report"])
+        self.assertIn(dict(claim=result["claim"], analysis=result["analysis"],
+                           provenance="recomputed_by_pinned_pack_at_admission"), manifest["analysis_provenance"])
         graph = ResearchGraph.from_store(store)
         self.assertEqual(graph.node(result["analysis"]).kind, NodeKind.PACK_ANALYSIS)
         closure = {node.id for node in graph.ancestors(result["analysis"])}

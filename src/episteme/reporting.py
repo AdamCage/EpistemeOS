@@ -56,18 +56,32 @@ def _summary(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]:
     if len(claims) == 1:
         result.update(claim=claims[0]["id"], next_action=claims[0]["next_action"])
     decisions = {claim["id"]: claim["next_action"] for claim in claims}
-    papers = [dict(id=e["id"], status=paper_status(e, decisions))
+    papers = [dict(id=e["id"], status=paper_status(store, history, e, decisions))
               for e in history if e["kind"] == "paper"]
     if papers:
         result["papers"] = papers
     return result
 
 
-def paper_status(paper: dict[str, Any], decisions: dict[str, dict[str, Any]]) -> str:
-    """A recorded draft stays in history; current rules decide whether it is still eligible."""
-    current = all(decisions[id]["action"] == "paper_candidate" and decisions[id]["basis_hash"] == basis
-                  for id, basis in paper["payload"]["reviewed_bases"].items())
-    return "internal_draft" if current else "not_eligible_under_current_rules"
+def paper_status(store: Store, history: list[dict[str, Any]], paper: dict[str, Any],
+                 decisions: dict[str, dict[str, Any]]) -> str:
+    """A recorded draft stays in history; current rules decide what it is now (ADR 0018 §4.4).
+
+    ``current``: eligible now; ``historical``: eligible on its own prefix, not now;
+    ``not_eligible_under_current_rules``: not eligible even on its own prefix.
+    """
+    bases = paper["payload"]["reviewed_bases"]
+
+    def eligible(rows: dict[str, dict[str, Any]]) -> bool:
+        return all(rows[id]["action"] == "paper_candidate" and rows[id]["basis_hash"] == basis
+                   for id, basis in bases.items())
+
+    if eligible(decisions):
+        return "current"
+    prefix = history[:next(index for index, event in enumerate(history) if event["id"] == paper["id"])]
+    reader = Kernel(store, Actor("paper-status-reader", "observer"))
+    return ("historical" if eligible({id: reader._next_action(prefix, id) for id in bases})
+            else "not_eligible_under_current_rules")
 
 
 def inspect_store(store: Store) -> dict[str, Any]:
@@ -161,16 +175,61 @@ def review_bundle(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]
     batches = batch_summaries(store, history)
     summary = _summary(store, history)
     if packs:
-        # Added only for pack histories so exports of older histories stay byte-identical.
+        # Pack sections appear only in pack histories.
         return dict(_bundle(store, history, summary, batches, resolutions),
                     pack_bindings=[event for event in history if event["kind"] == "pack_binding"],
                     pack_analyses=[event for event in history if event["kind"] == "pack_analysis"])
     return _bundle(store, history, summary, batches, resolutions)
 
 
+def admission_record(store: Store, history: list[dict[str, Any]], claim: str) -> dict[str, Any]:
+    """Which reviews count for claim now and why the others do not (ADR 0018 §4.4)."""
+    from .review_admission import admission
+    projection = admission(store, history)
+    submissions = projection._submitted()
+    by_id = {event["id"]: event for event in history}
+    basis = Kernel(store, Actor("admission-reporter", "observer"))._gate(history, claim)["basis_hash"]
+    approvals = []
+    for event in history:
+        p = event["payload"]
+        if event["kind"] != "review" or p["claim"] != claim or p["verdict"] != "approve":
+            continue
+        submission = submissions.get(event["id"])
+        sp = {} if submission is None else submission["payload"]
+        assignment = by_id.get(sp.get("assignment", ""))
+        defect = projection.approval_defect(event)
+        if defect is None and p["basis_hash"] != basis:
+            defect = "approval of an earlier evidence basis"
+        approvals.append(dict(review=event["id"], reviewer=event["actor"], basis_hash=p["basis_hash"],
+                              assignment=sp.get("assignment"), dispatch=sp.get("dispatch"),
+                              submission=None if submission is None else submission["id"],
+                              policy=None if assignment is None else assignment["payload"]["policy"],
+                              counted=defect is None, defect=defect))
+    family = set(projection.family(claim))
+    return dict(
+        approvals=approvals,
+        vetoes=[dict(opinion=opinion["id"], claim=opinion["payload"]["claim"],
+                     reviewer=opinion["actor"]) for opinion in projection.vetoes(claim)],
+        withdrawals=[dict(opinion=row["opinion"], submission=event["id"])
+                     for event in projection.submissions() if event["payload"]["claim"] == claim
+                     for row in event["payload"].get("withdrawals", [])],
+        resolutions=[dict(resolution=record["resolution"]["id"],
+                          obligation=record["resolution"]["payload"]["obligation"],
+                          claim=record["resolution"]["payload"]["claim"], status=record["status"])
+                     for record in projection.resolutions()
+                     if record["resolution"]["payload"]["claim"] in family])
+
+
 def _bundle(store: Store, history: list[dict[str, Any]], summary: dict[str, Any],
             batches: list[dict[str, Any]], resolutions: dict[str, Any]) -> dict[str, Any]:
-    return dict(bundle_version=1, summary=summary, events=history,
+    from .review_admission import admission, attempt_ledger
+    claims = [event["id"] for event in history if event["kind"] == "claim"]
+    projection = admission(store, history)
+    return dict(bundle_version=2, summary=summary, events=history,
+                claim_families={id: dict(members=list(projection.family(id)),
+                                         attempt_ledger=attempt_ledger(store, history, id))
+                                for id in claims},
+                review_admission={id: admission_record(store, history, id) for id in claims},
                 execution_batches=batches,
                 batch_analyses=[event for event in history if event["kind"] == "batch_analysis"],
                 domain_bindings=[event for event in history if event["kind"] == "domain_binding"],
@@ -202,7 +261,15 @@ def _run_table(store: Store, history: list[dict[str, Any]], runs: list[dict[str,
             status = "unknown" if any(e["kind"] == "execution_dispatch" and e["payload"]["job"] == jobs[run["id"]]["id"]
                                       for e in history) else "queued"
         if status != "completed":
-            rows.append(f"| {run['id']} | {status} | {p['seed']} | {_cell(plan['metric'])} | — | — | — |")
+            # ADR 0018 §4.4: failed and cancelled attempts keep their recorded metric and reason.
+            outputs = result["payload"]["outputs"] if result else {}
+            from .review_admission import _finite_metric
+            value = _finite_metric(store, outputs.get("metrics"), plan["metric"])
+            reason = result["payload"].get("reason", "") if result else ""
+            label = f"{status}: {_cell(reason[:512])}" if reason else status
+            raw = f"[raw](artifacts/sha256/{outputs['raw_data']})" if "raw_data" in outputs else "—"
+            rows.append(f"| {run['id']} | {label} | {p['seed']} | {_cell(plan['metric'])} | "
+                        f"{'—' if value is None else _cell(value)} | {raw} | — |")
             continue
         outputs = result["payload"]["outputs"]
         metrics = json.loads(store.read(outputs["metrics"]))
@@ -383,6 +450,56 @@ def _followup_manuscript(claim: str, lineage: list[dict[str, Any]]) -> list[str]
     return lines
 
 
+def _ledger_manuscript(ledger: dict[str, Any]) -> list[str]:
+    lines = ["### Claim family and attempt ledger", "",
+             "Every recorded attempt on the protocols of this claim's family, including failed, "
+             "unknown and queued ones. Reanalyses use the same data; none is a new-data replication.", "",
+             "Family protocols: " + ", ".join(f"`{row['id']}` ({row['edge']})"
+                                              for row in ledger["family_protocols"]) + ".", "",
+             "| Run | Protocol | Seed | Kind | Status | Primary metric | Value | Outputs |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for row in ledger["attempts"]:
+        if row["tier"] != "family":
+            continue
+        kind = (f"primary attempt {row['primary_attempt']}" if row["kind"] == "primary"
+                else f"reanalysis of {row['replicate_of']}")
+        status = f"{row['status']}: {_cell(row['reason'])}" if row["reason"] else row["status"]
+        value = "—" if row["metric_value"] is None else _cell(row["metric_value"])
+        lines.append(f"| {row['run']} | {row['protocol']} | {row['seed']} | {kind} | {status} | "
+                     f"{_cell(row['primary_metric'])} | {value} | {row['outputs_origin']} |")
+    related = [row for row in ledger["attempts"] if row["tier"] == "related_registration"]
+    if ledger["related_registrations"]:
+        lines.extend(["", "### Related registrations", "",
+                      "Protocols sharing a hypothesis without a protocol edge; disclosed, not evidence.", ""])
+        lines.extend(f"- Protocol `{row['id']}`: " + (", ".join(
+            f"`{attempt['run']}` seed {attempt['seed']} {attempt['status']}"
+            + ("" if attempt["metric_value"] is None else f" ({_cell(attempt['metric_value'])})")
+            for attempt in related if attempt["protocol"] == row["id"]) or "no runs") + "."
+            for row in ledger["related_registrations"])
+    return [*lines, ""]
+
+
+def _admission_manuscript(record: dict[str, Any]) -> list[str]:
+    lines = ["### Review admission", "",
+             "Counted approvals come from a verified assignment, delivery and review.submit chain. "
+             "Reviewer IDs are caller-declared; admission is not scientific validation.", ""]
+    for row in record["approvals"]:
+        if row["counted"]:
+            lines.append(f"- Counted approval `{row['review']}` by `{_cell(row['reviewer'])}`: assignment "
+                         f"`{row['assignment']}`, dispatch `{row['dispatch']}`, submission "
+                         f"`{row['submission']}`, policy `{row['policy']}`.")
+        else:
+            lines.append(f"- Not counted: review `{row['review']}` by `{_cell(row['reviewer'])}`: "
+                         f"{_cell(row['defect'])}.")
+    lines.extend(f"- Open veto `{row['opinion']}` on `{row['claim']}` by `{_cell(row['reviewer'])}`."
+                 for row in record["vetoes"])
+    lines.extend(f"- Withdrawal of `{row['opinion']}` in submission `{row['submission']}`."
+                 for row in record["withdrawals"])
+    lines.extend(f"- Resolution `{row['resolution']}` of `{row['obligation']}` for claim "
+                 f"`{row['claim']}`: `{row['status']}`." for row in record["resolutions"])
+    return [*lines, ""]
+
+
 def export_store(store: Store) -> dict[str, str]:
     # All files refer to precisely this verified history, even if another writer
     # appends while the export is materialized. Each file is atomically replaced.
@@ -499,7 +616,10 @@ class PaperBuilder:
             runs = [e for e in history if e["kind"] == "run" and e["payload"]["protocol"] == c["protocol"]]
             lines.extend(_run_table(self.store, history, runs))
             lines.extend(["", *_followup_manuscript(id, followup_lineage[id])])
-            lines.extend(["", "### Limitations", "", *(f"- {item}" for item in c["limitations"]), ""])
+            ledger = bundle["claim_families"][id]["attempt_ledger"]
+            lines.extend(["", *_ledger_manuscript(ledger), *_admission_manuscript(bundle["review_admission"][id])])
+            lines.extend(["", "### Limitations", "", *(f"- {item}" for item in c["limitations"]),
+                          *(f"- Kernel disclosure: {item}" for item in ledger["disclosures"]), ""])
         links = [e for e in history if e["id"] in context_links]
         lines.extend(_relation_table(links))
         if links:
@@ -558,8 +678,9 @@ class PaperBuilder:
         event = Kernel._get(history, paper, "paper")
         payload = event["payload"]
         decisions = {id: self.kernel._next_action(history, id) for id in payload["reviewed_bases"]}
-        require(paper_status(event, decisions) == "internal_draft",
-                f"paper review is no longer current or not eligible under current rules: {paper}")
+        status = paper_status(self.store, history, event, decisions)
+        require(status == "current",
+                f"paper review is no longer current or not eligible under current rules: {paper} ({status})")
         paths = {}
         # Materialize in root so relative evidence links remain valid.
         for field, extension in (("manuscript", "md"), ("bundle", "json")):

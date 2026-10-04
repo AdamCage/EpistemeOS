@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from .kernel import Actor, Kernel, independent_of, require
 from .replanning import _findings, _OBLIGATION_FIELDS
-from .review_assignment import RECONSIDERATION
+from .review_assignment import POLICY_V2, RECONSIDERATION, linked_open_findings, projection_of
 from .reviewer_controller import MAX_RESPONSE_BYTES, _index as delivery_index
 from .store import Store
 
@@ -157,13 +157,20 @@ def _decision(store: Store, history: list[dict[str, Any]], *, assignment: str,
     assessments = decision["link_assessments"]
     require(not linked.link_ids or assessments is not None,
             "linked claim review needs explicit link assessments")
+    # Projection v2 lists linked open findings, so its reviews follow §4.3 (schema 3).
+    acknowledgement_v3 = projection_of(assigned) == POLICY_V2
     if assessments is not None:
+        required = kernel._context_findings(history, p["claim"])[1]
+        if acknowledgement_v3:
+            required = {row["id"] for row in linked_open_findings(store, history, p["claim"],
+                                                                  in_replay=in_replay)}
+            admissible = admissible | required
         kernel._validate_assessments(assessments, set(linked.link_ids), admissible,
                                      decision["verdict"])
         if decision["verdict"] == "approve":
             acknowledged = {id for assessment in assessments.values()
                             for id in assessment["evidence"]}
-            require(kernel._context_findings(history, p["claim"])[1] <= acknowledged,
+            require(required <= acknowledged,
                     "approval must acknowledge open linked-context reviews")
             accepted_replacements = {
                 kernel._get(history, id, "claim_link")["payload"]["target"]
@@ -188,7 +195,8 @@ def _decision(store: Store, history: list[dict[str, Any]], *, assignment: str,
         withdrawals, resolutions = _reconsideration(store, history, state, decision, claim, basis,
                                                     in_replay=in_replay)
     return dict(state=state, decision=decision, claim=claim, findings=normalized,
-                withdrawals=withdrawals, resolutions=resolutions)
+                withdrawals=withdrawals, resolutions=resolutions,
+                acknowledgement_v3=acknowledgement_v3)
 
 
 def _submission_payload(state: dict[str, Any], response: str,
@@ -265,7 +273,7 @@ def _index(store: Store, history: list[dict[str, Any]], *,
                                actions=[finding["action"] for finding in findings],
                                basis_hash=args["expected_basis"])
         if decision["link_assessments"] is not None:
-            expected_review.update(review_schema_version=2,
+            expected_review.update(review_schema_version=3 if checked["acknowledgement_v3"] else 2,
                                    link_assessments=decision["link_assessments"])
         require(review["payload"] == expected_review,
                 "review differs from delivered response or historical basis")
@@ -335,13 +343,19 @@ class ReviewSubmission:
         verification = _analysis_verification(self.store, history, claim["id"],
                                               decision["verdict"], recompute=True)
         ledger_digest = _ledger_digest(self.store, history, claim["id"], in_replay=False)
+        position = next(index for index, event in enumerate(history)
+                        if event["id"] == state["assignment"]["id"])
+        require(decision["verdict"] != "approve" or ledger_digest == _ledger_digest(
+                    self.store, history[:position], claim["id"], in_replay=False),
+                "claim family has attempts the assigned context did not contain; assign again")
         kernel = Kernel(self.store, self.actor)
         actions = [finding["action"] for finding in findings]
         id = kernel._record_review(claim["id"], verdict=decision["verdict"],
                                    rationale=decision["rationale"], actions=actions,
                                    expected_basis=expected_basis,
                                    link_assessments=decision["link_assessments"],
-                                   allow_approval=True)
+                                   allow_approval=True,
+                                   acknowledgement_v3=checked["acknowledgement_v3"])
         review = kernel._get(self.store.events(), id, "review")
         obligations: list[str] = []
         for index, finding in enumerate(findings):

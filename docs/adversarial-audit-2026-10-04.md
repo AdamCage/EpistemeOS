@@ -874,7 +874,7 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 
 Раздел обновляется по мере исправлений; разделы 1–8 описывают снимок `da6aa2a` и не меняются. Исправления семантики review, claims и paper ведёт [ADR 0018](decisions/0018-claim-families-and-review-admission.md), принятый 4 октября 2026 года координирующим агентом по делегированию пользователя. «Исправлено» означает: PoC находки стал регрессионным тестом, который падает на коде до исправления и проходит после него; номера прогонов — в [validation.md](validation.md). Шаг ADR указан по его разделу 9.
 
-Последняя проверка: 4 октября 2026, шаг 7 ADR 0018.
+Последняя проверка: 4 октября 2026, шаг 8 ADR 0018.
 
 | ID | Статус | Где исправляется |
 | --- | --- | --- |
@@ -882,16 +882,16 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 | A-02 | **исправлено** (шаг 2): resolution засчитывается только для своего claim; PoC — `test_resolution_applies_only_to_the_claim_it_evaluated`, lineage потомка — `test_descendant_protocol_paper_needs_its_own_resolution` | ADR 0018, шаг 2 |
 | A-03 | **исправлено** (шаг 3): привязка пакета управляет линией `parent`; PoC — `test_amendment_of_pack_bound_protocol_is_rejected`, путь через `followup.apply` — `test_followup_of_pack_bound_claim_is_rejected`, перерегистрация закреплённых bytes — `test_legacy_root_cannot_reuse_pack_pinned_bytes`, история эпохи `da6aa2a` — `test_stray_claim_on_pack_lineage_fails_gate` | ADR 0018, шаг 3 |
 | A-04 | **исправлено** (шаги 4, 6, 7): `analysis.apply` пересчитывает proposal зарегистрированным адаптером, PoC — `test_analysis_apply_rejects_a_proposal_the_adapter_did_not_compute`; `review.submit` пересчитывает исторический анализ schema 1 перед approval (шаг 6), а approval по нему без записанного `recomputed_match` не засчитывается (шаг 7); история эпохи `da6aa2a` с подложным анализом — `test_unverified_v1_analysis_needs_recomputation_before_approval` | ADR 0018, шаги 4, 6 и 7 |
-| A-05 | не исправлено | ADR 0018, шаг 8 |
+| A-05 | **исправлено** (шаг 8): `attempt_ledger` собирает все попытки семейства (общие bytes, follow-up, amendment, supersedes) со статусом, записанной метрикой и происхождением outputs; manifest `blind_initial_review_v2`, review bundle v2 и paper их показывают, а новый терминальный result в семействе делает прежние approvals несвежими. Тесты — `AttemptLedgerTests` в `tests/test_review_families.py` | ADR 0018, шаг 8 |
 | A-06 | **исправлено** (шаг 7): legacy `kernel.review`, `kernel.review_with_links`, `replanning.record_review` и CLI `review` пишут только отрицательные мнения, approval возможен лишь через `review.assign` → доставку → `review.submit`, veto снимает только явный отзыв владельца; synthetic demo claim не попадает в paper; исторический paper после legacy approval получает статус `not_eligible_under_current_rules`. PoC — `test_cli_review_cannot_approve_or_lift_another_reviewers_veto`, `test_demo_claim_paper_is_refused`, `test_kernel_review_command_rejects_approve`, история эпохи `da6aa2a` — `test_legacy_review_paper_is_not_eligible` | ADR 0018, шаг 7 |
-| A-07 | не исправлено | ADR 0018, шаг 8 |
+| A-07 | **исправлено** (шаг 8): `_run_table` и реестр показывают записанную метрику и причину failed-попытки, limitations раскрывают повтор seed; для typed `fixed_sample` gate отказывает при повторе seed после записанного исхода. Для legacy protocols остаётся только раскрытие. Тесты — `test_failed_attempt_metric_and_retried_seed_appear_in_paper`, `test_fixed_sample_retry_after_observed_outcome_fails_gate` | ADR 0018, шаг 8 |
 | A-08 | не исправлено | ADR 0018, шаг 9; частично остаётся ограничением (§6 ADR) |
 | A-09 | не исправлено | ADR 0018, шаг 9; частично остаётся ограничением (§6 ADR) |
 | A-10 | **исправлено** (шаг 7): решения засчитывают approval только из проверенной цепочки `review.submit`; review с ролью не `reviewer` или от contributor по точной строке делает историю недействительной для Graph, `next_action` и paper. PoC — `test_raw_executor_approval_is_rejected_by_graph_and_decisions`, `test_raw_reviewer_approval_is_advisory`. Владелец файлов, способный переписать всю цепочку вместе с receipts, остаётся за границей модели угроз | ADR 0018, шаг 7 |
 | A-11 | вне ADR 0018 | будущий ADR профиля исполнения; ADR 0017 код пакетов не менял |
 | A-12 | вне ADR 0018 | будущий ADR профиля исполнения; ADR 0017 код исполнения не менял |
 | A-13 | вне ADR 0018; **перепроверить** | ADR 0017 переписал проверку цепочки в `store.py`; triggers и `INSERT OR REPLACE` он не менял |
-| A-14 | **частично исправлено** (шаг 6): повторное назначение того же reviewer на тот же basis разрешено, пока нет submission, а завершённый неотправленный отрицательный ответ считается veto; тесты — `test_reassignment_after_unsubmitted_response`, `test_unsubmitted_negative_response_vetoes`. ID открытых context findings в слепом manifest (проекция v2) — шаг 8 | ADR 0018, шаги 6 и 8 |
+| A-14 | **исправлено** (шаги 6 и 8): повторное назначение того же reviewer на тот же basis разрешено, пока нет submission, а завершённый неотправленный отрицательный ответ считается veto; тесты — `test_reassignment_after_unsubmitted_response`, `test_unsubmitted_negative_response_vetoes`. Шаг 8 закрыл остаток: manifest v2 перечисляет `linked_open_findings` вне семейства, approval schema 3 подтверждает только их, а замечания внутри семейства обеспечивает veto. Тест — `test_blind_v2_lists_linked_open_findings_for_acknowledgement` | ADR 0018, шаги 6 и 8 |
 | A-15 | вне ADR 0018 | ADR 0017 `recovery.py` не менял |
 | A-16 | вне ADR 0018; **перепроверить** | ADR 0017 менял `store.py`; открытие Store и triggers, судя по diff, прежние |
 | A-17 | **не исправлено ADR 0017** (проверено) | см. ниже |

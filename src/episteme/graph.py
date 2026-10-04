@@ -710,9 +710,10 @@ class _Projection:
                         self.ref(record["id"], record["kind"], Relation.REVIEW_PACK, "basis_hash",
                                  derivation="resolved_pack_provenance")
             version = p.get("review_schema_version", 1)
-            if type(version) is not int or version not in {1, 2} or (context.link_ids and version != 2):
+            if (type(version) is not int or version not in {1, 2, 3}
+                    or (context.link_ids and version not in {2, 3})):
                 self.fail("unsupported review schema or linked context lacks explicit assessments")
-            if version == 2:
+            if version in {2, 3}:
                 admissible = set(context.link_ids)
                 reader = Kernel(self.store, Actor("graph-reader", "observer"))
                 for id in context.claim_ids:
@@ -727,6 +728,12 @@ class _Projection:
                     admissible.add(finding["id"])
                     self.ref(finding["id"], "review", Relation.CONTEXT_FINDING, "basis_hash",
                              derivation="resolved_foreign_review_context")
+                if version == 3:
+                    # ADR 0018 §4.3: open opinions about linked claims outside the family.
+                    from .review_assignment import linked_open_findings
+                    open_findings = {row["id"] for row in linked_open_findings(
+                        self.store, preceding, claim["id"], in_replay=True)}
+                    admissible |= open_findings
                 try:
                     reader._validate_assessments(p["link_assessments"], set(context.link_ids), admissible, p["verdict"])
                     if p["verdict"] == "approve" and not open_findings <= {

@@ -19,6 +19,17 @@
     "synthetic_batch_analysis_sha256": "b9e6135e52497cc6d69dec3f71090c4a093074404257fb12d882927cd9d350c9",
     "synthetic_causal_sha256": "63184f4933b909ba7581f1516dfbf409dbda685d298d6ec597c4d9807708334f"
   },
+  "revisions": [
+    {
+      "adr": "0018",
+      "fields": [
+        "review_bundle_sha256"
+      ],
+      "parent_commit": "5251c09",
+      "reason": "Review bundle v2 adds claim_families (attempt ledger) and review_admission sections; saved histories, bases, gates, Graph, receipts and inventories are unchanged",
+      "step": 8
+    }
+  ],
   "stores": {
     "legacy_demo": {
       "analyses": {},
@@ -42,7 +53,7 @@
       },
       "head": "e31b422be9293ad1812536a7c2b44001f12d7e5c9a84f9400a650c407e328474",
       "receipts_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "review_bundle_sha256": "155c45444867f93215d2be4826c37cf95f44196ee55eae717129e1cc1cd8f0f6",
+      "review_bundle_sha256": "be9b5c0cb742d457472f4c8c59b1904186213615fc557f33d913a94660737b06",
       "revision": 26
     },
     "manual_binding": {
@@ -78,7 +89,7 @@
       },
       "head": "31c4326dff4d7ae7bc0749e3acde85c64d42f8fc96eb5cdfb6c1564b2b3b8f57",
       "receipts_sha256": "9cc931dd9f39057805a8e0feb956af81f0d2205f5744e70977e244ed27e446e3",
-      "review_bundle_sha256": "8548d81854decce26c3dbe6f809261c8499e086099f6abc062e1e55c57fde8a8",
+      "review_bundle_sha256": "c6d54941119638c154c5491ac75b4659b7217bfe262abb618ab4cb7e9093dd1c",
       "revision": 27
     },
     "model_path": {
@@ -114,7 +125,7 @@
       },
       "head": "7d21ffb52038b4adac02ba84a678f3b073844ba595be133064d1d22c3e1e5aaf",
       "receipts_sha256": "08ad9955fe318b9d1778cd0d773e39897df08f00d761870edd7297319e5fb989",
-      "review_bundle_sha256": "df3ab1f86b19a3ec7ca70553f6f1f5f232997d888dd3c0d6e888b2710f6a740a",
+      "review_bundle_sha256": "16142d36fd6aa11e91faa9ff9f919786bbad0c9c8216eabd061b78ef7807e7e2",
       "revision": 43
     }
   }

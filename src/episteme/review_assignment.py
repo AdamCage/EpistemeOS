@@ -15,6 +15,9 @@ from .store import Store, canonical, digest
 
 
 POLICY = "blind_initial_review_v1"
+# ADR 0018 §4.2: the family, its attempt ledger and linked open findings. New
+# assignments project v2; replay keeps the projection recorded in the event.
+POLICY_V2 = "blind_initial_review_v2"
 RECONSIDERATION = "veto_reconsideration_v1"
 IDENTITY_ASSURANCE = "caller_declared"
 READ_ISOLATION = "not_enforced"
@@ -38,6 +41,16 @@ _RECONSIDERATION_EXCLUSIONS = [
     *(item for item in _EXCLUSIONS if item != "prior_review_verdicts_and_rationales"),
     "other_reviewers_verdicts_and_rationales",
 ]
+_EXCLUSIONS_V2 = [
+    *(item for item in _EXCLUSIONS if item != "prior_review_verdicts_and_rationales"),
+    "prior_review_verdicts_and_rationales_about_the_claim_family",
+    "pack_report_details",
+]
+_RECONSIDERATION_EXCLUSIONS_V2 = [
+    *(item for item in _EXCLUSIONS_V2
+      if item != "prior_review_verdicts_and_rationales_about_the_claim_family"),
+    "other_reviewers_verdicts_and_rationales_about_the_claim_family",
+]
 
 
 def _safe_design(design: dict[str, Any]) -> dict[str, Any]:
@@ -51,11 +64,28 @@ def _safe_design(design: dict[str, Any]) -> dict[str, Any]:
 
 
 def select_policy(store: Store, history: list[dict[str, Any]], claim: str,
-                  reviewer_actor: str, *, in_replay: bool) -> str:
+                  reviewer_actor: str, *, in_replay: bool, projection: str = POLICY_V2) -> str:
     """Reconsideration iff the reviewer's own vetoes or obligations bind the claim (ADR 0018 §3.5)."""
     from .review_admission import admission
     own = admission(store, history, replay=not in_replay).own_findings(reviewer_actor, claim)
-    return RECONSIDERATION if own["opinions"] or own["obligations"] else POLICY
+    return RECONSIDERATION if own["opinions"] or own["obligations"] else projection
+
+
+def linked_open_findings(store: Store, history: list[dict[str, Any]], claim: str, *,
+                         in_replay: bool) -> list[dict[str, Any]]:
+    """Open negative opinions about linked claims outside the family (§4.2, §4.3).
+
+    Only an explicit withdrawal closes an opinion for its own claim; family
+    opinions stay out, because the family veto already enforces them.
+    """
+    from .claim_context import resolve_context
+    from .review_admission import admission, opinion_summary
+    projection = admission(store, history, replay=not in_replay)
+    outside = set(resolve_context(history, claim).claim_ids) - set(projection.family(claim))
+    return [opinion_summary(opinion) for opinion in
+            sorted(projection.negatives.values(), key=lambda event: event["seq"])
+            if opinion["payload"]["claim"] in outside
+            and (opinion["id"], opinion["payload"]["claim"]) not in projection.withdrawn]
 
 
 def _own_findings(store: Store, history: list[dict[str, Any]], claim: str,
@@ -83,8 +113,11 @@ def _own_findings(store: Store, history: list[dict[str, Any]], claim: str,
 
 def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
               reviewer_actor: str, expected_basis: str, study_id: str,
-              keyed: bool = False, policy: str = POLICY, in_replay: bool = True) -> dict[str, Any]:
+              keyed: bool = False, policy: str = POLICY, in_replay: bool = True,
+              projection: str = POLICY) -> dict[str, Any]:
     """Assignment projection; new assignments compare normalized actor keys (ADR 0018)."""
+    require(projection in {POLICY, POLICY_V2} and policy in {RECONSIDERATION, projection},
+            "unsupported review assignment policy")
     if any(event["kind"] == "batch_analysis" for event in history):
         from .batch_analysis import _index as analysis_index
         analysis_index(store, history)
@@ -109,11 +142,17 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
     by_id = {event["id"]: event for event in history}
     claims = [by_id[id] for id in context.claim_ids]
     protocols = {event["payload"]["protocol"] for event in claims}
-    if policy == RECONSIDERATION:
-        # The owner reconsiders for the whole family: list every lineage protocol and run.
+    if policy == RECONSIDERATION or projection == POLICY_V2:
+        # The whole family is in context: list every lineage protocol and run.
         from .review_admission import protocol_components
         roots = protocol_components(history)
         protocols |= {id for id, root in roots.items() if root == roots[target["payload"]["protocol"]]}
+    ledger: dict[str, Any] | None = None
+    related: set[str] = set()
+    if projection == POLICY_V2:
+        from .review_admission import attempt_ledger
+        ledger = attempt_ledger(store, history, claim)
+        related = {row["id"] for row in ledger["related_registrations"]}
     protocol_events = [event for event in history if event["id"] in protocols]
     bound_studies = {event["payload"].get("planning", {}).get("study_id")
                      for event in protocol_events if "planning" in event["payload"]}
@@ -132,6 +171,18 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
     allowed: set[str] = set()
     forbidden = {key for event in protocol_events
                  for key in (event["payload"]["implementation"], event["payload"]["environment"])}
+    if related:
+        # Related registrations expose no artifacts; their sources and logs stay forbidden.
+        related_runs = {event["id"] for event in history
+                        if event["kind"] == "run" and event["payload"]["protocol"] in related}
+        forbidden.update(key for event in history
+                         if (event["kind"] == "protocol" and event["id"] in related)
+                         or (event["kind"] == "run" and event["id"] in related_runs)
+                         for key in (event["payload"]["implementation"], event["payload"]["environment"]))
+        forbidden.update(key for event in history
+                         if event["kind"] == "result" and event["payload"]["run"] in related_runs
+                         for label, key in event["payload"]["outputs"].items()
+                         if label not in {"raw_data", "metrics"})
     forbidden.update(key for event in history if event["kind"] == "batch_analysis"
                      and event["payload"]["claim"] in context.claim_ids
                      for key in (event["payload"]["proposal_digest"],
@@ -212,14 +263,55 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
             unbound_legacy_protocols=[e["id"] for e in protocol_events
                                       if "planning" not in e["payload"]]),
         allowed_artifact_digests=sorted(allowed), exclusions=list(_EXCLUSIONS))
+    if ledger is not None:
+        manifest.update(schema_version=2, policy=POLICY_V2, exclusions=list(_EXCLUSIONS_V2),
+                        **_family_sections(store, history, claim, ledger, context.claim_ids,
+                                           in_replay=in_replay))
     if policy == RECONSIDERATION:
-        manifest.update(policy=RECONSIDERATION, projection=POLICY,
+        manifest.update(policy=RECONSIDERATION, projection=projection,
                         purpose="veto_reconsideration_context",
                         own_findings=_own_findings(store, history, claim, reviewer_actor, in_replay=in_replay),
-                        exclusions=list(_RECONSIDERATION_EXCLUSIONS))
-    else:
-        require(policy == POLICY, "unsupported review assignment policy")
+                        exclusions=list(_RECONSIDERATION_EXCLUSIONS if ledger is None
+                                        else _RECONSIDERATION_EXCLUSIONS_V2))
     return manifest
+
+
+def _family_sections(store: Store, history: list[dict[str, Any]], claim: str,
+                     ledger: dict[str, Any], claims: list[str], *, in_replay: bool) -> dict[str, Any]:
+    """Manifest v2 additions (ADR 0018 §4.2); no source, environment, command or log."""
+    import json
+    from .batch_analysis import KIND, analysis_provenance
+    by_id = {event["id"]: event for event in history}
+    related = [dict(row, **{key: by_id[row["id"]]["payload"][key] for key in
+                            ("hypotheses", "scope", "design", "metric", "analysis_plan",
+                             "stopping_rule", "seeds")},
+                    protocol_mode=by_id[row["id"]]["payload"].get("protocol_mode", "unclassified"))
+               for row in ledger["related_registrations"]]
+    packs = [event for event in history if event["kind"] == "pack_analysis"
+             and event["payload"]["claim"] in claims]
+    return dict(
+        family=dict(protocols=ledger["family_protocols"],
+                    attempts=[row for row in ledger["attempts"] if row["tier"] == "family"],
+                    family_ledger_digest=ledger["family_ledger_digest"],
+                    disclosures=ledger["disclosures"]),
+        related_registrations=dict(
+            protocols=related,
+            attempts=[{key: row[key] for key in ("run", "protocol", "seed", "kind", "status",
+                                                 "primary_metric", "metric_value")}
+                      for row in ledger["attempts"] if row["tier"] == "related_registration"]),
+        linked_open_findings=linked_open_findings(store, history, claim, in_replay=in_replay),
+        # ADR 0016 decision 4: the statistical report and ceiling, without pack source or details.
+        pack_reports=[dict(analysis=event["id"], claim=event["payload"]["claim"],
+                           statistical_report={key: value for key, value in json.loads(
+                               store.read(event["payload"]["statistical_report"])).items()
+                               if key != "details"},
+                           ceiling=event["payload"]["ceiling"]) for event in packs],
+        analysis_provenance=[
+            *(dict(claim=event["payload"]["claim"], analysis=event["id"],
+                   provenance=analysis_provenance(event))
+              for event in history if event["kind"] == KIND and event["payload"]["claim"] in claims),
+            *(dict(claim=event["payload"]["claim"], analysis=event["id"],
+                   provenance="recomputed_by_pinned_pack_at_admission") for event in packs)])
 
 
 def _payload(manifest: dict[str, Any], bundle: str, *, schema_version: int = 2) -> dict[str, Any]:
@@ -230,8 +322,14 @@ def _payload(manifest: dict[str, Any], bundle: str, *, schema_version: int = 2) 
                    policy=manifest["policy"], bundle=bundle,
                    identity_assurance=IDENTITY_ASSURANCE, read_isolation=READ_ISOLATION)
     if schema_version == 2:
-        payload["projection"] = POLICY
+        payload["projection"] = manifest.get("projection", manifest["policy"])
     return payload
+
+
+def projection_of(assignment: dict[str, Any]) -> str:
+    """The blind projection an assignment's manifest was built with."""
+    p = assignment["payload"]
+    return POLICY if p.get("schema_version") == 1 else p["projection"]
 
 
 def _index(store: Store, history: list[dict[str, Any]], *,
@@ -261,13 +359,14 @@ def _index(store: Store, history: list[dict[str, Any]], *,
         version = event["payload"].get("schema_version")
         require(version in (1, 2), "unsupported review assignment schema")
         # Schema 1 predates policy selection; replay keeps its original v1 projection.
+        projection = POLICY if version == 1 else event["payload"].get("projection")
+        require(projection in {POLICY, POLICY_V2}, "unsupported review assignment projection")
         policy = (POLICY if version == 1 else
                   select_policy(store, before, request["payload"]["claim"],
-                                request["payload"]["reviewer_actor"], in_replay=True))
-        require(version == 1 or event["payload"].get("projection") == POLICY,
-                "unsupported review assignment projection")
+                                request["payload"]["reviewer_actor"], in_replay=True,
+                                projection=projection))
         manifest = _manifest(store, before, study_id=context["study_id"], policy=policy,
-                             **request["payload"])
+                             projection=projection, **request["payload"])
         bundle = digest(canonical(manifest))
         require(set(event["payload"]) == (_EVENT_FIELDS if version == 1 else _EVENT_FIELDS_V2)
                 and event["payload"] == _payload(manifest, bundle, schema_version=version),
@@ -308,7 +407,8 @@ class ReviewAssignment:
         policy = select_policy(self.store, history, claim, reviewer_actor, in_replay=False)
         manifest = _manifest(self.store, history, claim=claim,
                              reviewer_actor=reviewer_actor, expected_basis=expected_basis,
-                             study_id=study_id, keyed=True, policy=policy, in_replay=False)
+                             study_id=study_id, keyed=True, policy=policy, in_replay=False,
+                             projection=POLICY_V2)
         # ADR 0018 §3.6: a reviewer may be assigned again until one of the
         # assignments for this claim basis receives a submitted verdict.
         require(not _submitted(history, [id for id, event in prior.items()
