@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import sqlite3
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence
 
 from .commands import CommandService, parse_command
 from .demo import run_demo
@@ -19,6 +20,13 @@ from .reporting import PaperBuilder, export_store, inspect_store
 from .recovery import backup, restore
 from .store import Store
 from .execution import freeze_environment, job_state, reconcile_job, work_job
+
+
+@contextmanager
+def _opened(root: Path, *, read_only: bool = False) -> Iterator[Store]:
+    """One CLI command is one CAS read scope; write transactions reread their artifacts."""
+    with Store(root, read_only=read_only) as store, store.reading():
+        yield store
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -127,7 +135,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .followup import followup_state
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
-            with Store(args.root, read_only=True) as store:
+            with _opened(args.root, read_only=True) as store:
                 result = followup_state(store, args.obligation)
             status = 0
         elif args.command == "agent":
@@ -136,7 +144,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .codex_provider import freeze_provider
             if args.operation not in {"provider", "recipe"} and not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
-            with Store(args.root, read_only=args.operation == "status") as store:
+            with _opened(args.root, read_only=args.operation == "status") as store:
                 if args.operation == "provider":
                     result = dict(provider=freeze_provider(store, model=args.model,
                         reasoning_effort=args.reasoning_effort, executable=args.executable),
@@ -160,7 +168,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .domains.afterlife_seed_batch_analysis import AfterlifeSeedBatchAnalysisAdapter
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
-            with Store(args.root, read_only=args.operation == "status") as store:
+            with _opened(args.root, read_only=args.operation == "status") as store:
                 if args.operation == "status":
                     result = analysis_state(store, args.batch)
                 else:
@@ -189,12 +197,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source, root = args.source.resolve(), args.root.resolve()
                 if root.is_relative_to(source) or source.is_relative_to(root):
                     raise ValueError("capture source and research state must not overlap")
-                with Store(args.root) as store:
+                with _opened(args.root) as store:
                     result, status = store_capture(store, args.pack_id, args.source), 0
             else:
                 if not (args.root / "state.sqlite3").is_file():
                     raise ValueError("existing research state is required")
-                with Store(args.root, read_only=True) as store:
+                with _opened(args.root, read_only=True) as store:
                     result = verify(store)
                 status = 0 if result["status"] == "matched" else 1
         elif args.command == "batch":
@@ -202,13 +210,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .batch_controller import advance_batch
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
-            with Store(args.root, read_only=args.operation == "status") as store:
+            with _opened(args.root, read_only=args.operation == "status") as store:
                 result = (batch_state if args.operation == "status" else advance_batch)(store, args.batch)
             status = 0
         elif args.command == "execution":
             if args.operation != "environment" and not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
-            with Store(args.root, read_only=args.operation == "status") as store:
+            with _opened(args.root, read_only=args.operation == "status") as store:
                 if args.operation == "environment":
                     result = dict(environment=freeze_environment(store), isolation="trusted local; no sandbox")
                 else:
@@ -222,7 +230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.operation == "inspect":
                 result = snapshot.report()
             else:
-                with Store(args.root) as store:
+                with _opened(args.root) as store:
                     result = import_snapshot(store, snapshot, actor=args.actor)
             status = 0
         elif args.command == "demo":
@@ -232,7 +240,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result, status = restore(args.snapshot, args.root), 0
         elif args.command == "command":
             envelope = parse_command(args.input.read_text(encoding="utf-8"))
-            with Store(args.root) as store:
+            with _opened(args.root) as store:
                 acknowledgement = CommandService(store).execute(envelope)
                 result = dict(command_id=envelope["context"]["command_id"], result=acknowledgement,
                               meaning="historical_command_commit")
@@ -240,7 +248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing state.sqlite3 is required; inspect/export/gate never initialize a project")
-            with Store(args.root, read_only=args.command not in {"review", "paper"}) as store:
+            with _opened(args.root, read_only=args.command not in {"review", "paper"}) as store:
                 if args.command == "inspect":
                     result, status = inspect_store(store), 0
                 elif args.command == "backup":

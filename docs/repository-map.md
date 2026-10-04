@@ -83,6 +83,7 @@ EpistemeOS/
     ├── test_graph.py             typed refs, graph traversal и corruption
     ├── test_afterlife.py         historical import, limits и idempotency
     ├── test_commands_store.py    receipt integrity, atomicity, competing writers и crash
+    ├── test_store_verification.py проверенный снимок: подмена, усечение, откат, конкуренция и счётчики работы
     ├── test_commands_service.py  versioned dispatch, historical replay и real CLI
     ├── test_protocols.py         typed statistical declarations
     ├── test_planning.py          immutable revisions, exact refs, scope, exclusions и head races
@@ -147,7 +148,7 @@ EpistemeOS/
 | `followup.py` | Один открытый запрос различающего эксперимента → frozen дочерний protocol/node/binding с проверкой текущего source basis и бюджета. | Planner-authored план, не запуск, научное подтверждение, независимое review или закрытие obligation. |
 | `followup_execution.py` | Повторно проверяет source review/basis и planning, связывает текущий winning follow-up node с frozen batch и exact receipt. | Recipe подаёт planner; selection и резерв не запускают worker и не закрывают научное замечание. |
 | `execution_authority.py` | Локальный token и проверка hash перед изменением execution state batch; DB/CAS restore не получает token. | Не аутентификация и не distributed lease; полное копирование marker владельцем файлов может создать исполняемый clone. |
-| `store.py` | Canonical JSON, CAS, verified chain/receipts, atomic command transaction/replay, additive receipt migration и export. | Нет аутентификации, внешнего checkpoint, общего schema migration или distributed storage. |
+| `store.py` | Canonical JSON, CAS, verified chain/receipts с инкрементальной перепроверкой по отпечатку базы и read scope для CAS (ADR 0017), atomic command transaction/replay, additive receipt migration и export. | Нет аутентификации, внешнего checkpoint, общего schema migration или distributed storage; производные индексы пересчитываются в каждом вызове. |
 | `recovery.py` | SQLite online backup, полный наблюдаемый CAS, manifest, semantic closure и restore с точной историей/receipts; эксклюзивный новый destination. | Не переносит процессы/внешнюю среду; filesystem доверенный, нет внешней аутентификации или атомарной видимости всего каталога. |
 | `commands.py` | Явный action/role allowlist, strict JSON, аргументы и defaults v1, допуск до handler, historical acknowledgement. | Доверенный local caller; нет внешнего execution или меж-study access boundary. |
 | `protocols.py` | Frozen design dataclasses, units/estimand/metrics/splits, mode и structural statistical validation. | Не проверяет actual data, мощность, реальную независимость или uncertainty computation. |
