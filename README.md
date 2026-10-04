@@ -42,6 +42,15 @@ uv run episteme analysis advance <batch-id> --root .research/study --planner pla
 
 `analysis advance` пересчитывает метрику из наблюдённых raw data, сохраняет bounded exploratory claim и назначает reviewer на текущем evidence basis. Повтор после перезапуска не создаёт второй claim или assignment. Статус `awaiting_review` не означает научное подтверждение; demo и CLI не создают reviewer verdict. Контракт — [ADR 0013](docs/decisions/0013-batch-analysis-admission.md), фактические проверки — в [validation.md](docs/validation.md).
 
+Контракт DomainPack ([ADR 0016](docs/decisions/0016-domain-pack-contract.md)) добавляет `pack.preregister`: одна receipt создаёт protocol и привязку, закрепляющую digest всего кода пакета, каталог, compiled draft и execution plan. `analysis advance` для такого batch вызывает hooks закреплённого пакета, повторно исполняет их внутри `pack.analyse` и допускает claim только в пределах потолка силы, который вычисляет ядро. Пакет и adapter теперь всегда берутся из привязки protocol; `--adapter` лишь утверждает их и отвергается при расхождении. Проверить живой код и записанные bytes без записи в Store:
+
+```powershell
+uv run episteme pack describe synthetic_causal_v1
+uv run episteme pack verify --root .research/study
+```
+
+Пакет — доверенный локальный Python в процессе ядра, а не изолированный plugin.
+
 Ручной `domain.bind` через `episteme command` фиксирует domain recipe, исходник адаптера и параметры batch до исполнения planning-bound protocol. Его используют synthetic adapter и офлайн-пилот на исторических траекториях Afterlife. Сам historical import по-прежнему не создаёт анализируемые runs или claim. Контракты — [ADR 0014](docs/decisions/0014-manual-domain-binding.md) и [ADR 0015](docs/decisions/0015-afterlife-historical-pilot.md).
 
 ## Начать с документов
@@ -189,7 +198,7 @@ Afterlife importer сохраняет immutable исторический сни�
 ```powershell
 uv run python examples/afterlife_historical_pilot.py prepare --source-run <run-directory> --root .research/afterlife-pilot
 uv run episteme batch advance <batch-id-from-prepare> --root .research/afterlife-pilot
-uv run episteme analysis advance <batch-id-from-prepare> --adapter afterlife_seed_v1 --root .research/afterlife-pilot --planner afterlife-pilot-planner --analyst afterlife-pilot-analyst --reviewer afterlife-pilot-reviewer
+uv run episteme analysis advance <batch-id-from-prepare> --root .research/afterlife-pilot --planner afterlife-pilot-planner --analyst afterlife-pilot-analyst --reviewer afterlife-pilot-reviewer
 uv run episteme analysis status <batch-id-from-prepare> --root .research/afterlife-pilot
 ```
 

@@ -216,8 +216,9 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 | Golden test старых histories | Реализован в `c5270ac`, раньше шага 3: три synthetic fixture histories, созданные немодифицированным кодом `483f1bd`, и их basis, gates, Graph, export bundle и replay (`tests/test_golden_history.py`). |
 | 2. Реестр, `code_manifest`, conformance suite | Реализован и локально проверен в `0acd593`: [`domains/registry.py`](../../src/episteme/domains/registry.py), schema `pack-code-manifest-v1`, загрузчик, исполняющий ровно хешированные bytes, статическая проверка импортов и `tests/test_domain_pack_conformance.py` с тестовым пакетом `conformance_fixture_v1`. Hook-facing типы `CompileRequest`, `ProtocolContext`, `AnalysisContext` и `CasView` добавлены в `domains/api.py`. |
 | 3. Фасад `synthetic_causal_v1` и golden test | Реализован и локально проверен в `e70cfb8`: пакет [`domains/packs/synthetic_causal_v1`](../../src/episteme/domains/packs/synthetic_causal_v1) зарегистрирован, проходит conformance suite; `tests/test_synthetic_pack.py` сравнивает его с legacy compiler и legacy adapter. |
-| 4. `pack.preregister`, `pack.analyse`, потолок, `CasView`, Graph/recovery/export | Реализован и локально проверен: [`domain_packs.py`](../../src/episteme/domain_packs.py), события `pack_binding` и `pack_analysis`, их поддержка в basis, gate, `batch.plan`, review assignment, Graph, export и backup/restore; `advance_pack_analysis` в `analysis_controller.py`; `tests/test_pack_workflow.py` и `tests/test_pack_universality.py`. CLI пакетный путь пока не вызывает: это шаг 5. |
-| 5–6 | Запланированы в текущем срезе; код не написан. |
+| 4. `pack.preregister`, `pack.analyse`, потолок, `CasView`, Graph/recovery/export | Реализован и локально проверен в `89a44c6`: [`domain_packs.py`](../../src/episteme/domain_packs.py), события `pack_binding` и `pack_analysis`, их поддержка в basis, gate, `batch.plan`, review assignment, Graph, export и backup/restore; `advance_pack_analysis` в `analysis_controller.py`; `tests/test_pack_workflow.py` и `tests/test_pack_universality.py`. |
+| 5. CLI по привязке, `pack describe`, `pack verify` | Реализован и локально проверен: `episteme analysis advance` берёт пакет или legacy adapter из привязки protocol, `--adapter` стал необязательным утверждением; read-only `episteme pack describe PACK_ID` и `episteme pack verify --root ROOT`; `tests/test_pack_cli.py`. |
+| 6 | Запланирован в текущем срезе; код в ядре не подключён. |
 | 7–10 | Вне текущего среза. |
 
 ### Отклонения от предложения и уточнения шага 1
@@ -257,6 +258,12 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 - **Уточнение.** Assignment остаётся `blind_initial_review_v1`: исходник и envelopes пакета, host inputs, report, statistical report, checks и recomputations исключены. Текст report доходит до reviewer только через обязательные строки limitations claim. Полный `StatisticalReport` попадёт в контекст только с политикой v2 (шаг 7).
 - **Уточнение.** Ядро записывает факты replication: `same_data_reanalysis`, обе программы из одного закреплённого пакета (один автор), те же raw data; смысл повторов roster выводится из `roster_semantics` (для `rng_seed` — повтор одного генератора с новым seed).
 - **Ограничение.** Replay привязки заново читает и хеширует закреплённый код, программы, input и capture; `pack.analyse` и его replay повторно проверяют bindings, batch и receipts и наследуют известную медленную проверку receipts. На synthetic fixture с одним seed весь путь в тестах занимает секунды; для 18 slots afterlife измерение — в шаге 6.
+
+### Отклонения от предложения и уточнения шага 5
+
+- **Уточнение.** `analysis advance` определяет анализ по привязке protocol и для legacy-путей: ручной `domain.bind` даёт записанный в нём `adapter_id`, модельное применение ADR 0008 — `domain` его compilation, `pack_binding` — пакетный путь. `--adapter` больше не выбирает код: без флага используется привязка, а флаг, отличный от неё, отвергается без новых событий. Это заменяет описанное в ADR 0015 поведение «без флага — synthetic adapter». Соответствие legacy `adapter_id` классам legacy-адаптеров остаётся в `cli.py`, одном из явно перечисленных legacy-исключений статического теста.
+- **Уточнение.** `pack verify` открывает Store только на чтение. Сначала выполняется структурный replay, затем для каждой привязки — повторные `describe`, compile hooks (сравниваются digests каталога, draft и plan) и `validate_protocol`, для каждого анализа — analysis hooks на префиксе его receipt (сравниваются digests checks, recomputations, report и statistical report). Если живой код отличается от pin, hooks не исполняются, а строка получает `live pack code differs from the pin`. Код возврата 1 означает любое расхождение. `pack describe` Store не открывает.
+- **Отклонение (перенос).** Команда захвата `pack capture` добавлена не здесь, а вместе с первым пакетом, которому она нужна, на шаге 6.
 
 ## Ограничения
 

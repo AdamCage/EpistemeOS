@@ -388,9 +388,10 @@ class AfterlifeSeedBatchTests(unittest.TestCase):
                              "awaiting_analysis")
             pending = (store.export(), store.export_receipts())
 
-            # The default synthetic adapter must not analyze a historical batch.
-            wrong_adapter = self._cli(*analysis, check=False)
+            # The binding fixes the adapter (ADR 0016); a contradicting --adapter is refused.
+            wrong_adapter = self._cli(*analysis, "--adapter", "synthetic_causal_v1", check=False)
             self.assertNotEqual(wrong_adapter.returncode, 0)
+            self.assertIn("differs from the bound", wrong_adapter.stderr)
             self.assertEqual((store.export(), store.export_receipts()), pending)
 
             # Valid CAS bytes that contradict the raw steps are rejected by the

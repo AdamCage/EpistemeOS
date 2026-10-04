@@ -7,6 +7,7 @@ controller records no reviewer verdict, independence proof, or publication.
 from __future__ import annotations
 
 import inspect
+import json
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -14,7 +15,7 @@ from uuid import uuid4
 from .batch import _index as batch_index
 from .batch_analysis import _index as analysis_index
 from .commands import CommandService
-from .kernel import Actor, Kernel, require
+from .kernel import Actor, GateError, Kernel, require
 from .review_assignment import _index as assignment_index
 from .review_submission import _index as submission_index
 from .store import ConflictError, Store
@@ -159,6 +160,34 @@ def advance_batch_analysis(store: Store, batch: str, *, planner: Actor, analyst:
                     claim=claim_id, assignment=assignments[0]["id"],
                     basis_hash=gate["basis_hash"], scientific_validity="not_assessed")
     raise ConflictError("analysis controller lost concurrent admissions; retry from persisted state")
+
+
+def bound_analysis(store: Store, batch: str) -> dict[str, str]:
+    """Which analysis the batch protocol is bound to; the caller never chooses it.
+
+    A pack binding selects the pack path. A legacy manual binding or a model
+    application selects the legacy adapter recorded there. Controllers verify the
+    binding again; this lookup only routes the request.
+    """
+    history = store.events()
+    states = batch_index(store, history)
+    require(batch in states, "unknown batch")
+    protocol = states[batch]["plan"]["payload"]["protocol"]
+    packs = [event for event in history if event["kind"] == "pack_binding"
+             and event["payload"].get("protocol") == protocol]
+    if packs:
+        return dict(kind="pack", id=packs[0]["payload"]["pack_id"], binding=packs[0]["id"])
+    manual = [event for event in history if event["kind"] == "domain_binding"
+              and event["payload"].get("protocol") == protocol]
+    if manual:
+        return dict(kind="legacy_domain_binding", id=manual[0]["payload"]["adapter_id"],
+                    binding=manual[0]["id"])
+    applied = [event for event in history if event["kind"] == "agent_application"
+               and event["payload"].get("protocol") == protocol]
+    if applied:
+        compiled = json.loads(store.read(applied[0]["payload"]["compilation"]))["compiled"]
+        return dict(kind="legacy_model_application", id=compiled["domain"], binding=applied[0]["id"])
+    raise GateError("batch protocol has no pack binding or frozen domain recipe")
 
 
 def _assign(store: Store, history: list[dict[str, Any]], *, batch: str, analysis: dict[str, Any],

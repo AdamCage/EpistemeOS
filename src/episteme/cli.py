@@ -86,12 +86,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation.add_argument("batch", help="Completed batch_plan ID")
         operation.add_argument("--root", type=Path, required=True)
         if name == "advance":
-            operation.add_argument("--adapter", choices=("synthetic_causal_v1", "afterlife_seed_v1"),
-                                   default="synthetic_causal_v1",
-                                   help="Frozen domain analysis adapter for this batch")
+            operation.add_argument("--adapter", default=None,
+                                   help="Optional assertion; must equal the pack or adapter the "
+                                        "protocol binding fixes")
             operation.add_argument("--planner", required=True, help="Caller-declared batch planner ID")
             operation.add_argument("--analyst", required=True, help="Caller-declared analyst ID")
             operation.add_argument("--reviewer", required=True, help="Caller-declared reviewer ID")
+    packs = subcommands.add_parser("pack", help="Describe or verify pinned DomainPacks; read-only")
+    pack_ops = packs.add_subparsers(dest="operation", required=True)
+    pack_describe = pack_ops.add_parser("describe", help="Live registered pack identity and catalog")
+    pack_describe.add_argument("pack_id")
+    pack_verify = pack_ops.add_parser("verify", help="Re-run pinned hooks; compare recorded bytes")
+    pack_verify.add_argument("--root", type=Path, required=True)
     followups = subcommands.add_parser("followup", help="Inspect an open review obligation and its child plan")
     followup_ops = followups.add_subparsers(dest="operation", required=True)
     followup_status = followup_ops.add_parser("status")
@@ -144,21 +150,43 @@ def main(argv: Sequence[str] | None = None) -> int:
                     result = action(store, args.request)
             status = 0
         elif args.command == "analysis":
-            from .analysis_controller import advance_batch_analysis, analysis_state
+            from .analysis_controller import (advance_batch_analysis, advance_pack_analysis,
+                                              analysis_state, bound_analysis)
             from .domains.synthetic_batch_analysis import SyntheticCausalBatchAnalysisAdapter
             from .domains.afterlife_seed_batch_analysis import AfterlifeSeedBatchAnalysisAdapter
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
             with Store(args.root, read_only=args.operation == "status") as store:
-                adapter = ({"synthetic_causal_v1": SyntheticCausalBatchAnalysisAdapter,
-                            "afterlife_seed_v1": AfterlifeSeedBatchAnalysisAdapter}[args.adapter]()
-                           if args.operation == "advance" else None)
-                result = (analysis_state(store, args.batch) if args.operation == "status" else
-                          advance_batch_analysis(store, args.batch,
-                              planner=Actor(args.planner, "planner"),
-                              analyst=Actor(args.analyst, "analyst"), reviewer_actor=args.reviewer,
-                              adapter=adapter))
+                if args.operation == "status":
+                    result = analysis_state(store, args.batch)
+                else:
+                    # The protocol binding fixes the analysis code; --adapter only asserts it.
+                    bound = bound_analysis(store, args.batch)
+                    if args.adapter is not None and args.adapter != bound["id"]:
+                        raise ValueError(f"--adapter {args.adapter} differs from the bound "
+                                         f"{bound['kind']} {bound['id']}")
+                    actors = dict(planner=Actor(args.planner, "planner"),
+                                  analyst=Actor(args.analyst, "analyst"), reviewer_actor=args.reviewer)
+                    if bound["kind"] == "pack":
+                        result = advance_pack_analysis(store, args.batch, **actors)
+                    else:
+                        legacy = {"synthetic_causal_v1": SyntheticCausalBatchAnalysisAdapter,
+                                  "afterlife_seed_v1": AfterlifeSeedBatchAnalysisAdapter}
+                        if bound["id"] not in legacy:
+                            raise ValueError(f"no legacy analysis adapter for {bound['id']}")
+                        result = advance_batch_analysis(store, args.batch, adapter=legacy[bound["id"]](),
+                                                        **actors)
             status = 0
+        elif args.command == "pack":
+            from .domain_packs import describe_pack, verify
+            if args.operation == "describe":
+                result, status = describe_pack(args.pack_id), 0
+            else:
+                if not (args.root / "state.sqlite3").is_file():
+                    raise ValueError("existing research state is required")
+                with Store(args.root, read_only=True) as store:
+                    result = verify(store)
+                status = 0 if result["status"] == "matched" else 1
         elif args.command == "batch":
             from .batch import batch_state
             from .batch_controller import advance_batch

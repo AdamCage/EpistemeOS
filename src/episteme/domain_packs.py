@@ -926,6 +926,107 @@ class PackAnalysis:
                     scientific_validity="not_assessed")
 
 
+VERIFIED_PARTS = ("catalog", "protocol_draft", "execution_plan", "validate_protocol",
+                  "checks", "recomputations", "report", "statistical_report")
+
+
+def describe_pack(pack_id: str) -> dict[str, Any]:
+    """Read-only identity of the live registered pack; no Store is opened."""
+    loaded = registry.load_pack(pack_id)
+    catalog = _call(loaded, "describe")
+    require(type(catalog) is api.ParameterCatalog, "pack describe() must return a ParameterCatalog")
+    return dict(pack_id=loaded.pack_id, pack_version=loaded.pack_version,
+                pack_code_digest=loaded.pack_code_digest, manifest=loaded.manifest.to_dict(),
+                catalog=catalog.to_dict(), code_manifest=api.thaw(loaded.code_manifest),
+                registered=registry.registered(), pack_trust=PACK_TRUST, hook_isolation=HOOK_ISOLATION,
+                meaning="live registered pack code; a binding pins one exact pack_code_digest")
+
+
+def _pin_row(event: dict[str, Any]) -> tuple[dict[str, Any], registry.LoadedPack | None]:
+    p = event["payload"]
+    row = dict(pack_id=p["pack_id"], pack_version=p["pack_version"],
+               pack_code_digest=p["pack_code_digest"])
+    try:
+        loaded = registry.load_pack(p["pack_id"])
+        loaded.require_pin(pack_id=p["pack_id"], pack_version=p["pack_version"],
+                           pack_code_digest=p["pack_code_digest"])
+    except ValueError as exc:
+        row["pin"] = f"live pack code differs from the pin: {exc}"
+        return row, None
+    row["pin"] = "matched"
+    return row, loaded
+
+
+def _compare(row: dict[str, Any], name: str, actual: str, expected: str) -> None:
+    row[name] = "matched" if actual == expected else f"differs: recomputed {actual}"
+
+
+def _verify_binding(store: Store, history: list[dict[str, Any]], event: dict[str, Any]) -> dict[str, Any]:
+    p = event["payload"]
+    row, loaded = _pin_row(event)
+    row.update(binding=event["id"], protocol=p["protocol"])
+    if loaded is None:
+        return row
+    pinned = _pinned(store, p)
+    try:
+        compiled = _compile(store, loaded, p["parameters"], pinned["host"], p["capture"])
+        _compare(row, "catalog", compiled["catalog"].digest(), p["catalog"])
+        _compare(row, "protocol_draft", compiled["draft"].digest(), p["protocol_draft"])
+        _compare(row, "execution_plan", compiled["plan"].digest(), p["execution_plan"])
+    except ValueError as exc:
+        row["compile"] = f"failed: {exc}"
+    try:
+        protocol = Kernel._get(history, p["protocol"], "protocol")
+        _call(loaded, "validate_protocol", _protocol_context(
+            p["parameters"], pinned["draft"], pinned["plan"], pinned["capture"], protocol))
+        row["validate_protocol"] = "matched"
+    except ValueError as exc:
+        row["validate_protocol"] = f"failed: {exc}"
+    return row
+
+
+def _verify_analysis(store: Store, history: list[dict[str, Any]], event: dict[str, Any],
+                     receipts: list[dict[str, Any]]) -> dict[str, Any]:
+    p = event["payload"]
+    row, loaded = _pin_row(event)
+    row.update(analysis=event["id"], batch=p["batch"], claim=p["claim"])
+    if loaded is None:
+        return row
+    receipt = next(item for item in receipts if event["id"] in item["event_ids"])
+    try:
+        facts = _batch_state(store, history[:receipt["before_revision"]], p["batch"], p["settlement"])
+        hooks = run_hooks(loaded, *_hook_inputs(store, facts))
+    except ValueError as exc:
+        row["hooks"] = f"failed: {exc}"
+        return row
+    for name in ("checks", "recomputations", "report", "statistical_report"):
+        _compare(row, name, digest(canonical(hooks[name])), p[name])
+    return row
+
+
+def verify(store: Store) -> dict[str, Any]:
+    """Read-only: re-run pinned hooks for every recorded binding and analysis.
+
+    Replay first proves the records are internally consistent; this then asks
+    whether the live registered code is the pinned code and reproduces the
+    recorded bytes. It writes nothing and does not assess scientific validity.
+    """
+    history = store.events()
+    receipts = store.receipts()
+    bindings = _binding_index(store, history, receipts=receipts)
+    analyses = _analysis_index(store, history, receipts=receipts)
+    rows = dict(bindings=[_verify_binding(store, history, event) for event in bindings.values()],
+                analyses=[_verify_analysis(store, history, event, receipts)
+                          for event in analyses.values()])
+    passed = all(row["pin"] == "matched" and all(row.get(name, "matched") == "matched"
+                                                 for name in (*VERIFIED_PARTS, "compile", "hooks"))
+                 for row in rows["bindings"] + rows["analyses"])
+    return dict(revision=len(history), snapshot_hash=history[-1]["hash"] if history else "0" * 64,
+                status="matched" if passed else "mismatched", **rows,
+                scientific_validity="not_assessed",
+                meaning="read-only re-execution of pinned pack hooks; equal bytes, not correct statistics")
+
+
 def run_hooks(loaded: registry.LoadedPack, context: api.AnalysisContext, cas: api.CasView
               ) -> dict[str, Any]:
     """Run the analysis hooks over one CasView; returns their command envelopes.
