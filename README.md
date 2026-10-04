@@ -172,7 +172,7 @@ uv run episteme paper <claim-id> --root .research/demo --title "Название
 - Согласованный SQLite backup вместе с CAS, проверка полного snapshot и восстановление в новый Store с исходными receipts.
 - Protocol до RunStarted, immutable amendments, фиксированные inputs/code/environment и seed schedule.
 - Версии ResearchQuestion и ExplanationSet, frozen protocol binding, причины исключения кандидатов и сохранение planning ancestry.
-- Typed statistical design, exploratory/confirmatory режим, declarative exposure ledger и запрет повторного объявления просмотренных bytes свежим holdout.
+- Typed statistical design, exploratory/confirmatory режим, declarative exposure ledger и запрет повторного объявления просмотренных bytes свежим holdout: byte-identical или отличающихся только UTF-8 BOM, переводами строк и пробелами в конце строк. Копия с той же информацией в другой форме (переставленные строки, иная сериализация, сжатие) не обнаруживается. С шага 9 [ADR 0018](docs/decisions/0018-claim-families-and-review-admission.md) gate confirmatory claim также отказывает, если `protocol.data` или `raw_data` runs входит в `seen_data` protocol, и допускает только managed evidence (`execution.enqueue` → worker → `execution.finalize`). Совпадение metrics digest реанализа с оригиналом не отказ, а метка в реестре и paper.
 - Сохранение failed/cancelled attempts, лимит числа runs и gates на полноту всех результатов.
 - Claim scope и run references, проверка повторного анализа, отклонение self-review/self-replication по ID.
 - Immutable `supports/contradicts/limits/supersedes` links, транзитивный evidence context, review v2 и сохранение прежних claims/замечаний.

@@ -26,6 +26,23 @@ class GoldenHistoryTests(unittest.TestCase):
                 finally:
                     store.close()
 
+    def test_honest_identical_metrics_are_not_flagged(self):
+        # ADR 0018 §6: byte-identical metrics of an honest reanalysis are labelled, not refused.
+        from episteme.kernel import Actor, Kernel
+        from episteme.review_admission import attempt_ledger
+        with TemporaryDirectory(prefix="episteme-golden-") as temporary:
+            store = golden_support.load_history(golden_support.read_json("legacy_demo.json"),
+                                                Path(temporary) / "state")
+            try:
+                history = store.events()
+                [claim] = [event["id"] for event in history if event["kind"] == "claim"]
+                shared = [row for row in attempt_ledger(store, history, claim)["attempts"]
+                          if row.get("metrics_artifact_shared_with_original")]
+                self.assertEqual([row["seed"] for row in shared], [73])
+                self.assertTrue(Kernel(store, Actor("fixture-auditor", "observer")).gate(claim)["passed"])
+            finally:
+                store.close()
+
     def test_legacy_synthetic_compiler_and_adapter_are_unchanged(self):
         self.assertEqual(golden_support.legacy_synthetic_recipes(),
                          self.expected["legacy_synthetic"])

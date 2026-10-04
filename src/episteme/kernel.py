@@ -67,6 +67,21 @@ def independent_of(actor: str, contributors: set[str]) -> bool:
     return all(actor_key(other) != key for other in contributors)
 
 
+def lenient_digest(data: bytes) -> str:
+    """ADR 0018 §6: digest ignoring a UTF-8 BOM, CRLF and trailing whitespace.
+
+    A tripwire for trivially re-encoded copies only; reordered rows, other
+    serializations, compression or unit changes keep a different digest.
+    Bytes that are not UTF-8 keep their exact digest.
+    """
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return digest(data)
+    text = text.removeprefix("\ufeff").replace("\r\n", "\n")
+    return digest("\n".join(line.rstrip() for line in text.split("\n")).rstrip().encode("utf-8"))
+
+
 def finite(value: Any) -> bool:
     try:
         return type(value) in (int, float) and math.isfinite(value)
@@ -397,10 +412,13 @@ class Kernel:
         for key in {*seen, *(split.digest for split in typed.data_splits)}:
             self.store.read(key)
         if typed.mode == "confirmatory":
+            lenient_seen = {lenient_digest(self.store.read(key)) for key in seen}
             for split in typed.data_splits:
                 if split.role == "confirmatory":
                     require(split.digest not in seen,
                             f"confirmatory split was already exposed: {split.id}")
+                    require(lenient_digest(self.store.read(split.digest)) not in lenient_seen,
+                            f"confirmatory split was already exposed up to whitespace and line endings: {split.id}")
 
     def expose_data(self, *, data: str, purpose: str, protocol: str | None = None) -> str:
         """Record a caller-declared exposure, not an authenticated access log."""
@@ -782,6 +800,19 @@ class Kernel:
                 result = self._result(history, run["id"])
                 if result is not None and {"raw_data", "metrics"} & set(result["payload"]["outputs"]):
                     observed.add(seed)
+        if c.get("inference_mode") == "confirmatory":
+            # ADR 0018 §6 tripwires: confirmatory evidence is managed and reads no exposed bytes.
+            seen = set(p.get("seen_data", []))
+            jobs = {e["payload"]["run"]: e["id"] for e in history if e["kind"] == "execution_job"}
+            finalized = {e["payload"]["job"] for e in history if e["kind"] == "execution_finalized"}
+            if p["data"] in seen:
+                failures.append("confirmatory evidence reads exposed protocol data")
+            for run in runs:
+                if jobs.get(run["id"]) not in finalized:
+                    failures.append(f"confirmatory evidence requires managed execution: {run['id']}")
+                result = self._result(history, run["id"])
+                if result is not None and result["payload"]["outputs"].get("raw_data") in seen:
+                    failures.append(f"confirmatory raw data was already exposed: {run['id']}")
         successful_primary = {e["id"] for e in primary if e["id"] in completed}
         seeds = {e["payload"]["seed"] for e in primary if e["id"] in completed}
         if seeds != set(p["seeds"]):

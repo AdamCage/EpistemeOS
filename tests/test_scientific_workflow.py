@@ -4,11 +4,23 @@ from copy import deepcopy
 import tempfile
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
+from episteme.commands import CommandService
+from episteme.execution import freeze_environment, work_job
 from episteme.graph import GraphIntegrityError, NodeKind, Relation, ResearchGraph
 from episteme.kernel import Actor, GateError, Kernel
 from episteme.reporting import artifact_inventory
 from episteme.store import ConflictError, IntegrityError, Store
+
+
+# A real small CPU job: copies its input and computes the registered mean difference.
+MANAGED_SOURCE = b'''import json, pathlib, sys
+raw = pathlib.Path(sys.argv[1]).read_bytes()
+pathlib.Path("raw.bin").write_bytes(raw)
+rows = [line.split(",") for line in raw.decode().splitlines()[1:]]
+pathlib.Path("metrics.json").write_text(json.dumps({"mean_difference": sum(float(r[1]) for r in rows) / len(rows)}))
+'''
 
 
 class ScientificWorkflowTests(unittest.TestCase):
@@ -71,6 +83,34 @@ class ScientificWorkflowTests(unittest.TestCase):
         return self.executor.claim(protocol=protocol, statement="Fixture mean is zero; population behavior unknown",
                                    scope=self.scope, evidence=[original, replica],
                                    limitations=["Synthetic fixture, declared actor separation only"], outcome=outcome, **changes)
+
+    def managed_protocol(self, design=None, **changes):
+        return self.protocol(design, implementation=self.store.put(MANAGED_SOURCE),
+                             environment=freeze_environment(self.store), **changes)
+
+    def managed_run(self, protocol, *, replica_of=None):
+        kernel = self.replicator if replica_of else self.executor
+        payload = dict(protocol=protocol, seed=7, outputs={"raw_data": "raw.bin", "metrics": "metrics.json"},
+                       wall_seconds=30, max_output_bytes=65536)
+        if replica_of:
+            payload.update(replicate_of=replica_of,
+                           implementation=self.store.put(MANAGED_SOURCE + b"# fixture reanalysis declaration\n"))
+        job = CommandService(self.store).execute(dict(
+            context=dict(command_id=uuid4().hex, expected_revision=len(self.store.events()),
+                         actor=kernel.actor.id, role=kernel.actor.role, study_id="fixture-study",
+                         correlation_id="fixture-managed", causation_id=None),
+            request=dict(version=1, action="execution.enqueue", payload=payload)))
+        state = work_job(self.store, job)
+        self.assertEqual(state["status"], "completed", state)
+        return state["run"]
+
+    def managed_claim(self, protocol, **changes):
+        original = self.managed_run(protocol)
+        replica = self.managed_run(protocol, replica_of=original)
+        return self.executor.claim(protocol=protocol, statement="Fixture mean is zero; population behavior unknown",
+                                   scope=self.scope, evidence=[original, replica],
+                                   limitations=["Synthetic fixture, declared actor separation only"],
+                                   outcome="inconclusive", **changes)
 
     def event(self, id):
         return next(event for event in self.store.events() if event["id"] == id)
@@ -166,9 +206,9 @@ class ScientificWorkflowTests(unittest.TestCase):
                     self.assertNotIn("seen_data", p)
 
     def test_postprotocol_planned_exposure_changes_basis_without_failing_design(self):
-        protocol = self.protocol(design=self.design("confirmatory"))
+        protocol = self.managed_protocol(design=self.design("confirmatory"))
         self.executor.expose_data(data=self.holdout, purpose="Execute frozen holdout analysis", protocol=protocol)
-        claim = self.claim_fixture(protocol)
+        claim = self.managed_claim(protocol)
         first_gate = self.planner.gate(claim)
         self.assertTrue(first_gate["passed"], first_gate["failures"])
         self.assertEqual(self.event(claim)["payload"]["inference_mode"], "confirmatory")
@@ -323,6 +363,51 @@ class ScientificWorkflowTests(unittest.TestCase):
         self.assertFalse(any(event["kind"] == "protocol" for event in self.store.events()))
         with self.assertRaisesRegex(GateError, "already exposed"):
             self.protocol(design=self.design("confirmatory"))
+
+    def test_caller_declared_copied_reanalysis_is_labelled_and_cannot_be_confirmatory(self):
+        # Audit finding A-08: a "reanalysis" that only cites the original digests.
+        from episteme.reporting import _ledger_manuscript
+        from episteme.review_admission import attempt_ledger
+        exploratory = self.claim_fixture(self.protocol())
+        self.assertTrue(self.planner.gate(exploratory)["passed"])
+        rows = attempt_ledger(self.store, self.store.events(), exploratory)["attempts"]
+        self.assertEqual({row["outputs_origin"] for row in rows}, {"caller_declared"})
+        self.assertEqual([row["metrics_artifact_shared_with_original"] for row in rows if row["kind"] == "reanalysis"],
+                         [True])
+        manuscript = "\n".join(_ledger_manuscript(attempt_ledger(self.store, self.store.events(), exploratory)))
+        self.assertIn("caller_declared, metrics artifact shared with original", manuscript)
+        fresh = self.store.put(b"unit,difference\nc1,-3\nc2,3\n")
+        confirmatory = self.claim_fixture(self.protocol(design=self.design("confirmatory", split=fresh),
+                                                        data=self.store.put(b"unit,difference\nd1,-4\nd2,4\n")))
+        gate = self.planner.gate(confirmatory)
+        self.assertFalse(gate["passed"])
+        self.assertTrue(any(failure.startswith("confirmatory evidence requires managed execution")
+                            for failure in gate["failures"]), gate["failures"])
+
+    def test_confirmatory_claim_on_exposed_inputs_fails_gate(self):
+        # Audit finding A-09: a fresh split label while the runs read already seen bytes.
+        self.execute_run(self.protocol())
+        fresh = self.store.put(b"unit,difference\nf1,-5\nf2,5\n")
+        protocol = self.managed_protocol(design=self.design("confirmatory", split=fresh))
+        claim = self.managed_claim(protocol)
+        self.assertEqual(self.event(claim)["payload"]["inference_mode"], "confirmatory")
+        gate = self.planner.gate(claim)
+        self.assertFalse(gate["passed"])
+        self.assertIn("confirmatory evidence reads exposed protocol data", gate["failures"])
+        self.assertTrue(any(failure.startswith("confirmatory raw data was already exposed")
+                            for failure in gate["failures"]), gate["failures"])
+        self.assertNotEqual(self.planner.next_action(claim)["action"], "paper_candidate")
+
+    def test_whitespace_reencoded_copy_is_not_a_fresh_holdout(self):
+        # Audit finding A-09 PoC: the seen split plus one newline.
+        self.execute_run(self.protocol())
+        for copy in (self.store.read(self.holdout) + b"\n",
+                     b"\xef\xbb\xbf" + self.store.read(self.holdout).replace(b"\n", b" \r\n")):
+            with self.subTest(copy=copy), self.assertRaisesRegex(GateError, "up to whitespace"):
+                self.protocol(design=self.design("confirmatory", split=self.store.put(copy)))
+        reordered = self.store.put(b"unit,difference\nh2,2\nh1,-2\n")
+        self.assertTrue(self.protocol(design=self.design("confirmatory", split=reordered),
+                                      data=self.store.put(b"unit,difference\ng1,-6\ng2,6\n")))
 
     def retried_seed(self, protocol, *, first_outputs=True):
         """A failed seed-7 attempt, then a completed retry and its reanalysis (audit A-07 PoC)."""

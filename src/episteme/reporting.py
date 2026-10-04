@@ -465,8 +465,10 @@ def _ledger_manuscript(ledger: dict[str, Any]) -> list[str]:
                 else f"reanalysis of {row['replicate_of']}")
         status = f"{row['status']}: {_cell(row['reason'])}" if row["reason"] else row["status"]
         value = "—" if row["metric_value"] is None else _cell(row["metric_value"])
+        origin = row["outputs_origin"] + (", metrics artifact shared with original"
+                                          if row.get("metrics_artifact_shared_with_original") else "")
         lines.append(f"| {row['run']} | {row['protocol']} | {row['seed']} | {kind} | {status} | "
-                     f"{_cell(row['primary_metric'])} | {value} | {row['outputs_origin']} |")
+                     f"{_cell(row['primary_metric'])} | {value} | {origin} |")
     related = [row for row in ledger["attempts"] if row["tier"] == "related_registration"]
     if ledger["related_registrations"]:
         lines.extend(["", "### Related registrations", "",
