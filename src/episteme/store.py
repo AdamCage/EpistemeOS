@@ -51,6 +51,45 @@ _RECEIPT_KEYS = {"schema_version", "command_id", "context", "request", "request_
                  "before_revision", "before_hash", "after_revision", "after_hash",
                  "event_ids", "event_hashes", "result", "created_at"}
 _ZERO_HASH = "0" * 64
+_EVENT_COLUMNS = {
+    "seq": ("INTEGER", 0, 1), "id": ("TEXT", 1, 0), "kind": ("TEXT", 1, 0),
+    "actor": ("TEXT", 1, 0), "role": ("TEXT", 1, 0), "created_at": ("TEXT", 1, 0),
+    "schema_version": ("INTEGER", 1, 0), "payload": ("TEXT", 1, 0),
+    "previous_hash": ("TEXT", 1, 0), "hash": ("TEXT", 1, 0),
+}
+_EVENT_INDEX = "sqlite_autoindex_events_1"
+_RECEIPT_INDEX = "sqlite_autoindex_command_receipts_1"
+
+
+def _schema_text(sql: str) -> str:
+    return " ".join(sql.split())
+
+
+# SQLite stores the trigger body without CREATE's IF NOT EXISTS. A different body
+# (for example SELECT 1 under the same name) is not this guard.
+_APPEND_ONLY_TRIGGERS = {
+    "events_no_delete": _schema_text(
+        "CREATE TRIGGER events_no_delete BEFORE DELETE ON events "
+        "BEGIN SELECT RAISE(ABORT, 'events are append-only'); END"),
+    "events_no_insert": _schema_text(
+        "CREATE TRIGGER events_no_insert BEFORE INSERT ON events "
+        "BEGIN SELECT RAISE(ABORT, 'events are append-only') "
+        "WHERE EXISTS (SELECT 1 FROM events WHERE seq = NEW.seq OR id = NEW.id) "
+        "OR NEW.seq != COALESCE((SELECT MAX(seq) FROM events), 0) + 1; END"),
+    "events_no_update": _schema_text(
+        "CREATE TRIGGER events_no_update BEFORE UPDATE ON events "
+        "BEGIN SELECT RAISE(ABORT, 'events are append-only'); END"),
+    "command_receipts_no_delete": _schema_text(
+        "CREATE TRIGGER command_receipts_no_delete BEFORE DELETE ON command_receipts "
+        "BEGIN SELECT RAISE(ABORT, 'command receipts are append-only'); END"),
+    "command_receipts_no_insert": _schema_text(
+        "CREATE TRIGGER command_receipts_no_insert BEFORE INSERT ON command_receipts "
+        "BEGIN SELECT RAISE(ABORT, 'command receipts are append-only') "
+        "WHERE EXISTS (SELECT 1 FROM command_receipts WHERE command_id = NEW.command_id); END"),
+    "command_receipts_no_update": _schema_text(
+        "CREATE TRIGGER command_receipts_no_update BEFORE UPDATE ON command_receipts "
+        "BEGIN SELECT RAISE(ABORT, 'command receipts are append-only'); END"),
+}
 _STATE = ("SELECT (SELECT data_version FROM pragma_data_version()),"
           " (SELECT schema_version FROM pragma_schema_version()),"
           " (SELECT count(*) FROM events), (SELECT max(seq) FROM events),"
@@ -225,8 +264,10 @@ class Store:
                 WHERE EXISTS (SELECT 1 FROM events WHERE seq = NEW.seq OR id = NEW.id)
                    OR NEW.seq != COALESCE((SELECT MAX(seq) FROM events), 0) + 1; END;
             """)
-        columns = {row[1] for row in self.db.execute("PRAGMA table_info(events)")}
-        if "schema_version" not in columns:
+        columns = {
+            row["name"]: (str(row["type"]).upper(), row["notnull"], row["pk"])
+            for row in self.db.execute("PRAGMA table_info(events)")}
+        if columns != _EVENT_COLUMNS:
             self.db.close()
             raise IntegrityError("unsupported event store schema; explicit migration is required")
         try:
@@ -252,9 +293,45 @@ class Store:
                                   WHERE command_id = NEW.command_id); END;
                 """)
                 self._receipt_table_known = True
+            self._require_schema()
         except BaseException:
             self.db.close()
             raise
+
+    def _require_schema(self) -> None:
+        """Reject a trigger body or an extra object that is not the append-only guard.
+
+        A read-only open does not install missing triggers: an old database that
+        has not yet been opened for writing still lacks ``BEFORE INSERT``. A body
+        that is not the guard is rejected in both modes. Writable open installs
+        any missing guard first, then requires the full set.
+        """
+        rows = list(self.db.execute("SELECT type, name, tbl_name, sql FROM sqlite_master"))
+        receipt_table = any(row["type"] == "table" and row["name"] == "command_receipts"
+                            for row in rows)
+        allowed = {name: sql for name, sql in _APPEND_ONLY_TRIGGERS.items()
+                   if receipt_table or name.startswith("events_")}
+        seen: set[str] = set()
+        for row in rows:
+            kind, name, table, sql = row["type"], row["name"], row["tbl_name"], row["sql"]
+            if kind == "table" and name in ({"events", "command_receipts"} if receipt_table else {"events"}):
+                continue
+            if kind == "index" and sql is None and (
+                    (name == _EVENT_INDEX and table == "events")
+                    or (receipt_table and name == _RECEIPT_INDEX and table == "command_receipts")):
+                continue
+            if (kind == "trigger" and name in allowed and isinstance(sql, str)
+                    and _schema_text(sql) == allowed[name]):
+                seen.add(name)
+                continue
+            raise IntegrityError("unsupported store schema; explicit migration is required")
+        names = {(row["type"], row["name"]) for row in rows}
+        if ("table", "events") not in names or ("index", _EVENT_INDEX) not in names:
+            raise IntegrityError("unsupported event store schema; explicit migration is required")
+        if receipt_table and ("index", _RECEIPT_INDEX) not in names:
+            raise IntegrityError("unsupported command receipt schema; explicit migration is required")
+        if not self.read_only and seen != set(allowed):
+            raise IntegrityError("unsupported store schema; explicit migration is required")
 
     def close(self) -> None:
         self.db.close()

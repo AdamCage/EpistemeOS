@@ -5,13 +5,16 @@ Fixtures are synthetic. These checks do not establish scientific validity.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
 from uuid import uuid4
 
-from episteme.store import Store, canonical, digest
+from episteme.commands import CommandService
+from episteme.recovery import backup, restore
+from episteme.store import IntegrityError, Store, _APPEND_ONLY_TRIGGERS, _schema_text, canonical, digest
 
 
 ACTOR = "fixture-planner"
@@ -126,6 +129,89 @@ class AppendOnlyUpsertTests(unittest.TestCase):
             self.store.receipts()
         self.assertEqual(self.store.verification_counts["event_rows_verified"], verified_events)
         self.assertEqual(self.store.verification_counts["receipt_rows_verified"], verified_receipts)
+
+
+def hypothesis_envelope() -> dict:
+    return dict(context=dict(command_id="schema-command-1", expected_revision=0,
+                actor=ACTOR, role="planner", study_id="schema-fixture",
+                correlation_id="schema-fixture", causation_id=None),
+                request=dict(version=1, action="kernel.hypothesis", payload=dict(
+                    statement="Synthetic schema fixture", prediction="The id is stable",
+                    falsifier="A second id appears", scope={"mode": "schema_fixture"})))
+
+
+def neuter(database: sqlite3.Connection) -> None:
+    """Replace every append-only trigger with SELECT 1, keeping the name."""
+    rows = list(database.execute(
+        "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger'"))
+    for name, table, sql in rows:
+        if "BEFORE DELETE" in sql:
+            when = "DELETE"
+        elif "BEFORE INSERT" in sql:
+            when = "INSERT"
+        else:
+            when = "UPDATE"
+        database.execute(f"DROP TRIGGER {name}")
+        database.execute(
+            f"CREATE TRIGGER {name} BEFORE {when} ON {table} BEGIN SELECT 1; END")
+    database.commit()
+
+
+class SchemaGuardTests(unittest.TestCase):
+    """A-16: a trigger whose body is not the guard must not survive open or restore."""
+
+    def test_fresh_store_matches_the_trigger_allowlist(self):
+        temporary = TemporaryDirectory(prefix="episteme-schema-fresh-")
+        self.addCleanup(temporary.cleanup)
+        with Store(Path(temporary.name) / "state") as store:
+            found = {row["name"]: _schema_text(row["sql"]) for row in store.db.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")}
+        self.assertEqual(found, _APPEND_ONLY_TRIGGERS)
+
+    def test_neutered_triggers_are_rejected_on_open(self):
+        temporary = TemporaryDirectory(prefix="episteme-schema-open-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "state"
+        with Store(root) as store:
+            note(store, "kept")
+            neuter(store.db)
+        for read_only in (False, True):
+            with self.subTest(read_only=read_only):
+                with self.assertRaisesRegex(IntegrityError, "unsupported store schema"):
+                    Store(root, read_only=read_only)
+
+    def test_extra_view_is_rejected(self):
+        temporary = TemporaryDirectory(prefix="episteme-schema-view-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "state"
+        with Store(root) as store:
+            store.db.execute("CREATE VIEW fixture_leak AS SELECT seq FROM events")
+            store.db.commit()
+        with self.assertRaisesRegex(IntegrityError, "unsupported store schema"):
+            Store(root)
+
+    def test_restore_rejects_a_snapshot_whose_triggers_were_replaced(self):
+        temporary = TemporaryDirectory(prefix="episteme-schema-restore-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        source = root / "source"
+        with Store(source) as store:
+            CommandService(store).execute(hypothesis_envelope())
+            snapshot = root / "snapshot"
+            backup(store, snapshot)
+        database = sqlite3.connect(snapshot / "state.sqlite3")
+        try:
+            neuter(database)
+        finally:
+            database.close()
+        manifest = json.loads((snapshot / "manifest.json").read_bytes())
+        raw = (snapshot / "state.sqlite3").read_bytes()
+        manifest["database"] = dict(sha256=digest(raw), size=len(raw))
+        (snapshot / "manifest.json").write_bytes(canonical(manifest))
+        destination = root / "restored"
+        with self.assertRaisesRegex(IntegrityError, "unsupported store schema"):
+            restore(snapshot, destination)
+        self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":
