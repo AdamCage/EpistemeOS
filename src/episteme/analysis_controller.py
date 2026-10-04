@@ -28,6 +28,30 @@ class AnalysisAdapter(Protocol):
     def propose(self, store: Store, state: dict[str, Any]) -> dict[str, Any]: ...
 
 
+def _matching(store: Store, history: list[dict[str, Any]], claim: str, basis: str,
+              reviewer_actor: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Assignments for this claim, basis and reviewer, split by whether a review can still decide.
+
+    A submitted assignment keeps its recorded review. An unsubmitted one whose
+    approval could never count (ADR 0018 §3.1, §4.1) is reported with its defect
+    and does not satisfy the assignment step.
+    """
+    from .review_admission import admission
+    submissions = submission_index(store, history)
+    projection = admission(store, history)
+    usable, unusable = [], {}
+    for event in assignment_index(store, history).values():
+        payload = event["payload"]
+        if (payload["claim"], payload["basis_hash"], payload["reviewer_actor"]) != (claim, basis, reviewer_actor):
+            continue
+        defect = None if event["id"] in submissions else projection.assignment_defect(event)
+        if defect is None:
+            usable.append(event)
+        else:
+            unusable[event["id"]] = defect
+    return usable, unusable
+
+
 def analysis_state(store: Store, batch: str) -> dict[str, Any]:
     """Read-only verified progress, including unresolved reviewer assignment."""
     history = store.events()
@@ -47,21 +71,21 @@ def analysis_state(store: Store, batch: str) -> dict[str, Any]:
     if not analyses:
         return dict(batch=batch, status="awaiting_analysis", scientific_validity="not_assessed")
     rows = []
-    assignments = assignment_index(store, history)
     submissions = submission_index(store, history)
     observer = Kernel(store, Actor("analysis-status-observer", "observer"))
     for event in analyses:
         gate = observer._gate(history, event["payload"]["claim"])
-        assigned = [item for item in assignments.values()
-                    if item["payload"]["claim"] == event["payload"]["claim"]
-                    and item["payload"]["basis_hash"] == gate["basis_hash"]
-                    and item["payload"]["reviewer_actor"] == event["payload"]["reviewer_actor"]]
+        assigned, unusable = _matching(store, history, event["payload"]["claim"], gate["basis_hash"],
+                                       event["payload"]["reviewer_actor"])
         submitted = [submissions[item["id"]] for item in assigned if item["id"] in submissions]
-        rows.append(dict(analysis=event["id"], claim=event["payload"]["claim"],
-                         reviewer_actor=event["payload"]["reviewer_actor"],
-                         mechanical_gate=gate, assignments=[item["id"] for item in assigned],
-                         submitted_reviews=[row["review"]["id"] for row in submitted],
-                         next_action=observer._next_action(history, event["payload"]["claim"])))
+        row = dict(analysis=event["id"], claim=event["payload"]["claim"],
+                   reviewer_actor=event["payload"]["reviewer_actor"],
+                   mechanical_gate=gate, assignments=[item["id"] for item in assigned],
+                   submitted_reviews=[row["review"]["id"] for row in submitted],
+                   next_action=observer._next_action(history, event["payload"]["claim"]))
+        if unusable:
+            row["superseded_assignments"] = unusable
+        rows.append(row)
     status = ("stale_evidence" if any(not row["mechanical_gate"]["passed"] for row in rows)
               else "awaiting_assignment" if any(not row["assignments"] for row in rows)
               else "awaiting_review" if any(not row["submitted_reviews"] for row in rows)
@@ -128,10 +152,7 @@ def advance_batch_analysis(store: Store, batch: str, *, planner: Actor, analyst:
         gate = kernel._gate(history, claim_id)
         require(gate["passed"], "analysis claim no longer passes mechanical gate: "
                 + "; ".join(gate["failures"]))
-        assignments = [event for event in assignment_index(store, history).values()
-                       if event["payload"]["claim"] == claim_id
-                       and event["payload"]["basis_hash"] == gate["basis_hash"]
-                       and event["payload"]["reviewer_actor"] == reviewer_actor]
+        assignments = _matching(store, history, claim_id, gate["basis_hash"], reviewer_actor)[0]
         require(len(assignments) <= 1, "duplicate reviewer assignments for analysis basis")
         if assignments:
             submission = submission_index(store, history).get(assignments[0]["id"])
@@ -151,10 +172,7 @@ def advance_batch_analysis(store: Store, batch: str, *, planner: Actor, analyst:
             continue
         # The assignment receipt is durable; return its reloaded projection.
         history = store.events()
-        assignments = [event for event in assignment_index(store, history).values()
-                       if event["payload"]["claim"] == claim_id
-                       and event["payload"]["basis_hash"] == gate["basis_hash"]
-                       and event["payload"]["reviewer_actor"] == reviewer_actor]
+        assignments = _matching(store, history, claim_id, gate["basis_hash"], reviewer_actor)[0]
         require(len(assignments) == 1, "review assignment did not persist")
         return dict(status="awaiting_review", batch=batch, analysis=analysis["id"],
                     claim=claim_id, assignment=assignments[0]["id"],
@@ -200,10 +218,7 @@ def _assign(store: Store, history: list[dict[str, Any]], *, batch: str, analysis
             + "; ".join(gate["failures"]))
 
     def current(snapshot: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [event for event in assignment_index(store, snapshot).values()
-                if event["payload"]["claim"] == claim_id
-                and event["payload"]["basis_hash"] == gate["basis_hash"]
-                and event["payload"]["reviewer_actor"] == reviewer_actor]
+        return _matching(store, snapshot, claim_id, gate["basis_hash"], reviewer_actor)[0]
 
     assignments = current(history)
     require(len(assignments) <= 1, "duplicate reviewer assignments for analysis basis")

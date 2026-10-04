@@ -40,16 +40,17 @@ uv run episteme analysis status <batch-id> --root .research/study
 uv run episteme analysis advance <batch-id> --root .research/study --planner planner-1 --analyst analyst-1 --reviewer reviewer-1
 ```
 
-`analysis advance` пересчитывает метрику из наблюдённых raw data, сохраняет bounded exploratory claim и назначает reviewer на текущем evidence basis. Команда `analysis.apply` допускает только proposal, который зарегистрированный адаптер заново вычисляет на том же снимке ([ADR 0018](docs/decisions/0018-claim-families-and-review-admission.md)): подставить собственный вывод под ID адаптера нельзя. Повтор после перезапуска не создаёт второй claim или assignment. Статус `awaiting_review` не означает научное подтверждение; demo и CLI не создают reviewer verdict. Контракт — [ADR 0013](docs/decisions/0013-batch-analysis-admission.md), фактические проверки — в [validation.md](docs/validation.md).
+`analysis advance` пересчитывает метрику из наблюдённых raw data, сохраняет bounded exploratory claim и назначает reviewer на текущем evidence basis. Команда `analysis.apply` допускает только proposal, который зарегистрированный адаптер заново вычисляет на том же снимке ([ADR 0018](docs/decisions/0018-claim-families-and-review-admission.md)): подставить собственный вывод под ID адаптера нельзя. Повтор после перезапуска не создаёт второй claim или assignment. Назначение, approval из которого уже не может быть засчитан (исторический контекст v1 без runs семейства claim или устаревший реестр попыток), не считается: статус возвращается к `awaiting_assignment`, и `analysis advance` назначает reviewer заново. Статус `awaiting_review` не означает научное подтверждение; demo и CLI не создают reviewer verdict. Контракт — [ADR 0013](docs/decisions/0013-batch-analysis-admission.md), фактические проверки — в [validation.md](docs/validation.md).
 
 Контракт DomainPack ([ADR 0016](docs/decisions/0016-domain-pack-contract.md)) добавляет `pack.preregister`: одна receipt создаёт protocol и привязку, закрепляющую digest всего кода пакета, каталог, compiled draft и execution plan. `analysis advance` для такого batch вызывает hooks закреплённого пакета, повторно исполняет их внутри `pack.analyse` и допускает claim только в пределах потолка силы, который вычисляет ядро. Пакет и adapter теперь всегда берутся из привязки protocol; `--adapter` лишь утверждает их и отвергается при расхождении. Проверить живой код и записанные bytes без записи в Store:
 
 ```powershell
 uv run episteme pack describe synthetic_causal_v1
 uv run episteme pack verify --root .research/study
+uv run episteme analysis verify --root .research/study
 ```
 
-Пакет — доверенный локальный Python в процессе ядра, а не изолированный plugin.
+`analysis verify` так же без записи пересчитывает зарегистрированными адаптерами все `batch_analysis` и сообщает `matched` или причину расхождения. Совпадение подтверждает только, что этот код на этом снимке даёт те же bytes proposal, а не правильность вывода. Пакет — доверенный локальный Python в процессе ядра, а не изолированный plugin.
 
 Ручной `domain.bind` через `episteme command` фиксирует domain recipe, исходник адаптера и параметры batch до исполнения planning-bound protocol. Его используют synthetic adapter и офлайн-пилот на исторических траекториях Afterlife. Сам historical import по-прежнему не создаёт анализируемые runs или claim. Контракты — [ADR 0014](docs/decisions/0014-manual-domain-binding.md) и [ADR 0015](docs/decisions/0015-afterlife-historical-pilot.md).
 

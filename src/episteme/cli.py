@@ -110,6 +110,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             operation.add_argument("--planner", required=True, type=_actor_id, help="Caller-declared batch planner ID")
             operation.add_argument("--analyst", required=True, type=_actor_id, help="Caller-declared analyst ID")
             operation.add_argument("--reviewer", required=True, type=_actor_id, help="Caller-declared reviewer ID")
+    analysis_verify = analysis_ops.add_parser(
+        "verify", help="Recompute every admitted batch analysis with its registered adapter; read-only")
+    analysis_verify.add_argument("--root", type=Path, required=True)
     packs = subcommands.add_parser("pack", help="Describe or verify pinned DomainPacks; read-only")
     pack_ops = packs.add_subparsers(dest="operation", required=True)
     pack_describe = pack_ops.add_parser("describe", help="Live registered pack identity and catalog")
@@ -177,8 +180,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .domains.registry import legacy_analysis_adapter
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
-            with _opened(args.root, read_only=args.operation == "status") as store:
-                if args.operation == "status":
+            with _opened(args.root, read_only=args.operation in {"status", "verify"}) as store:
+                if args.operation == "verify":
+                    from .batch_analysis import verify
+                    result = verify(store)
+                elif args.operation == "status":
                     result = analysis_state(store, args.batch)
                 else:
                     # The protocol binding fixes the analysis code; --adapter only asserts it.
@@ -193,7 +199,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     else:
                         adapter, _ = legacy_analysis_adapter(bound["id"])
                         result = advance_batch_analysis(store, args.batch, adapter=adapter, **actors)
-            status = 0
+            status = 1 if args.operation == "verify" and result["status"] != "matched" else 0
         elif args.command == "pack":
             from .domain_packs import describe_pack, store_capture, verify
             if args.operation == "describe":

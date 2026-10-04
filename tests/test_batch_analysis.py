@@ -253,6 +253,84 @@ class BatchAnalysisTests(unittest.TestCase):
         self.assertIn(admitted["analysis"], analysis_index(self.store, history))
         ResearchGraph.from_store(self.store)
 
+    def test_v1_assignment_missing_family_runs_requires_a_new_assignment(self):
+        # ADR 0018 §7.3 (pilot-pack copy): a historical v1 assignment whose context omits runs of
+        # the claim family cannot yield a counted approval, so it does not satisfy the step.
+        from episteme import review_assignment
+        batch = self._complete()
+        history = self.store.events()
+        p = Kernel._get(history, batch_index(self.store, history)[batch]["plan"]["payload"]["protocol"],
+                        "protocol")["payload"]
+        planner = Kernel(self.store, self.fixture.planner)
+        foreign = planner.preregister(**{key: p[key] for key in (
+            "hypotheses", "scope", "design", "metric", "analysis_plan", "stopping_rule", "seeds",
+            "run_limit", "implementation", "environment", "data", "replication_tolerance")})
+        executor = Kernel(self.store, Actor("fixture-other-executor", "executor"))
+        run = executor.start_run(foreign, seed=p["seeds"][0], implementation=p["implementation"],
+                                 environment=p["environment"], command=["fixture-foreign-attempt"])
+        executor.finish_run(run, status="failed", outputs={"log": self.store.put(b"foreign attempt")},
+                            reason="Fixture attempt on the same bytes")
+        manifest_v2 = review_assignment._manifest
+
+        def manifest_v1(*args, **kwargs):
+            return manifest_v2(*args, **dict(kwargs, projection=review_assignment.POLICY))
+
+        source = self.store.put(Path(inspect.getfile(type(self.adapter))).read_bytes())
+        admitted = self._apply(batch, self.adapter.propose(self.store, batch_index(self.store, history)[batch]),
+                               source)
+        basis = Kernel(self.store, self.analyst).gate(admitted["claim"])["basis_hash"]
+        with patch.object(review_assignment, "select_policy", lambda *a, **k: review_assignment.POLICY), \
+                patch.object(review_assignment, "_manifest", manifest_v1):
+            old = CommandService(self.store).execute(dict(
+                context=dict(command_id=f"historical-v1-{uuid4().hex}", expected_revision=len(self.store.events()),
+                             actor=self.fixture.planner.id, role="planner", study_id=self.fixture.study,
+                             correlation_id="adr0018-v1", causation_id=None),
+                request=dict(version=1, action="review.assign", payload=dict(
+                    claim=admitted["claim"], reviewer_actor=self.reviewer, expected_basis=basis))))["assignment"]
+        self.assertEqual(review_assignment.projection_of(
+            assignment_index(self.store, self.store.events())[old]), review_assignment.POLICY)
+        state = analysis_state(self.store, batch)
+        self.assertEqual(state["status"], "awaiting_assignment")
+        self.assertEqual(state["analyses"][0]["superseded_assignments"],
+                         {old: "assignment context omits runs of the claim family"})
+        second = self._advance(batch)
+        self.assertEqual(second["status"], "awaiting_review")
+        self.assertNotEqual(second["assignment"], old)
+        manifest = json.loads(self.store.read(assignment_index(self.store, self.store.events())
+                                              [second["assignment"]]["payload"]["bundle"]))
+        self.assertIn(run, {row["run"] for row in manifest["family"]["attempts"]})
+        self.assertEqual(analysis_state(self.store, batch)["status"], "awaiting_review")
+
+    def test_analysis_verify_reports_matched_and_mismatched(self):
+        import contextlib
+        import io
+        from episteme.cli import main
+        from episteme.domains import registry
+        batch = self._complete()
+        state = batch_index(self.store, self.store.events())[batch]
+        source = self.store.put(Path(inspect.getfile(type(self.adapter))).read_bytes())
+        admitted = self._apply(batch, self.adapter.propose(self.store, state), source)
+        before = self.store.export(), self.store.export_receipts()
+
+        def verify_cli():
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = main(["analysis", "verify", "--root", str(self.root)])
+            return code, json.loads(output.getvalue())
+
+        code, report = verify_cli()
+        self.assertEqual((code, report["status"]), (0, "matched"))
+        self.assertEqual([(row["analysis"], row["recomputation"]) for row in report["analyses"]],
+                         [(admitted["analysis"], "matched")])
+        live = registry.legacy_analysis_adapter
+        with patch.object(registry, "legacy_analysis_adapter",
+                          lambda id: (live(id)[0], b"# drifted adapter source\n")):
+            code, report = verify_cli()
+        self.assertEqual((code, report["status"]), (1, "mismatched"))
+        self.assertEqual(report["analyses"][0]["recomputation"],
+                         "registered adapter source differs from the recorded digest")
+        self.assertEqual((self.store.export(), self.store.export_receipts()), before)
+
 
 if __name__ == "__main__":
     unittest.main()

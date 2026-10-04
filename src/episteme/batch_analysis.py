@@ -67,6 +67,24 @@ def recomputation(store: Store, history: list[dict[str, Any]], event: dict[str, 
     return "matched"
 
 
+def verify(store: Store) -> dict[str, Any]:
+    """Read-only: rerun the registered adapter for every admitted batch analysis.
+
+    Like ``pack verify``, this writes nothing; ``matched`` means equal proposal
+    bytes from the live registered code, not a correct interpretation.
+    """
+    history = store.events()
+    rows = [dict(analysis=event["id"], claim=event["payload"]["claim"], batch=event["payload"]["batch"],
+                 adapter_id=event["payload"]["adapter_id"], provenance=analysis_provenance(event),
+                 recomputation=recomputation(store, history, event))
+            for event in history if event["kind"] == KIND]
+    return dict(revision=len(history), snapshot_hash=history[-1]["hash"] if history else "0" * 64,
+                status="matched" if all(row["recomputation"] == "matched" for row in rows) else "mismatched",
+                analyses=rows, scientific_validity="not_assessed",
+                meaning="read-only recomputation by registered legacy adapters; equal proposal bytes, "
+                        "not a correct interpretation")
+
+
 def _proposal(value: Any) -> dict[str, Any]:
     require(type(value) is dict and set(value) == _PROPOSAL_FIELDS,
             "invalid analysis proposal fields")

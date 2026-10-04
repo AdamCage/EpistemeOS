@@ -191,16 +191,9 @@ class Admission:
         if not independent_of(actor, reader._review_members(prefix, claim)[1]):
             return "approval by a reviewer whose key matches an evidence contributor"
         assignment = self.history[self.position[submission["payload"]["assignment"]]]
-        manifest = json.loads(self.store.read(assignment["payload"]["bundle"]))
-        if manifest.get("projection", manifest["policy"]) == BLIND_V1:
-            before = self.history[:self.position[assignment["id"]]]
-            roots = protocol_components(before)
-            protocol = {e["id"]: e["payload"]["protocol"] for e in before if e["kind"] == "claim"}[claim]
-            family_runs = {e["id"] for e in before if e["kind"] == "run"
-                           and roots.get(e["payload"]["protocol"]) == roots[protocol]}
-            observed = {row["run"] for row in manifest["context"]["observed_runs"]}
-            if not family_runs <= observed:
-                return "assignment context omits runs of the claim family"
+        defect = self._projection_defect(assignment)
+        if defect is not None:
+            return defect
         from .batch_analysis import KIND, UNVERIFIED_ORIGIN, analysis_provenance
         if (any(e["kind"] == KIND and e["payload"]["claim"] == claim
                 and analysis_provenance(e) == UNVERIFIED_ORIGIN for e in prefix)
@@ -209,7 +202,30 @@ class Admission:
         if (submission["payload"]["schema_version"] == 1
                 and Admission(self.store, prefix, replay=False).own_findings(actor, claim)["opinions"]):
             return "approval did not withdraw the reviewer's own open opinions"
+        return self._freshness_defect(assignment)
+
+    def assignment_defect(self, assignment: dict[str, Any]) -> str | None:
+        """Why no approval from this assignment could count now, or None."""
+        return self._projection_defect(assignment) or self._freshness_defect(assignment)
+
+    def _projection_defect(self, assignment: dict[str, Any]) -> str | None:
+        manifest = json.loads(self.store.read(assignment["payload"]["bundle"]))
+        if manifest.get("projection", manifest["policy"]) != BLIND_V1:
+            return None
+        before = self.history[:self.position[assignment["id"]]]
+        roots = protocol_components(before)
+        protocol = {e["id"]: e["payload"]["protocol"] for e in before
+                    if e["kind"] == "claim"}[assignment["payload"]["claim"]]
+        family_runs = {e["id"] for e in before if e["kind"] == "run"
+                       and roots.get(e["payload"]["protocol"]) == roots[protocol]}
+        observed = {row["run"] for row in manifest["context"]["observed_runs"]}
+        if not family_runs <= observed:
+            return "assignment context omits runs of the claim family"
+        return None
+
+    def _freshness_defect(self, assignment: dict[str, Any]) -> str | None:
         # §4.1: a terminal result the reviewer's context did not contain makes the approval stale.
+        claim = assignment["payload"]["claim"]
         seen = Admission(self.store, self.history[:self.position[assignment["id"]]], replay=False)
         if seen.family_ledger_digest(claim) != self.family_ledger_digest(claim):
             return "approval predates later attempts in the claim family"
