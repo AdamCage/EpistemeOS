@@ -43,7 +43,10 @@
           "kernel.claim", "kernel.review", "kernel.review_with_links", "kernel.link_claims",
           "kernel.expose_data", "search.register_tournament",
           "search.ballot", "search.register_tree", "search.add_node", "search.select_next",
-          "search.finish_selection", "paper.build"
+          "search.finish_selection",
+          "literature.record_source", "literature.record_locator", "literature.record_claim",
+          "literature.record_check", "literature.cite",
+          "paper.build"
         ]},
         "payload": {"type": "object"}
       }

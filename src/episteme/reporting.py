@@ -11,6 +11,7 @@ from typing import Any
 
 from .claim_context import resolve_context
 from .kernel import Actor, Kernel, require
+from .literature import LITERATURE_KINDS, assert_current_support, literature_artifacts, locator_status, paper_literature
 from .planning import planning_context, validate_planning
 from .store import Store, canonical
 
@@ -155,6 +156,8 @@ def artifact_inventory(store: Store, history: list[dict[str, Any]]) -> list[dict
             keys.update(p["outputs"].values())
         elif event["kind"] == "paper":
             keys.update((p["manuscript"], p["bundle"]))
+        elif event["kind"] in LITERATURE_KINDS:
+            keys.update(literature_artifacts(event))
         elif event["kind"] == "afterlife_snapshot":
             keys.add(p["snapshot"])
             snapshot = json.loads(store.read(p["snapshot"]))
@@ -249,7 +252,7 @@ def _bundle(store: Store, history: list[dict[str, Any]], summary: dict[str, Any]
     from .review_admission import admission, attempt_ledger
     claims = [event["id"] for event in history if event["kind"] == "claim"]
     projection = admission(store, history)
-    return dict(bundle_version=2, summary=summary, events=history,
+    result = dict(bundle_version=2, summary=summary, events=history,
                 claim_families={id: dict(members=list(projection.family(id)),
                                          attempt_ledger=attempt_ledger(store, history, id))
                                 for id in claims},
@@ -270,6 +273,11 @@ def _bundle(store: Store, history: list[dict[str, Any]], summary: dict[str, Any]
                 explanation_sets=[event for event in history if event["kind"] == "explanation_set"],
                 delivery_restore="events_only; command receipts require a separate database backup",
                 scientific_review="not performed by export", snapshot_hash=summary["last_event_hash"])
+    literature = [event for event in history if event["kind"] in LITERATURE_KINDS]
+    if literature:
+        # Absent on histories that have no literature records, so their bundle hash stays.
+        result["literature"] = literature
+    return result
 
 
 def _run_table(store: Store, history: list[dict[str, Any]], runs: list[dict[str, Any]]) -> list[str]:
@@ -627,6 +635,63 @@ def export_store(store: Store) -> dict[str, str]:
     return {name: str(store.root / name) for name in files}
 
 
+def _literature_manuscript(history: list[dict[str, Any]], extra: dict[str, Any]) -> list[str]:
+    """Show stored links. Absence of sources is not novelty and not support."""
+    lines = ["## Recorded literature", "",
+             "Missing literature is not novelty and is not support for a scientific claim. "
+             "This scaffold stores links from a manuscript citation to a locator. "
+             "It does not search, retrieve, extract text by a model, search for contradictions, "
+             "or assess novelty.", ""]
+    for citation_id in extra["citations"]:
+        citation = Kernel._get(history, citation_id, "literature_citation")
+        locator = Kernel._get(history, citation["payload"]["locator"], "literature_locator")
+        source = Kernel._get(history, locator["payload"]["source"], "literature_source")
+        status = locator_status(history, locator["id"])
+        locator_payload, source_payload = locator["payload"], source["payload"]
+        authors = "; ".join(source_payload["authors"])
+        lines.append(
+            f"- Citation `{citation_id}` points at locator `{locator['id']}` "
+            f"({locator_payload['locator_kind']} `{_cell(locator_payload['locator'])}`) "
+            f"of source `{source['id']}` \"{_cell(source_payload['title'])}\" "
+            f"({source_payload['year']}). Recorded authors: {_cell(authors)}.")
+        lines.append(f"  Locator verification status: `{status}`.")
+        claims = [event for event in history if event["kind"] == "literature_claim"
+                  and event["payload"].get("locator") == locator["id"]
+                  and event["payload"].get("locator_hash") == locator["hash"]]
+        if claims:
+            for claim in claims:
+                lines.append(
+                    f"  Extracted statement `{claim['id']}` by "
+                    f"`{_cell(claim['payload']['extraction_actor'])}`, not a scientific finding "
+                    f"and not a novelty assessment: {_cell(claim['payload']['statement'])}")
+        else:
+            lines.append("  No extracted statement is recorded for this locator.")
+        if citation_id in extra["support"]:
+            check = Kernel._get(history, extra["support_checks"][citation_id], "literature_check")
+            check_payload = check["payload"]
+            lines.append(
+                "  Used as a recorded support link because locator status is "
+                "`verified_by_recorded_check`. "
+                f"Check `{check['id']}` names locator bytes `{check_payload['locator_sha256']}` "
+                f"and passage digest `{check_payload['passage_digest']}`.")
+            if check_payload["checker_kind"] == "fixture":
+                lines.append(
+                    "  A fixture check is not a librarian's verification and not a scientific review.")
+            else:
+                lines.append(
+                    "  This recorded check is a persisted statement by a caller-declared actor. "
+                    "It is not a retrieval performed by the kernel and not a scientific review.")
+            lines.append("  Scientific validity of the research claim remains `not_assessed`.")
+        else:
+            lines.append("  Not used as support for a scientific claim.")
+            if status == "contradicted":
+                lines.append("  A contradicted locator cannot support a claim.")
+            elif status == "unverified":
+                lines.append("  An unverified locator cannot support a claim.")
+        lines.append("")
+    return lines
+
+
 class PaperBuilder:
     """Build a traceable internal draft, never an automatic venue submission."""
 
@@ -634,7 +699,8 @@ class PaperBuilder:
         self.kernel = Kernel(store, actor)
         self.store = store
 
-    def build(self, *, title: str, claims: list[str], expected_bases: dict[str, str]) -> str:
+    def build(self, *, title: str, claims: list[str], expected_bases: dict[str, str],
+              citations: list[str] | None = None, support: list[str] | None = None) -> str:
         history = self.store.events()
         require(isinstance(title, str) and title.strip(), "paper title required")
         require(bool(claims) and len(set(claims)) == len(claims), "paper requires unique claims")
@@ -647,6 +713,7 @@ class PaperBuilder:
             scopes = (c["scope"], Kernel._get(history, c["protocol"], "protocol")["payload"]["scope"])
             require(all(scope.get("mode") != "synthetic_demo" for scope in scopes),
                     f"synthetic demo claims never enter a paper: {id}")
+        literature = paper_literature(history, citations, support)
         bundle = review_bundle(self.store, history)
         contexts = [resolve_context(history, id) for id in claims]
         context_claims = {id for context in contexts for id in context.claim_ids}
@@ -739,15 +806,20 @@ class PaperBuilder:
                             f"by `{_cell(review['actor'])}`, `{p['verdict']}`, **{status}**. "
                             f"{_cell(p['rationale'])} Recorded actions: {_cell('; '.join(p['actions']))}."])
                 lines.append("")
+        if literature is not None:
+            lines.extend(_literature_manuscript(history, literature))
         lines.extend(["## Required author work before submission", "",
                       "Supply a verified literature review, explain the scientific contribution, check that "
                       "the registered methods match the implementation, and prepare the venue-specific "
                       "reproducibility and AI-use statements. Internal review is not external peer review.", ""])
         manuscript = self.store.put("\n".join(lines).encode("utf-8"))
         evidence_bundle = self.store.put_json(bundle)
-        return self.kernel._write(history, "paper", dict(title=title, claims=claims,
-            reviewed_bases=expected_bases, manuscript=manuscript, bundle=evidence_bundle,
-            source_snapshot=bundle["snapshot_hash"], status="internal_draft"), {"writer"})
+        payload = dict(title=title, claims=claims, reviewed_bases=expected_bases, manuscript=manuscript,
+                       bundle=evidence_bundle, source_snapshot=bundle["snapshot_hash"],
+                       status="internal_draft")
+        if literature is not None:
+            payload.update(literature)
+        return self.kernel._write(history, "paper", payload, {"writer"})
 
     def materialize(self, paper: str) -> dict[str, str]:
         history = self.store.events()
@@ -757,6 +829,7 @@ class PaperBuilder:
         status = paper_status(self.store, history, event, decisions)
         require(status == "current",
                 f"paper review is no longer current or not eligible under current rules: {paper} ({status})")
+        assert_current_support(history, payload)
         paths = {}
         # Materialize in root so relative evidence links remain valid.
         for field, extension in (("manuscript", "md"), ("bundle", "json")):

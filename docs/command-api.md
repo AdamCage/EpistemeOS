@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Статус обновлён 4 октября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/DomainBinding/Replanning/Followup/ReviewAssignment/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса. `episteme cycle step` не является новым action этой схемы: он сам выбирает одну уже существующую команду, [ADR 0020](decisions/0020-research-cycle-controller.md).
+Статус обновлён 4 октября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/DomainBinding/Replanning/Followup/ReviewAssignment/Literature/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса. `episteme cycle step` не является новым action этой схемы: он сам выбирает одну уже существующую команду, [ADR 0020](decisions/0020-research-cycle-controller.md).
 
 ## Использование
 
@@ -66,9 +66,18 @@ with Store(".research/command-example") as store:
 | `search.register_tournament`, `search.register_tree`, `search.add_node`, `search.finish_selection` | planner | Event ID |
 | `search.ballot` | judge, reviewer | Ballot ID; приоритет, не истинность |
 | `search.select_next` | planner | Сохранённое решение с frontier/reservation |
-| `paper.build` | writer | ID внутреннего draft; без materialization |
+| `literature.record_source` | planner | ID `literature_source`: title, year, authors как записанные строки |
+| `literature.record_locator` | planner | ID `literature_locator`: source, вид `doi`/`url`/`page`/`fixture` и строка локатора |
+| `literature.record_claim` | planner | ID `literature_claim`: высказывание из локатора; extraction actor — actor команды |
+| `literature.record_check` | planner | ID `literature_check`: исход `verified_by_recorded_check` или `contradicted`, digest байтов локатора и digest пассажа |
+| `literature.cite` | writer | ID `literature_citation`: ссылка на Locator, не на строку |
+| `paper.build` | writer | ID внутреннего draft; без materialization. Необязательные `citations` и `support` |
 
-Blob должен быть заранее сохранён через `Store.put`/`put_json`; command ссылается на digest. Здесь нет универсальной загрузки файлов из произвольных agent paths. `paper.build` сохраняет bounded внутренние artifacts; `PaperBuilder.materialize` вызывается отдельно и заново проверяет актуальность evidence.
+Blob должен быть заранее сохранён через `Store.put`/`put_json`; command ссылается на digest. Здесь нет универсальной загрузки файлов из произвольных agent paths. `paper.build` сохраняет bounded внутренние artifacts; `PaperBuilder.materialize` вызывается отдельно и заново проверяет актуальность evidence и, если scaffold использовал цитату как поддержку, текущий статус локатора.
+
+`citations` и `support` у `paper.build` по умолчанию `null`. Опущенные и явные `null` не входят в нормализованный payload, поэтому fingerprint прежних конвертов `paper.build` не меняется. Явный список входит в запрос. Пустой список не добавляет раздел литературы в manuscript. Строка вместо id Citation отвергается. `support` может содержать только Citation из `citations`, и только если статус локатора сейчас `verified_by_recorded_check`. `unverified` и `contradicted` поддержку не дают. Повтор того же envelope возвращает прежний paper и не переоценивает позднюю проверку; новая команда и `materialize` читают статус заново.
+
+Эти команды не ищут документы, не открывают сеть и не вызывают модель. Поиска, retrieval, извлечения моделью, поиска противоречий и оценки новизны нет. Роль planner не делает запись проверкой библиотекаря. `checker_kind=fixture` в scaffold сопровождается текстом, что fixture-проверка не является проверкой библиотекаря и не является научным review. `scientific_validity` остаётся `not_assessed`. Подробности — [ADR 0021](decisions/0021-literature-records.md).
 
 Прямые Python-методы и прежние CLI `review`/`paper` сохраняют optimistic concurrency, но не получают command idempotency автоматически. Новые retryable worker interfaces должны использовать `CommandService`, сохранять request и обрабатывать исторический acknowledgement отдельно от текущего workflow.
 

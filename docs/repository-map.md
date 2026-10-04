@@ -70,6 +70,7 @@ EpistemeOS/
 │   ├── domain_packs.py           pack.preregister/pack.analyse, replay, CasView allowlist и потолок силы claim
 │   ├── search.py                 persistent tournament и bounded tree policy
 │   ├── reporting.py              snapshot export и внутренний paper scaffold; колонка roster по roster_semantics
+│   ├── literature.py             Source, Locator, LiteratureClaim, Citation и записанная проверка локатора (ADR 0021)
 │   ├── graph.py                  типизированная read-only проекция и queries
 │   ├── domains/afterlife.py      bounded historical inspection/import
 │   ├── domains/afterlife_seed.py verified historical steps bundle и два offline runner sources
@@ -92,6 +93,7 @@ EpistemeOS/
     ├── test_cli.py               реальные CLI/subprocess интеграции
     ├── test_search.py            ballots, tree bounds, reservations и replay
     ├── test_reporting.py         snapshots, review input и paper eligibility
+    ├── test_literature.py        строки, непроверенные и противоречивые локаторы, fixture-проверка, replay
     ├── test_graph.py             typed refs, graph traversal и corruption
     ├── test_afterlife.py         historical import, limits и idempotency
     ├── test_commands_store.py    receipt integrity, atomicity, competing writers и crash
@@ -195,7 +197,8 @@ EpistemeOS/
 | `cycle.py` | `cycle step`: из сохранённой истории study или claim выбирает не больше одного уже допустимого механического шага (`batch.enqueue_slot`, dispatch, finalize уже лежащей completion, `batch.settle`, `pack.analyse`/`analysis.apply`, `review.assign`). Бюджет ограничивает новые попытки вызова. Остановки: `paper_candidate`, veto, obligation, человек, бюджет, блок целостности или допуска. | Не выбирает эксперимент, не вызывает модель, не отправляет review, не закрывает obligation, не повышает outcome и не собирает paper. `scientific_validity` остаётся `not_assessed`. Запуск — тот же trusted local runner, без sandbox. Fixture approval в причине `paper_candidate` назван fixture. |
 | `search.py` | `register_tournament`, `pairings`, `ballot`, `ranking`; `register_tree`, `add_node`, `select_next`, `tree_state`, `finish_selection`. Сохраняются policy, ballots, nodes, решения и резервы объявленной стоимости. | Нет LLM judge, worker dispatch/lease или независимого измерения расходов. Priority не продвигает claim и допускает неполное сравнение pool. |
 | `demo.py` | Генерация синтетических CSV и два способа OLS в реальных subprocess, локальные actors; завершение перед review. | Только фиксированные программы, без LLM и независимого scientific review. Runtime record не восстанавливает произвольную среду. |
-| `reporting.py` | Один snapshot для inspect/export; `PaperBuilder.build` проверяет текущую eligibility и записывает immutable Markdown/JSON+paper event с трассировкой привязанного review-driven follow-up; `materialize` повторно проверяет basis и bytes. | Внутренний scaffold, без полноценного literature/figures/Methods validation или venue formatting; свободный claim text не сертифицируется. |
+| `literature.py` | Команды Source, Locator, LiteratureClaim, Citation и `literature_check`. Статус локатора: `unverified`, `verified_by_recorded_check`, `contradicted`. Поддержка scaffold только для второго. Проверка называет hash локатора, digest его строки и digest пассажа в CAS. | Нет сети, модели, поиска, retrieval и оценки новизны. Роль planner не делает актора библиотекарем. Fixture-проверка в scaffold так и названа. `scientific_validity` остаётся `not_assessed`. |
+| `reporting.py` | Один snapshot для inspect/export; `PaperBuilder.build` проверяет текущую eligibility и записывает immutable Markdown/JSON+paper event с трассировкой привязанного review-driven follow-up; `materialize` повторно проверяет basis и bytes. Без цитат payload и fingerprint `paper.build` прежние. С цитатами scaffold показывает записанные связи и отказывает строке, непроверенной поддержке и противоречивому локатору. | Внутренний scaffold. Поиск литературы, figures, Methods validation и venue formatting не сделаны. Свободный claim text не сертифицируется. Отсутствие источников не новизна. |
 | `cli.py` | Demo/inspection/gates/export, review JSON, paper scaffold; `agent recipe --input` замораживает host-owned binding, `agent advance` продолжает оба proposal tasks; `analysis status/advance` берёт пакет или legacy adapter из привязки protocol (`--adapter` лишь утверждение); `cycle step` сообщает или применяет один механический шаг ADR 0020; read-only `pack describe`/`pack verify` показывают живой код пакета и повторно исполняют закреплённые hooks. Остальные переходы принимаются через `episteme command`. | Actor ID задаётся доверенным caller; sandbox и независимого scientific review нет. `cycle step` без `--apply` или без `--budget` store не меняет. |
 | `tests/test_kernel.py` | Протокол до run, источники evidence, scope, budgets при конфликте writers, retention failures, stale review, self-review, integrity. | Unit tests не доказывают clean-room, sandbox, научную правильность или публикационное качество. |
 | `tests/test_search.py`, `tests/test_reporting.py`, `tests/test_cli.py` | Поиск и cost reservations, snapshot consistency и paper eligibility, входные review JSON и запускаемые CLI/subprocess сценарии. | Покрытие конкретных failure cases не означает общего доказательства безопасности либо работы независимых научных агентов. |
@@ -247,7 +250,7 @@ EpistemeOS/
 │   │   ├── analyst.py            observations и draft claims
 │   │   ├── replication.py        независимые реализации по policy
 │   │   └── reviewer.py           plan-first findings, scientific verdict
-│   ├── literature/               sources, locators, retrieval, checks
+│   ├── literature/               retrieval и разбор документов; записи ссылок уже в literature.py (ADR 0021)
 │   ├── gates/                    required checks и typed exemptions
 │   ├── review/                   immutable bundles, findings, decisions
 │   ├── paper/                    anchors, tables, figures, bibliography

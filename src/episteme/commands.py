@@ -29,6 +29,7 @@ from .reviewer_controller import ReviewSession
 from .review_submission import ReviewSubmission
 from .followup import Followup
 from .followup_execution import FollowupExecution
+from .literature import Literature
 from .reporting import PaperBuilder
 from .reproduction import Reproduction
 from .search import Search
@@ -155,6 +156,11 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "search.add_node": (Search, Search.add_node, frozenset({"planner"})),
     "search.select_next": (Search, Search.select_next, frozenset({"planner"})),
     "search.finish_selection": (Search, Search.finish_selection, frozenset({"planner"})),
+    "literature.record_source": (Literature, Literature.record_source, frozenset({"planner"})),
+    "literature.record_locator": (Literature, Literature.record_locator, frozenset({"planner"})),
+    "literature.record_claim": (Literature, Literature.record_claim, frozenset({"planner"})),
+    "literature.record_check": (Literature, Literature.record_check, frozenset({"planner"})),
+    "literature.cite": (Literature, Literature.cite, frozenset({"writer"})),
     "paper.build": (PaperBuilder, PaperBuilder.build, frozenset({"writer"})),
 }
 
@@ -170,12 +176,15 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
         raise ValueError("command study_id differs from the research question")
     events = {event["id"]: event for event in history}
     refs = [payload[key] for key in ("parent", "question", "explanation_set", "protocol", "run",
-                                    "claim", "source", "target", "selection", "tree", "experiment_node",
-                                    "job", "batch", "request", "budget", "obligation", "parent_node",
-                                    "followup", "review", "terminal", "assignment")
+                                    "claim", "source", "target", "locator", "selection", "tree",
+                                    "experiment_node", "job", "batch", "request", "budget",
+                                    "obligation", "parent_node", "followup", "review", "terminal",
+                                    "assignment")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
+        refs.extend(payload.get("citations") or [])
+        refs.extend(payload.get("support") or [])
     visited: set[str] = set()
     while refs:
         id = refs.pop()
@@ -184,7 +193,9 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
         visited.add(id)
         event = events[id]
         p, kind = event["payload"], event["kind"]
-        assigned = (p.get("study_id") if kind in {"research_question", "explanation_set", "agent_budget"}
+        assigned = (p.get("study_id") if kind in {
+                        "research_question", "explanation_set", "agent_budget", "literature_source",
+                        "literature_locator", "literature_claim", "literature_citation", "literature_check"}
                     else p.get("planning", {}).get("study_id") if kind == "protocol" else None)
         if assigned is not None and assigned != study:
             raise ValueError("command study_id differs from its planning-bound references")
@@ -214,10 +225,16 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "review_dispatch": ("assignment", "claim"),
             "review_response": ("assignment", "dispatch", "claim"),
             "review_submission": ("assignment", "dispatch", "response_event", "claim", "review"),
+            "literature_locator": ("source",),
+            "literature_claim": ("locator",),
+            "literature_citation": ("locator",),
+            "literature_check": ("locator",),
         }.get(kind, ())
         refs.extend(p[field] for field in fields if isinstance(p.get(field), str))
         if kind == "paper":
             refs.extend(p["claims"])
+            refs.extend(p.get("citations") or [])
+            refs.extend(p.get("support") or [])
         if kind == "search_tree":
             refs.extend(other["id"] for other in history
                         if other["kind"] == "experiment_node" and other["payload"]["tree"] == id)
@@ -287,6 +304,12 @@ explicit default denote the same request within this API version.
             required_role = "replicator" if payload["replicate_of"] else "executor"
             if context.role != required_role:
                 raise ValueError(f"{context.role} cannot execute this run mode")
+        # ADR 0021: omitted citation lists stay out of the fingerprint so a
+        # historical paper.build envelope still matches its receipt.
+        if action == "paper.build":
+            for name in ("citations", "support"):
+                if payload.get(name) is None:
+                    payload.pop(name, None)
         normalized = dict(version=1, action=action, payload=payload)
 
         def invoke() -> Any:

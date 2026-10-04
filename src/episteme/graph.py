@@ -74,6 +74,11 @@ class NodeKind(str, Enum):
     REVIEW_OBLIGATION_RESOLUTION = "review_obligation_resolution"
     REPLAN_FOLLOWUP = "replan_followup"
     PAPER = "paper"
+    LITERATURE_SOURCE = "literature_source"
+    LITERATURE_LOCATOR = "literature_locator"
+    LITERATURE_CLAIM = "literature_claim"
+    LITERATURE_CITATION = "literature_citation"
+    LITERATURE_CHECK = "literature_check"
     TOURNAMENT = "tournament"
     BALLOT = "tournament_ballot"
     SEARCH_TREE = "search_tree"
@@ -143,6 +148,11 @@ class Relation(str, Enum):
     FOLLOWUP_ARTIFACT = "followup_artifact"
     PAPER_CLAIM = "paper_claim"
     PAPER_ARTIFACT = "paper_artifact"
+    PAPER_CITATION = "paper_citation"
+    PAPER_SUPPORT = "paper_support"
+    LITERATURE_SOURCE = "literature_source"
+    LITERATURE_LOCATOR = "literature_locator"
+    LITERATURE_PASSAGE = "literature_passage"
     SHARED_REVIEW_BASIS = "shared_review_basis"
     SOURCE_SNAPSHOT = "source_snapshot"
     TOURNAMENT_CANDIDATE = "tournament_candidate"
@@ -826,6 +836,62 @@ class _Projection:
                             and review["payload"]["basis_hash"] == basis):
                         self.ref(review["id"], "review", Relation.SHARED_REVIEW_BASIS,
                                  f"reviewed_bases.{claim_id}", derivation="shared_basis_not_approval")
+            literature_keys = {"citations", "support", "citation_hashes", "support_checks"}
+            if literature_keys & set(p):
+                if not literature_keys <= set(p):
+                    self.fail("paper literature fields are incomplete")
+                self.refs(p["citations"], "literature_citation", Relation.PAPER_CITATION, "citations")
+                if set(p["citation_hashes"]) != set(p["citations"]):
+                    self.fail("paper citation hashes do not match citations")
+                for citation_id, expected in p["citation_hashes"].items():
+                    self.hash_ref(self.events[citation_id], expected, f"citation_hashes.{citation_id}")
+                if not set(p["support"]) <= set(p["citations"]) or set(p["support_checks"]) != set(p["support"]):
+                    self.fail("paper support does not match its citations")
+                from .literature import locator_status
+                prefix = self.history[:e["seq"] - 1]
+                for citation_id in p["support"]:
+                    check = self.ref(p["support_checks"][citation_id], "literature_check",
+                                     Relation.PAPER_SUPPORT, f"support_checks.{citation_id}")
+                    citation = self.events[citation_id]
+                    if (check["payload"]["locator"] != citation["payload"]["locator"]
+                            or check["payload"]["outcome"] != "verified_by_recorded_check"):
+                        self.fail("paper support check does not verify the cited locator")
+                    try:
+                        status = locator_status(prefix, citation["payload"]["locator"])
+                    except (GateError, KeyError, TypeError) as exc:
+                        self.fail(str(exc))
+                    if status != "verified_by_recorded_check":
+                        self.fail("paper used a locator that was not verified_by_recorded_check")
+        elif kind == "literature_source":
+            if p.get("scientific_validity") != "not_assessed" or p.get("schema_version") != 1:
+                self.fail("literature source assesses scientific validity")
+        elif kind == "literature_locator":
+            source = self.ref(p["source"], "literature_source", Relation.LITERATURE_SOURCE, "source")
+            self.hash_ref(source, p["source_hash"], "source_hash")
+            if p.get("locator_kind") not in {"doi", "url", "page", "fixture"}:
+                self.fail("invalid locator kind")
+            if p.get("scientific_validity") != "not_assessed":
+                self.fail("literature locator assesses scientific validity")
+        elif kind == "literature_claim":
+            locator = self.ref(p["locator"], "literature_locator", Relation.LITERATURE_LOCATOR, "locator")
+            self.hash_ref(locator, p["locator_hash"], "locator_hash")
+            if p.get("extraction_actor") != e["actor"] or p.get("scientific_validity") != "not_assessed":
+                self.fail("literature claim extraction actor or validity is not the recorded link")
+        elif kind == "literature_citation":
+            locator = self.ref(p["locator"], "literature_locator", Relation.LITERATURE_LOCATOR, "locator")
+            self.hash_ref(locator, p["locator_hash"], "locator_hash")
+            if p.get("scientific_validity") != "not_assessed":
+                self.fail("literature citation assesses scientific validity")
+        elif kind == "literature_check":
+            locator = self.ref(p["locator"], "literature_locator", Relation.LITERATURE_LOCATOR, "locator")
+            self.hash_ref(locator, p["locator_hash"], "locator_hash")
+            if digest(locator["payload"]["locator"].encode("utf-8")) != p.get("locator_sha256"):
+                self.fail("check does not name the locator bytes")
+            self.blob(p["passage_digest"], Relation.LITERATURE_PASSAGE, "passage_digest")
+            if p.get("outcome") not in {"verified_by_recorded_check", "contradicted"}:
+                self.fail("invalid locator check outcome")
+            if p.get("scientific_validity") != "not_assessed":
+                self.fail("literature check assesses scientific validity")
         elif kind == "tournament":
             self.refs(p["candidates"], "hypothesis", Relation.TOURNAMENT_CANDIDATE, "candidates")
             if set(p["candidate_hashes"]) != set(p["candidates"]):
@@ -943,6 +1009,13 @@ class _Projection:
                 followup_index(self.store, self.history)
             except (ValueError, KeyError, TypeError) as exc:
                 self.fail(f"invalid follow-up history: {exc}")
+        if (any(event["kind"].startswith("literature_") for event in self.history)
+                or any(receipt["request"]["action"].startswith("literature.") for receipt in receipts)):
+            from .literature import _index as literature_index
+            try:
+                literature_index(self.store, self.history, receipts=receipts)
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid literature history: {exc}")
         if any(e["kind"] == "review_obligation" for e in self.history):
             from .replanning import _index as replanning_index
             try:
