@@ -36,6 +36,11 @@ def require(condition: bool, message: str) -> None:
         raise GateError(message)
 
 
+# ADR 0018 §3.2: an approval counts only through its assigned delivery.
+APPROVAL_PATH = ("approval requires review.assign, delivery and review.submit; "
+                 "legacy review paths record only negative opinions")
+
+
 # ADR 0018: new records use one ASCII form, and independence compares a
 # normalized key, so case, width or space variants cannot pass as another actor.
 # Historical records keep their exact IDs; replay compares them as admitted.
@@ -791,7 +796,8 @@ class Kernel:
 
     def _record_review(self, claim: str, *, verdict: str, rationale: str,
                        actions: list[str], expected_basis: str,
-                       link_assessments: dict[str, dict[str, Any]] | None) -> str:
+                       link_assessments: dict[str, dict[str, Any]] | None,
+                       allow_approval: bool = False) -> str:
         history = self._history()
         gate = self.gate(claim)
         # gate() may observe a newer state; never admit that against stale history.
@@ -835,6 +841,8 @@ class Kernel:
                     checked = self._gate_local(basis_history, source["id"])
                     require(checked["passed"], f"accepted link has mechanically unqualified source: {id}")
             payload.update(review_schema_version=2, link_assessments=link_assessments)
+        require(self.actor.role == "reviewer", f"{self.actor.role} cannot create review")
+        require(verdict != "approve" or allow_approval, APPROVAL_PATH)
         return self._write(history, "review", payload, {"reviewer"})
 
     def _review_members(self, history: list[dict[str, Any]], claim: str) -> tuple[Any, set[str], set[str]]:
@@ -901,11 +909,16 @@ class Kernel:
                 decision["family_vetoes"] = [dict(review=r["id"], claim=r["payload"]["claim"],
                                                   reviewer=r["actor"]) for r in inherited]
             return decision
-        reviews = [e for e in history if e["kind"] == "review" and e["payload"]["claim"] == claim
-                   and e["payload"]["basis_hash"] == gate["basis_hash"]]
-        if not reviews:
-            return dict(action="scientific_review", basis_hash=gate["basis_hash"])
-        current = {e["actor"]: e["payload"] for e in reviews}
+        # Only approvals admitted under ADR 0018 §3.1 count; others stay advisory.
+        approvals, advisory = projection.approvals(claim, gate["basis_hash"])
+        if not approvals:
+            decision = dict(action="scientific_review", basis_hash=gate["basis_hash"])
+            if advisory:
+                decision["advisory_approvals"] = [dict(review=e["id"], reviewer=e["actor"],
+                                                       defect=projection.approval_defect(e))
+                                                  for e in advisory]
+            return decision
+        current = {e["actor"]: e["payload"] for e in approvals}
         for link in (self._get(history, id, "claim_link") for id in resolve_context(history, claim).link_ids):
             if link["payload"]["relation"] == "supersedes" and link["payload"]["target"] == claim:
                 if any(review.get("link_assessments", {}).get(link["id"], {}).get("judgment") == "accepted"

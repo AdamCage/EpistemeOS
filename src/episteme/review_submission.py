@@ -337,15 +337,11 @@ class ReviewSubmission:
         ledger_digest = _ledger_digest(self.store, history, claim["id"], in_replay=False)
         kernel = Kernel(self.store, self.actor)
         actions = [finding["action"] for finding in findings]
-        if decision["link_assessments"] is None:
-            id = kernel.review(claim["id"], verdict=decision["verdict"],
-                               rationale=decision["rationale"], actions=actions,
-                               expected_basis=expected_basis)
-        else:
-            id = kernel.review_with_links(claim["id"], verdict=decision["verdict"],
-                                          rationale=decision["rationale"], actions=actions,
-                                          expected_basis=expected_basis,
-                                          link_assessments=decision["link_assessments"])
+        id = kernel._record_review(claim["id"], verdict=decision["verdict"],
+                                   rationale=decision["rationale"], actions=actions,
+                                   expected_basis=expected_basis,
+                                   link_assessments=decision["link_assessments"],
+                                   allow_approval=True)
         review = kernel._get(self.store.events(), id, "review")
         obligations: list[str] = []
         for index, finding in enumerate(findings):

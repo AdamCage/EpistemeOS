@@ -323,7 +323,7 @@ class ClaimWorkflowTests(unittest.TestCase):
         self.assertNotEqual(after_closure, original_basis)
         self.assertEqual(self.reader.next_action(b)["action"], "scientific_review")
         self.approved(b, actor="fixture-b-reviewer")
-        self.review(a, actor="fixture-a-reviewer")  # Repeated positive review must not cause a refresh loop.
+        self.approved(a, actor="fixture-a-second-reviewer")  # Another positive review must not cause a refresh loop.
         self.assertEqual(self.bases(b)[b], after_closure)
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
         graph = ResearchGraph.from_store(self.store)
@@ -342,8 +342,8 @@ class ClaimWorkflowTests(unittest.TestCase):
         self.assertEqual(self.reader.next_action(a)["action"], "scientific_review")
         self.approved(a, actor="fixture-a-reviewer")
         bases = self.bases(a, b)
-        for claim, actor in ((a, "fixture-a-reviewer"), (b, "fixture-b-reviewer")):
-            self.review(claim, actor=actor)
+        for claim, actor in ((a, "fixture-a-second-reviewer"), (b, "fixture-b-second-reviewer")):
+            self.approved(claim, actor=actor)
             self.assertEqual(self.reader.next_action(claim)["action"], "paper_candidate")
         self.assertEqual(self.bases(a, b), bases)
         ResearchGraph.from_store(self.store)
@@ -443,8 +443,9 @@ class ClaimWorkflowTests(unittest.TestCase):
         link = service.execute(link_request)
         self.assertEqual(service.execute(link_request), link)
         review_request = envelope("fixture-review-command", "kernel.review_with_links",
-            dict(claim=b, verdict="approve", rationale="Fixture opinion, no scientific review",
-                 actions=[], expected_basis=self.bases(b)[b], link_assessments=self.assessments(b)),
+            dict(claim=b, verdict="request_changes", rationale="Fixture opinion, no scientific review",
+                 actions=["Fixture control remains required"], expected_basis=self.bases(b)[b],
+                 link_assessments=self.assessments(b)),
             "fixture-command-reviewer", "reviewer")
         review = service.execute(review_request)
         self.attempt(a, status="failed")
@@ -455,7 +456,7 @@ class ClaimWorkflowTests(unittest.TestCase):
             self.assertEqual(replay.execute(review_request), review)
             self.assertEqual(reopened.events(), before)
             self.assertEqual(len(reopened.receipts()), 2)
-        self.assertEqual(self.reader.next_action(b)["action"], "scientific_review")
+        self.assertEqual(self.reader.next_action(b)["action"], "replan")
 
     def test_graph_validates_historical_link_bases_and_projects_review_context_references(self):
         a, b = self.branch("A"), self.branch("B")

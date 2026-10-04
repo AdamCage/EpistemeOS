@@ -12,7 +12,7 @@ Planner вызывает `review.assign` для текущего claim, указ
 
 Policy `blind_initial_review_v1` строит явную проекцию: вопрос, competing explanations, hypotheses, claim и связи, зарегистрированный protocol со статистическими допущениями, метаданные наблюдённых runs/results. Список разрешённых blob digests содержит только наблюдённые `raw_data` и `metrics`; коллизия с исходным implementation, environment либо иным output отвергается. Direct digests исходной и повторной реализации, environment, logs и ещё не наблюдённых protocol data в manifest не помещаются. Авторские отчёты и прежние reviews не входят в эту проекцию. Свободный текст исходных records не очищается от смысловых подсказок: policy ограничивает поля и ссылки, а не гарантирует семантическую слепоту.
 
-Исторический replay повторно строит manifest на префиксе до назначения, проверяет bytes/digest, event payload, роль и единственную receipt. Graph добавляет target, context и разрешённые artifact edges. `review.assign` не создаёт review, verdict или право публикации; существующие `kernel.review` и `replanning.record_review` пока не требуют такого назначения.
+Исторический replay повторно строит manifest на префиксе до назначения, проверяет bytes/digest, event payload, роль и единственную receipt. Graph добавляет target, context и разрешённые artifact edges. `review.assign` не создаёт review, verdict или право публикации; существующие `kernel.review` и `replanning.record_review` такого назначения не требуют. С шага 7 [ADR 0018](0018-claim-families-and-review-admission.md) они записывают только отрицательные мнения, а approval засчитывается лишь из цепочки назначения, выдачи и `review.submit`.
 
 ## Граница доверия
 

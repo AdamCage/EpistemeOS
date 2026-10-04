@@ -1,4 +1,10 @@
-"""Local reviewer opinions are fixtures; they do not prove scientific independence."""
+"""Local reviewer opinions are fixtures; they do not prove scientific independence.
+
+ADR 0018 closed ``replanning.resolve_obligation``. Historical v1 receipts are
+created by ``historical_resolve``, the command body before that change, so
+their replay, Graph and backup stay covered; current resolutions go through
+veto reconsideration in ``review.submit``.
+"""
 
 import unittest
 from datetime import datetime, timezone
@@ -12,10 +18,32 @@ from episteme.kernel import Actor, Kernel
 from episteme.recovery import backup, restore
 from episteme.replanning import open_obligations
 from episteme.reporting import PaperBuilder, review_bundle
-from episteme.resolution import _admit, _index, _payload, resolution_states
+from episteme.resolution import Resolution, _admit, _index, _payload, resolution_states
 from episteme.store import Store
+from review_paths import reconsider, submit_review
 
 from tests import test_followup, test_followup_execution
+
+
+def historical_resolve(self, *, obligation, claim, expected_basis, review_rationale,
+                       resolution_rationale, evidence_refs, link_assessments=None):
+    """Body of the v1 command before ADR 0018 step 7; writes a historical receipt."""
+    before = self.store.events()
+    refs = _admit(self.store, before, obligation=obligation, claim=claim,
+                  expected_basis=expected_basis, review_rationale=review_rationale,
+                  resolution_rationale=resolution_rationale, evidence_refs=evidence_refs,
+                  link_assessments=link_assessments, actor=self.actor.id,
+                  study_id=self.store._command_context["study_id"], keyed=True)
+    kernel = Kernel(self.store, self.actor)
+    review_id = kernel._record_review(claim, verdict="approve", rationale=review_rationale,
+                                      actions=[], expected_basis=expected_basis,
+                                      link_assessments=link_assessments, allow_approval=True)
+    review = kernel._get(self.store.events(), review_id, "review")
+    return kernel._write(self.store.events(), "review_obligation_resolution",
+                         _payload(refs, review, resolution_rationale), {"reviewer"})
+
+
+RESOLUTION_RATIONALE = "The registered control addresses the original confound in this fixture"
 
 
 class ResolutionTests(unittest.TestCase):
@@ -67,15 +95,34 @@ class ResolutionTests(unittest.TestCase):
             evidence_refs=[child["claim"], *child["results"]], link_assessments=None)
 
     def resolve(self, child, actor=None):
-        return CommandService(self.store).execute(self.envelope(
-            "replanning.resolve_obligation", self.resolution_payload(child),
-            self.reviewer if actor is None else actor))
+        """A historical v1 resolution receipt, as recorded before ADR 0018 step 7."""
+        with patch.object(Resolution, "resolve_obligation", historical_resolve):
+            return CommandService(self.store).execute(self.envelope(
+                "replanning.resolve_obligation", self.resolution_payload(child),
+                self.reviewer if actor is None else actor))
 
-    def test_atomic_resolution_replay_and_bounded_child_eligibility(self):
+    def reconsider(self, child, refs=None, reviewer=None):
+        refs = [child["claim"], *child["results"]] if refs is None else refs
+        return reconsider(self.store, child["claim"], reviewer=reviewer or self.reviewer.id,
+                          resolutions=[dict(obligation=self.obligation, evidence_refs=refs,
+                                            rationale=RESOLUTION_RATIONALE)])
+
+    def resolution_events(self):
+        return [event for event in self.store.events()
+                if event["kind"] in {"review_obligation_resolution", "review_submission"}]
+
+    def test_v1_command_is_closed_and_historical_receipts_replay_as_not_admissible(self):
         child = self.complete_child()
         payload = self.resolution_payload(child)
+        prior = self.store.export(), self.store.export_receipts()
+        with self.assertRaisesRegex(ValueError, "no longer records resolutions"):
+            CommandService(self.store).execute(self.envelope(
+                "replanning.resolve_obligation", payload, self.reviewer))
+        self.assertEqual((self.store.export(), self.store.export_receipts()), prior)
         envelope = self.envelope("replanning.resolve_obligation", payload, self.reviewer)
-        resolution = CommandService(self.store).execute(envelope)
+        with patch.object(Resolution, "resolve_obligation", historical_resolve):
+            resolution = CommandService(self.store).execute(envelope)
+        # Redelivery of the historical envelope returns its receipt; the handler is not run.
         self.assertEqual(CommandService(self.store).execute(envelope), resolution)
         history = self.store.events()
         receipt = self.store.receipts()[-1]
@@ -87,23 +134,25 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual([ref["id"] for ref in history[-1]["payload"]["evidence_refs"]],
                          payload["evidence_refs"])
         self.assertEqual([event["id"] for event in open_obligations(self.store, history, self.claim)],
-                         [self.sibling_obligation])
+                         [self.obligation, self.sibling_obligation])
         self.assertEqual(followup_state(self.store, self.obligation)["obligation_resolution"],
-                         "reviewer_satisfied")
+                         "not_admissible")
         self.assertEqual(Kernel(self.store, self.reviewer).next_action(self.claim)["action"], "replan")
         self.assertEqual(Kernel(self.store, self.reviewer).next_action(child["claim"])["action"],
                          "replan")
         graph = ResearchGraph.from_store(self.store)
         self.assertEqual(graph.node(resolution).kind.value, "review_obligation_resolution")
         bundle = review_bundle(self.store, history)
-        self.assertEqual(bundle["obligation_resolution_status"][self.obligation], "reviewer_satisfied")
+        self.assertEqual(bundle["obligation_resolution_status"][self.obligation], "not_admissible")
         self.assertEqual(bundle["review_obligation_resolutions"][0]["id"], resolution)
         self.assertIn(self.obligation, _index(self.store, history))
         self.assertEqual(_index(self.store, history[:receipt["before_revision"]]), {})
 
     def test_late_evidence_stales_resolution_without_erasing_history(self):
         child = self.complete_child()
-        resolution = self.resolve(child)
+        resolution = self.reconsider(child)["resolutions"][0]
+        self.assertEqual(resolution_states(self.store, self.store.events())[self.obligation]["status"],
+                         "reviewer_satisfied")
         new_run = Kernel(self.store, self.executor).start_run(self.protocol, seed=7,
             implementation=self.implementation, environment=self.environment,
             command=["python", "late-source.py"])
@@ -121,27 +170,24 @@ class ResolutionTests(unittest.TestCase):
 
     def test_wrong_reviewer_and_missing_result_citations_roll_back(self):
         child = self.complete_child()
-        prior = self.store.export(), self.store.export_receipts()
-        with self.assertRaisesRegex(ValueError, "original negative reviewer"):
-            self.resolve(child, Actor("other-reviewer", "reviewer"))
-        payload = self.resolution_payload(child)
-        payload["evidence_refs"].pop()
+        prior = self.resolution_events()
+        # Another reviewer owns no finding here, so its assignment is not a reconsideration.
+        with self.assertRaisesRegex(ValueError, "otherwise v1"):
+            submit_review(self.store, child["claim"], reviewer="other-reviewer", withdrawals=[],
+                          resolutions=[dict(obligation=self.obligation, rationale=RESOLUTION_RATIONALE,
+                                            evidence_refs=[child["claim"], *child["results"]])])
         with self.assertRaisesRegex(ValueError, "citations"):
-            CommandService(self.store).execute(self.envelope(
-                "replanning.resolve_obligation", payload, self.reviewer))
-        self.assertEqual((self.store.export(), self.store.export_receipts()), prior)
+            self.reconsider(child, refs=[child["claim"], *child["results"][:-1]])
+        self.assertEqual(self.resolution_events(), prior)
 
     def test_changed_source_basis_rejects_the_old_finding_at_commit(self):
         child = self.complete_child()
         Kernel(self.store, self.executor).start_run(self.protocol, seed=7,
             implementation=self.implementation, environment=self.environment,
             command=["python", "late-source.py"])
-        prior = self.store.export(), self.store.export_receipts()
         with self.assertRaisesRegex(ValueError, "source evidence differs"):
-            self.resolve(child)
-        self.assertEqual((self.store.export(), self.store.export_receipts()), prior)
-        self.assertFalse(any(event["kind"] == "review_obligation_resolution"
-                             for event in self.store.events()))
+            self.reconsider(child)
+        self.assertEqual(self.resolution_events(), [])
 
     def test_forged_resolution_event_fails_replay_and_graph(self):
         child = self.complete_child()
@@ -165,8 +211,9 @@ class ResolutionTests(unittest.TestCase):
             refs = _admit(self.store, self.store.events(), **args,
                           actor=self.reviewer.id, study_id=self.study)
             kernel = Kernel(self.store, self.reviewer)
-            review_id = kernel.review(child["claim"], verdict="approve",
-                rationale=args["review_rationale"], actions=[], expected_basis=child["basis"])
+            review_id = kernel._record_review(child["claim"], verdict="approve",
+                rationale=args["review_rationale"], actions=[], expected_basis=child["basis"],
+                link_assessments=None, allow_approval=True)
             review = Kernel._get(self.store.events(), review_id, "review")
             event_payload = _payload(refs, review, args["resolution_rationale"])
             event_payload["evidence_refs"][0]["hash"] = "0" * 64
@@ -192,7 +239,7 @@ class ResolutionTests(unittest.TestCase):
             self.assertEqual(resolution_states(reopened, reopened.events())[self.obligation]
                              ["resolution"]["id"], resolution)
             self.assertEqual(followup_state(reopened, self.obligation)["obligation_resolution"],
-                             "reviewer_satisfied")
+                             "not_admissible")
 
 
 class SoleObligationResolutionTests(unittest.TestCase):
@@ -232,11 +279,10 @@ class SoleObligationResolutionTests(unittest.TestCase):
         return child, basis, [first, second]
 
     def resolve(self, child, basis, results):
-        return self.command("replanning.resolve_obligation", self.reviewer,
-            dict(obligation=self.obligation, claim=child, expected_basis=basis,
-                 review_rationale="The bounded inconclusive claim is acceptable in this fixture",
-                 resolution_rationale="The new control addresses the recorded confound",
-                 evidence_refs=[child, *results], link_assessments=None))
+        self.assertEqual(Kernel(self.store, self.reviewer).gate(child)["basis_hash"], basis)
+        return reconsider(self.store, child, reviewer=self.reviewer.id, resolutions=[dict(
+            obligation=self.obligation, evidence_refs=[child, *results],
+            rationale="The new control addresses the recorded confound")])["resolutions"][0]
 
     def test_effective_resolution_unblocks_only_the_reviewed_child(self):
         child, basis, results = self.complete_child()
@@ -265,21 +311,25 @@ class SoleObligationResolutionTests(unittest.TestCase):
             self.store, self.store.events(), self.claim)], [self.obligation])
         self.assertEqual(Kernel(self.store, self.reviewer).next_action(child)["action"], "replan")
 
-    def test_later_source_approval_cannot_promote_the_old_or_child_claim(self):
+    def test_later_source_reconsideration_neither_promotes_the_source_nor_stales_the_child(self):
         child, basis, results = self.complete_child()
         self.resolve(child, basis, results)
-        Kernel(self.store, self.reviewer).review(self.claim, verdict="approve",
-            rationale="Later local opinion about the original fixture claim",
-            actions=[], expected_basis=self.basis)
+        with self.assertRaisesRegex(ValueError, "approval requires review.assign"):
+            Kernel(self.store, self.reviewer).review(self.claim, verdict="approve",
+                rationale="Later local opinion about the original fixture claim",
+                actions=[], expected_basis=self.basis)
+        # The resolution counts for the child only; the source keeps its obligation.
+        reconsider(self.store, self.claim, reviewer=self.reviewer.id)
         self.assertEqual(resolution_states(self.store, self.store.events())[self.obligation]["status"],
-                         "stale_resolution")
+                         "reviewer_satisfied")
         self.assertEqual(Kernel(self.store, self.reviewer).next_action(self.claim)["action"],
                          "replan")
         self.assertEqual(Kernel(self.store, self.reviewer).next_action(child)["action"],
-                         "replan")
+                         "paper_candidate")
         with self.assertRaisesRegex(ValueError, "not eligible for paper"):
             PaperBuilder(self.store, Actor("fixture-writer", "writer")).build(
-                title="Premature fixture draft", claims=[child], expected_bases={child: basis})
+                title="Premature fixture draft", claims=[self.claim],
+                expected_bases={self.claim: self.basis})
 
     def test_completed_batch_with_null_terminal_claim_can_be_reviewed(self):
         # All completion manifests here are synthetic fixture records. No worker

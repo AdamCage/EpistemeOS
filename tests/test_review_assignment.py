@@ -86,8 +86,8 @@ class ReviewAssignmentTests(unittest.TestCase):
 
     def test_freezes_blind_bundle_and_graph_without_claiming_independence(self):
         prior = Kernel(self.store, Actor("earlier-reviewer", "reviewer")).review(
-            self.claim, verdict="approve", rationale="Prior opinion hidden from initial bundle",
-            actions=[], expected_basis=self.basis)
+            self.claim, verdict="request_changes", rationale="Prior opinion hidden from initial bundle",
+            actions=["Fixture concern hidden from initial bundle"], expected_basis=self.basis)
         envelope = self.envelope()
         result = self.service.execute(envelope)
         event = self.store.events()[-1]

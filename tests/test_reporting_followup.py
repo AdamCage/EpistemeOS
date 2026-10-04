@@ -159,9 +159,9 @@ class PaperFollowupProvenanceTests(unittest.TestCase):
         paper, bundle, _ = self.build(child, basis)
         self.assertEqual(bundle["selected_context"]["followup_lineage"][child][0]
                          ["resolution"]["effective_status"], "reviewer_satisfied")
-        Kernel(self.store, self.reviewer).review(self.claim, verdict="approve",
-            rationale="Later fixture opinion on the original source", actions=[],
-            expected_basis=self.basis)
+        Kernel(self.store, self.reviewer).review(child, verdict="request_changes",
+            rationale="Later fixture opinion on the bounded child", actions=["Check another control"],
+            expected_basis=basis)
         self.assertEqual(Kernel(self.store, self.reviewer).next_action(child)["action"], "replan")
         with self.assertRaisesRegex(ValueError, "no longer current"):
             self.writer.materialize(paper)

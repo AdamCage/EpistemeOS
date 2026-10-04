@@ -11,6 +11,7 @@ from episteme.kernel import Actor, GateError, Kernel
 from episteme.replanning import Replanning, _index, open_obligations
 from episteme.reporting import PaperBuilder
 from episteme.store import ConflictError, Store
+from review_paths import approve, reconsider
 
 
 class ReplanningTests(unittest.TestCase):
@@ -99,10 +100,9 @@ class ReplanningTests(unittest.TestCase):
 
         # A later approval is another opinion; it does not satisfy closure criteria.
         reviewer = Kernel(self.store, Actor("fixture-reviewer", "reviewer"))
-        reviewer.review(self.claim, verdict="approve", rationale="Fixture later opinion",
-                        actions=[], expected_basis=self.basis)
+        reconsider(self.store, self.claim, reviewer="fixture-reviewer", study="fixture-study")
         self.assertEqual(len(open_obligations(self.store, self.store.events(), self.claim)), 2)
-        self.assertEqual(self.store.events()[-1]["kind"], "review")
+        self.assertEqual(self.store.events()[-1]["kind"], "review_submission")
         decision = reviewer.next_action(self.claim)
         self.assertEqual(decision["action"], "replan")
         self.assertEqual(decision["obligations"], result["obligations"])
@@ -240,11 +240,11 @@ class ReplanningTests(unittest.TestCase):
             expected_bases={self.claim: planner.gate(self.claim)["basis_hash"],
                             successor: planner.gate(successor)["basis_hash"]})
         new_basis = reader.gate(successor)["basis_hash"]
-        reader.review_with_links(successor, verdict="approve", rationale="Fixture replacement opinion",
-            actions=[], expected_basis=new_basis, link_assessments={link: dict(
-                judgment="accepted", disposition="compatible_as_written",
-                rationale="The replacement acknowledges the unresolved source objection",
-                evidence=[source_review, successor])})
+        approve(self.store, successor, reviewer="successor-reviewer", expected_basis=new_basis,
+                link_assessments={link: dict(
+                    judgment="accepted", disposition="compatible_as_written",
+                    rationale="The replacement acknowledges the unresolved source objection",
+                    evidence=[source_review, successor])})
         decision = reader.next_action(successor)
         self.assertEqual(decision["action"], "replan")
         self.assertEqual(len(decision["obligations"]), 2)

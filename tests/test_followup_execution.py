@@ -173,8 +173,9 @@ class FollowupExecutionTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
 
     def test_stale_source_review_rejects_preparation(self):
-        Kernel(self.store, self.reviewer).review(self.claim, verdict="approve",
-            rationale="Withdraw prior concern", actions=[], expected_basis=self.basis)
+        Kernel(self.store, self.reviewer).review(self.claim, verdict="request_changes",
+            rationale="Revised prior concern", actions=["Revised fixture concern"],
+            expected_basis=self.basis)
         before = self.snapshot()
         with self.assertRaisesRegex(ValueError, "latest opinion"):
             CommandService(self.store).execute(self.prepare())
@@ -234,8 +235,9 @@ class FollowupExecutionTests(unittest.TestCase):
 
     def test_later_reviewer_change_does_not_rewrite_historical_batch(self):
         batch = CommandService(self.store).execute(self.prepare())
-        Kernel(self.store, self.reviewer).review(self.claim, verdict="approve",
-            rationale="Withdraw prior concern after batch planning", actions=[], expected_basis=self.basis)
+        Kernel(self.store, self.reviewer).review(self.claim, verdict="request_changes",
+            rationale="Revised prior concern after batch planning",
+            actions=["Revised fixture concern"], expected_basis=self.basis)
         self.assertEqual(batch_state(self.store, batch)["batch"], batch)
         self.assertEqual(ResearchGraph.from_store(self.store).node(batch).kind.value, "batch_plan")
         before = self.snapshot()
@@ -263,8 +265,9 @@ class FollowupExecutionTests(unittest.TestCase):
             Actor("child-executor", "executor"), dict(batch=batch, slot="primary:8")))
         slot = Kernel._get(self.store.events(), binding, "batch_slot")
         job = slot["payload"]["job"]
-        Kernel(self.store, self.reviewer).review(self.claim, verdict="approve",
-            rationale="Withdraw prior concern before dispatch", actions=[], expected_basis=self.basis)
+        Kernel(self.store, self.reviewer).review(self.claim, verdict="request_changes",
+            rationale="Revised prior concern before dispatch",
+            actions=["Revised fixture concern"], expected_basis=self.basis)
         before = self.snapshot()
         with patch("episteme.execution.subprocess.Popen") as worker:
             with self.assertRaisesRegex(ValueError, "latest opinion"):

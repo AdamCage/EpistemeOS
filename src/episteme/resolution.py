@@ -342,6 +342,9 @@ def effective_status(store: Store, history: list[dict[str, Any]],
     if state is None:
         return "open"
     p = state["resolution"]["payload"]
+    if p.get("schema_version") != 2:
+        # ADR 0018 §3.2: a v1 resolution rests on an approval outside review.submit.
+        return "not_admissible"
     reader = Kernel(store, Actor("resolution-reader", "observer"))
     try:
         source_gate = reader._gate(history, p["source_claim"])
@@ -404,26 +407,6 @@ class Resolution:
                            review_rationale: str, resolution_rationale: str,
                            evidence_refs: list[str],
                            link_assessments: dict[str, dict[str, Any]] | None = None) -> str:
-        """Atomically approve a bounded child claim and address one source finding."""
-        require(self.store._command_context is not None and self.actor.role == "reviewer",
-                "resolution requires a reviewer CommandService transaction")
-        before = self.store.events()
-        require(obligation not in _index(self.store, before),
-                "review obligation already has a resolution decision")
-        context = self.store._command_context
-        refs = _admit(self.store, before, obligation=obligation, claim=claim,
-                      expected_basis=expected_basis, review_rationale=review_rationale,
-                      resolution_rationale=resolution_rationale, evidence_refs=evidence_refs,
-                      link_assessments=link_assessments, actor=self.actor.id,
-                      study_id=context["study_id"], keyed=True)
-        kernel = Kernel(self.store, self.actor)
-        if link_assessments is None:
-            review_id = kernel.review(claim, verdict="approve", rationale=review_rationale,
-                                      actions=[], expected_basis=expected_basis)
-        else:
-            review_id = kernel.review_with_links(claim, verdict="approve",
-                rationale=review_rationale, actions=[], expected_basis=expected_basis,
-                link_assessments=link_assessments)
-        review = kernel._get(self.store.events(), review_id, "review")
-        return kernel._write(self.store.events(), "review_obligation_resolution",
-                             _payload(refs, review, resolution_rationale), {"reviewer"})
+        """Closed by ADR 0018 §3.2; historical receipts still replay through ``_index``."""
+        raise GateError("replanning.resolve_obligation no longer records resolutions; the "
+                        "obligation owner resolves it through veto reconsideration in review.submit")

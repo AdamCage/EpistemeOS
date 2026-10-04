@@ -288,5 +288,48 @@ class ReconsiderationTests(unittest.TestCase):
             self.assertEqual(reader.next_action(claim_c)["action"], "replan")
 
 
+class RawReviewTests(unittest.TestCase):
+    """Audit finding A-10: review events appended around the command layer."""
+
+    def raw_approval(self, lab, claim, actor, role):
+        lab.store.append(id=f"review-raw-{uuid4().hex}", kind="review", actor=actor, role=role,
+                         payload=dict(claim=claim, verdict="approve", rationale="looks fine to me",
+                                      actions=[], basis_hash=current_basis(lab.store, claim)),
+                         expected_revision=len(lab.store.events()))
+
+    def test_raw_executor_approval_is_rejected_by_graph_and_decisions(self):
+        for actor, role in (("exec-primary", "executor"), ("exec-primary", "reviewer"),
+                            ("reviewer-raw", "executor")):
+            with self.subTest(actor=actor, role=role):
+                lab = FamilyFixture(self)
+                protocol, runs = lab.protocol()
+                claim = lab.claim(protocol, runs)
+                self.raw_approval(lab, claim, actor, role)
+                message = "review by a non-reviewer role or an evidence contributor"
+                with self.assertRaisesRegex(Exception, message):
+                    lab.next_action(claim)
+                with self.assertRaisesRegex(Exception, message):
+                    ResearchGraph.from_store(lab.store)
+                before = lab.store.events()
+                with self.assertRaisesRegex(Exception, message):
+                    lab.paper(claim)
+                self.assertEqual(lab.store.events(), before)
+
+    def test_raw_reviewer_approval_is_advisory(self):
+        lab = FamilyFixture(self)
+        protocol, runs = lab.protocol()
+        claim = lab.claim(protocol, runs)
+        self.raw_approval(lab, claim, "reviewer-raw", "reviewer")
+        ResearchGraph.from_store(lab.store)
+        decision = lab.next_action(claim)
+        self.assertEqual(decision["action"], "scientific_review")
+        self.assertEqual(decision["advisory_approvals"][0]["defect"],
+                         "approval lacks a verified review.submit chain")
+        before = lab.store.events()
+        with self.assertRaisesRegex(ValueError, "not eligible for paper"):
+            lab.paper(claim)
+        self.assertEqual(lab.store.events(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

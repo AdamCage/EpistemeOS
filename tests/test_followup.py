@@ -20,6 +20,7 @@ from episteme.reporting import PaperBuilder
 from episteme.recovery import backup, restore
 from episteme.search import COMPONENTS, Search
 from episteme.store import Store
+from review_paths import approve
 
 
 class FollowupTests(unittest.TestCase):
@@ -238,9 +239,9 @@ class FollowupTests(unittest.TestCase):
         self.assertEqual((self.store.export(), self.store.export_receipts()), before)
 
     def test_revised_source_reviewer_opinion_stales_followup(self):
-        Kernel(self.store, self.reviewer).review(self.claim, verdict="approve",
-            rationale="Fixture reviewer withdrew the original concern", actions=[],
-            expected_basis=self.basis)
+        Kernel(self.store, self.reviewer).review(self.claim, verdict="request_changes",
+            rationale="Fixture reviewer revised the original concern",
+            actions=["Revised fixture concern"], expected_basis=self.basis)
         before = self.store.export(), self.store.export_receipts()
         with self.assertRaisesRegex(ValueError, "latest opinion"):
             self.apply()
@@ -289,8 +290,7 @@ class FollowupTests(unittest.TestCase):
         reviewer = Kernel(self.store, Actor("successor-reviewer", "reviewer"))
         basis = reviewer.gate(successor)["basis_hash"]
         self.assertTrue(reviewer.gate(successor)["passed"])
-        reviewer.review(successor, verdict="approve", rationale="Fixture opinion",
-                        actions=[], expected_basis=basis)
+        approve(self.store, successor, reviewer="successor-reviewer", expected_basis=basis)
         decision = reviewer.next_action(successor)
         self.assertEqual(decision["action"], "replan")
         self.assertIn(self.obligation, decision["obligations"])

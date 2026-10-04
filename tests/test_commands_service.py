@@ -15,6 +15,7 @@ from episteme.kernel import Actor, GateError, Kernel
 from episteme.reporting import PaperBuilder
 from episteme.search import Search
 from episteme.store import ConflictError, Store
+from review_paths import submit_review
 
 
 class CommandServiceTests(unittest.TestCase):
@@ -142,6 +143,32 @@ class CommandServiceTests(unittest.TestCase):
         self.assertEqual(search.tree_state(tree), state)
         self.assertEqual(len([e for e in self.store.events() if e["kind"] == "search_selection"]), 1)
 
+    def reviewable_claim(self):
+        protocol = self.protocol()
+        executor = Kernel(self.store, Actor("executor", "executor"))
+        primary = executor.start_run(**self.run_payload(protocol))
+        executor.finish_run(primary, status="completed", outputs=self.outputs)
+        replicator = Kernel(self.store, Actor("replicator", "replicator"))
+        replica = replicator.start_run(protocol, seed=7, implementation=self.recode,
+            environment=self.environment, command=["fixture"], replicate_of=primary)
+        replicator.finish_run(replica, status="completed", outputs=self.outputs)
+        claim = executor.claim(protocol=protocol, statement="Fixture mean is zero", scope=self.scope,
+            evidence=[primary, replica], limitations=["Test fixture only"], outcome="inconclusive")
+        return claim, executor.gate(claim)["basis_hash"]
+
+    def test_kernel_review_command_rejects_approve(self):
+        # Audit A-06: a legacy approval command counted as a scientific approval.
+        claim, basis = self.reviewable_claim()
+        before = self.store.export(), self.store.export_receipts()
+        for action, extra in (("kernel.review", {}), ("kernel.review_with_links", dict(link_assessments={}))):
+            with self.subTest(action=action), self.assertRaisesRegex(GateError, "approval requires review.assign"):
+                self.service.execute(self.envelope(action, dict(claim=claim, verdict="approve",
+                    rationale="Test fixture opinion, not scientific approval", actions=[],
+                    expected_basis=basis, **extra), actor="reviewer", role="reviewer", id=action))
+            self.assertEqual((self.store.export(), self.store.export_receipts()), before)
+        self.assertEqual(Kernel(self.store, Actor("observer", "observer")).next_action(claim)["action"],
+                         "scientific_review")
+
     def test_historical_review_and_paper_replay_does_not_reapprove_new_evidence(self):
         protocol = self.protocol()
         executor = Kernel(self.store, Actor("executor", "executor"))
@@ -154,10 +181,9 @@ class CommandServiceTests(unittest.TestCase):
         claim = executor.claim(protocol=protocol, statement="Fixture mean is zero", scope=self.scope,
             evidence=[primary, replica], limitations=["Test fixture only"], outcome="inconclusive")
         basis = executor.gate(claim)["basis_hash"]
-        review = self.envelope("kernel.review", dict(claim=claim, verdict="approve",
-            rationale="Test fixture opinion, not scientific approval", actions=[], expected_basis=basis),
-            actor="reviewer", role="reviewer", id="review")
-        review_id = self.service.execute(review)
+        submit_review(self.store, claim, reviewer="reviewer")
+        receipt = next(r for r in self.store.receipts() if r["request"]["action"] == "review.submit")
+        review, review_id = dict(context=receipt["context"], request=receipt["request"]), receipt["result"]
         paper = self.envelope("paper.build", dict(title="Fixture scaffold", claims=[claim],
             expected_bases={claim: basis}), actor="writer", role="writer", id="paper")
         paper_id = self.service.execute(paper)

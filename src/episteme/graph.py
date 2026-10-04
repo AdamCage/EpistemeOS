@@ -688,6 +688,9 @@ class _Projection:
                          derivation="resolved_exposure_basis")
             context = resolve_context(preceding, claim["id"])
             reader = Kernel(self.store, Actor("graph-reader", "observer"))
+            # ADR 0018 §3.3: no kernel path writes such a review (audit A-10).
+            if e["role"] != "reviewer" or e["actor"] in reader._review_members(preceding, claim["id"])[1]:
+                self.fail("review by a non-reviewer role or an evidence contributor")
             for context_claim in context.claim_ids:
                 for record in reader._local_evidence(preceding, context_claim)[0]:
                     if record["kind"] in {"research_question", "explanation_set", "hypothesis"}:

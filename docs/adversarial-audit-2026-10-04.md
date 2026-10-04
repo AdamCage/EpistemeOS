@@ -874,20 +874,20 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 
 Раздел обновляется по мере исправлений; разделы 1–8 описывают снимок `da6aa2a` и не меняются. Исправления семантики review, claims и paper ведёт [ADR 0018](decisions/0018-claim-families-and-review-admission.md), принятый 4 октября 2026 года координирующим агентом по делегированию пользователя. «Исправлено» означает: PoC находки стал регрессионным тестом, который падает на коде до исправления и проходит после него; номера прогонов — в [validation.md](validation.md). Шаг ADR указан по его разделу 9.
 
-Последняя проверка: 4 октября 2026, шаг 6 ADR 0018.
+Последняя проверка: 4 октября 2026, шаг 7 ADR 0018.
 
 | ID | Статус | Где исправляется |
 | --- | --- | --- |
 | A-01 | **исправлено** (шаг 2): veto и obligations действуют на семейство claim; PoC — `test_resubmitted_claim_inherits_family_veto_and_obligations` (typed и legacy reject), перерегистрация на тех же bytes — `test_reregistered_protocol_on_same_bytes_joins_the_family` | ADR 0018, шаг 2 |
 | A-02 | **исправлено** (шаг 2): resolution засчитывается только для своего claim; PoC — `test_resolution_applies_only_to_the_claim_it_evaluated`, lineage потомка — `test_descendant_protocol_paper_needs_its_own_resolution` | ADR 0018, шаг 2 |
 | A-03 | **исправлено** (шаг 3): привязка пакета управляет линией `parent`; PoC — `test_amendment_of_pack_bound_protocol_is_rejected`, путь через `followup.apply` — `test_followup_of_pack_bound_claim_is_rejected`, перерегистрация закреплённых bytes — `test_legacy_root_cannot_reuse_pack_pinned_bytes`, история эпохи `da6aa2a` — `test_stray_claim_on_pack_lineage_fails_gate` | ADR 0018, шаг 3 |
-| A-04 | **исправлено для новых admissions** (шаг 4): `analysis.apply` пересчитывает proposal зарегистрированным адаптером; PoC — `test_analysis_apply_rejects_a_proposal_the_adapter_did_not_compute`. Approval по историческому анализу schema 1 без пересчёта — шаг 7 | ADR 0018, шаги 4 и 7 |
+| A-04 | **исправлено** (шаги 4, 6, 7): `analysis.apply` пересчитывает proposal зарегистрированным адаптером, PoC — `test_analysis_apply_rejects_a_proposal_the_adapter_did_not_compute`; `review.submit` пересчитывает исторический анализ schema 1 перед approval (шаг 6), а approval по нему без записанного `recomputed_match` не засчитывается (шаг 7); история эпохи `da6aa2a` с подложным анализом — `test_unverified_v1_analysis_needs_recomputation_before_approval` | ADR 0018, шаги 4, 6 и 7 |
 | A-05 | не исправлено | ADR 0018, шаг 8 |
-| A-06 | не исправлено | ADR 0018, шаг 7 |
+| A-06 | **исправлено** (шаг 7): legacy `kernel.review`, `kernel.review_with_links`, `replanning.record_review` и CLI `review` пишут только отрицательные мнения, approval возможен лишь через `review.assign` → доставку → `review.submit`, veto снимает только явный отзыв владельца; synthetic demo claim не попадает в paper; исторический paper после legacy approval получает статус `not_eligible_under_current_rules`. PoC — `test_cli_review_cannot_approve_or_lift_another_reviewers_veto`, `test_demo_claim_paper_is_refused`, `test_kernel_review_command_rejects_approve`, история эпохи `da6aa2a` — `test_legacy_review_paper_is_not_eligible` | ADR 0018, шаг 7 |
 | A-07 | не исправлено | ADR 0018, шаг 8 |
 | A-08 | не исправлено | ADR 0018, шаг 9; частично остаётся ограничением (§6 ADR) |
 | A-09 | не исправлено | ADR 0018, шаг 9; частично остаётся ограничением (§6 ADR) |
-| A-10 | не исправлено | ADR 0018, шаг 7 |
+| A-10 | **исправлено** (шаг 7): решения засчитывают approval только из проверенной цепочки `review.submit`; review с ролью не `reviewer` или от contributor по точной строке делает историю недействительной для Graph, `next_action` и paper. PoC — `test_raw_executor_approval_is_rejected_by_graph_and_decisions`, `test_raw_reviewer_approval_is_advisory`. Владелец файлов, способный переписать всю цепочку вместе с receipts, остаётся за границей модели угроз | ADR 0018, шаг 7 |
 | A-11 | вне ADR 0018 | будущий ADR профиля исполнения; ADR 0017 код пакетов не менял |
 | A-12 | вне ADR 0018 | будущий ADR профиля исполнения; ADR 0017 код исполнения не менял |
 | A-13 | вне ADR 0018; **перепроверить** | ADR 0017 переписал проверку цепочки в `store.py`; triggers и `INSERT OR REPLACE` он не менял |
@@ -899,7 +899,7 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 | A-19 | вне ADR 0018; **перепроверить** | ADR 0017 переписал проверку receipts в `store.py`; `inspect` и `gate` в `cli.py` он оборачивал только в read scope |
 | A-20 | вне ADR 0018; перепроверить | ADR 0017 менял `Store.read` (memo в read scope); `put` прежний |
 | A-21 | вне ADR 0018 | изменения ADR 0017 в `cli.py` механические (read scope) |
-| A-22 | **исправлено для новых записей** (шаг 5): канонические ASCII IDs и сравнение независимости по нормализованному ключу; PoC — `test_noncanonical_reviewer_variants_are_rejected`, граница команд — `test_noncanonical_actor_ids_are_rejected`. Допустимость исторических approvals неканонических reviewers — шаг 7. Совпадение analyst с planner или executor по-прежнему допустимо (документированная граница) | ADR 0018, шаги 5 и 7 |
+| A-22 | **исправлено** (шаги 5 и 7): канонические ASCII IDs и сравнение независимости по нормализованному ключу; PoC — `test_noncanonical_reviewer_variants_are_rejected`, граница команд — `test_noncanonical_actor_ids_are_rejected`. Исторический approval неканонического reviewer не засчитывается (шаг 7), тест — `test_historical_noncanonical_reviewer_cannot_approve`. Совпадение analyst с planner или executor по-прежнему допустимо (документированная граница) | ADR 0018, шаги 5 и 7 |
 | A-23 | вне ADR 0018 | будущий ADR профиля исполнения; изменения ADR 0017 в `cli.py` поведение `pack describe`/`pack verify` не меняют |
 
 «Перепроверить» значит: ADR 0017 менял код, через который проходит PoC находки, а сам PoC после него не повторялся. Находка считается открытой, пока PoC не повторён.

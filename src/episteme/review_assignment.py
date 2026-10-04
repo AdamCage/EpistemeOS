@@ -109,6 +109,11 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
     by_id = {event["id"]: event for event in history}
     claims = [by_id[id] for id in context.claim_ids]
     protocols = {event["payload"]["protocol"] for event in claims}
+    if policy == RECONSIDERATION:
+        # The owner reconsiders for the whole family: list every lineage protocol and run.
+        from .review_admission import protocol_components
+        roots = protocol_components(history)
+        protocols |= {id for id, root in roots.items() if root == roots[target["payload"]["protocol"]]}
     protocol_events = [event for event in history if event["id"] in protocols]
     bound_studies = {event["payload"].get("planning", {}).get("study_id")
                      for event in protocol_events if "planning" in event["payload"]}

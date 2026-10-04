@@ -21,6 +21,7 @@ from episteme.cli import main
 from episteme.demo import PRIMARY_SOURCE, REANALYSIS_SOURCE, run_demo
 from episteme.kernel import Actor, Kernel
 from episteme.store import Store, digest
+from review_paths import approve
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -304,31 +305,37 @@ class CliTests(unittest.TestCase):
             self.assertEqual(store.events(), self.fixture_events)
         self.assertEqual(list(self.root.glob("paper-*.md")), [])
 
-    def test_review_cli_then_paper_creates_only_a_traceable_internal_draft(self):
-        review_path = self.review_input()
-        review = self.invoke("review", self.claim, "--input", review_path, "--root", self.root)
-        self.assertEqual(review["next_action"]["action"], "paper_candidate")
-        draft = self.invoke("paper", self.claim, "--title", "Synthetic integration draft",
-                            "--actor", "test-writer", "--root", self.root)
-        self.assertEqual(draft["status"], "internal_draft")
-        self.assertEqual(set(draft["files"]), {"manuscript", "bundle"})
-        manuscript = Path(draft["files"]["manuscript"]).read_bytes()
-        bundle_bytes = Path(draft["files"]["bundle"]).read_bytes()
-        bundle = json.loads(bundle_bytes)
-        self.assertEqual(bundle["selected_claims"], [self.claim])
-        self.assertEqual(bundle["reviewed_bases"], {self.claim: review["next_action"]["basis_hash"]})
-        self.assertIn("Internal evidence-linked draft", manuscript.decode("utf-8"))
-        self.assertIn("not a submission-ready paper", manuscript.decode("utf-8"))
+    def test_cli_review_cannot_approve_or_lift_another_reviewers_veto(self):
+        # Audit finding A-06: a veto lifted by a later CLI approval under any reviewer ID.
+        veto = self.invoke("review", self.claim, "--input", self.review_input(
+            reviewer_id="dr-strict", verdict="reject", actions=["Re-run with controls."]),
+            "--root", self.root)
+        self.assertEqual(veto["next_action"]["action"], "replan")
         with Store(self.root) as store:
-            events = store.events()
-            self.assertEqual(len(events), len(self.fixture_events) + 2)
-            self.assertEqual(events[-2]["id"], review["review"])
-            self.assertEqual(events[-1]["id"], draft["paper"])
-            self.assertEqual(events[-1]["payload"]["source_snapshot"], events[-2]["hash"])
-            self.assertEqual(events[-1]["payload"]["manuscript"], digest(manuscript))
-            self.assertEqual(events[-1]["payload"]["bundle"], digest(bundle_bytes))
-            self.assertEqual(store.read(digest(manuscript)), manuscript)
-            self.assertEqual(bundle["events"], events[:-1])
+            recorded = store.events()
+        for reviewer in ("friendly-reviewer", "dr-strict"):
+            with self.subTest(reviewer=reviewer):
+                result = self.invoke("review", self.claim, "--input",
+                                     self.review_input(reviewer_id=reviewer),
+                                     "--root", self.root, status=2)
+                self.assertIn("approval requires review.assign", result["error"])
+                with Store(self.root) as store:
+                    self.assertEqual(store.events(), recorded)
+                    reader = Kernel(store, Actor("test-reader", "observer"))
+                    self.assertEqual(reader.next_action(self.claim)["action"], "replan")
+
+    def test_demo_claim_paper_is_refused(self):
+        # Audit finding A-06: an approved synthetic demo claim must not become a paper.
+        with Store(self.root) as store:
+            approve(store, self.claim, reviewer="test-external-reviewer")
+            recorded = store.events()
+            self.assertEqual(Kernel(store, Actor("test-reader", "observer"))
+                             .next_action(self.claim)["action"], "paper_candidate")
+        result = self.invoke("paper", self.claim, "--title", "Synthetic integration draft",
+                             "--actor", "test-writer", "--root", self.root, status=2)
+        self.assertIn("synthetic demo claims never enter a paper", result["error"])
+        with Store(self.root) as store:
+            self.assertEqual(store.events(), recorded)
 
     def test_review_cli_rejects_stale_basis_contributor_and_malformed_payload(self):
         for changes, message in [({"expected_basis": "0" * 64}, "stale review"),

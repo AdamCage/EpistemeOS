@@ -208,7 +208,7 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 
 ## Ход реализации
 
-Текущий срез охватывает шаги 1–6. Шаги 7–10 вне его; известные проблемы review integrity (снятие veto тем же reviewer в `kernel.py`, legacy `kernel.review` и CLI `review` без assignment) и медленная повторная проверка receipts в `analysis advance` здесь не исправляются.
+Текущий срез охватывает шаги 1–6. Шаги 7–10 вне его; известные проблемы review integrity (снятие veto тем же reviewer в `kernel.py`, legacy `kernel.review` и CLI `review` без assignment) и медленная повторная проверка receipts в `analysis advance` здесь не исправляются. Проблемы review integrity закрыл шаг 7 [ADR 0018](0018-claim-families-and-review-admission.md).
 
 | Шаг | Состояние |
 |---|---|

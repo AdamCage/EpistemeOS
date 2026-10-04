@@ -55,7 +55,19 @@ def _summary(store: Store, history: list[dict[str, Any]]) -> dict[str, Any]:
         result["notice"] = FIXTURE_NOTICE
     if len(claims) == 1:
         result.update(claim=claims[0]["id"], next_action=claims[0]["next_action"])
+    decisions = {claim["id"]: claim["next_action"] for claim in claims}
+    papers = [dict(id=e["id"], status=paper_status(e, decisions))
+              for e in history if e["kind"] == "paper"]
+    if papers:
+        result["papers"] = papers
     return result
+
+
+def paper_status(paper: dict[str, Any], decisions: dict[str, dict[str, Any]]) -> str:
+    """A recorded draft stays in history; current rules decide whether it is still eligible."""
+    current = all(decisions[id]["action"] == "paper_candidate" and decisions[id]["basis_hash"] == basis
+                  for id, basis in paper["payload"]["reviewed_bases"].items())
+    return "internal_draft" if current else "not_eligible_under_current_rules"
 
 
 def inspect_store(store: Store) -> dict[str, Any]:
@@ -453,6 +465,10 @@ class PaperBuilder:
         for id, decision in decisions.items():
             require(decision["action"] == "paper_candidate", f"claim not eligible for paper: {id}")
             require(decision["basis_hash"] == expected_bases[id], f"stale paper evidence: {id}")
+            c = Kernel._get(history, id, "claim")["payload"]
+            scopes = (c["scope"], Kernel._get(history, c["protocol"], "protocol")["payload"]["scope"])
+            require(all(scope.get("mode") != "synthetic_demo" for scope in scopes),
+                    f"synthetic demo claims never enter a paper: {id}")
         bundle = review_bundle(self.store, history)
         contexts = [resolve_context(history, id) for id in claims]
         context_claims = {id for context in contexts for id in context.claim_ids}
@@ -539,11 +555,11 @@ class PaperBuilder:
 
     def materialize(self, paper: str) -> dict[str, str]:
         history = self.store.events()
-        payload = Kernel._get(history, paper, "paper")["payload"]
-        for id, basis in payload["reviewed_bases"].items():
-            decision = self.kernel._next_action(history, id)
-            require(decision["action"] == "paper_candidate" and decision["basis_hash"] == basis,
-                    f"paper review is no longer current: {id}")
+        event = Kernel._get(history, paper, "paper")
+        payload = event["payload"]
+        decisions = {id: self.kernel._next_action(history, id) for id in payload["reviewed_bases"]}
+        require(paper_status(event, decisions) == "internal_draft",
+                f"paper review is no longer current or not eligible under current rules: {paper}")
         paths = {}
         # Materialize in root so relative evidence links remain valid.
         for field, extension in (("manuscript", "md"), ("bundle", "json")):

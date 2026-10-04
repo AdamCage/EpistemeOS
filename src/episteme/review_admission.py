@@ -20,13 +20,15 @@ would repeat the work for every earlier prefix.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .claim_context import resolve_context
-from .kernel import protocol_data
+from .kernel import Actor, Kernel, canonical_actor, independent_of, protocol_data, require
 from .store import Store, canonical, digest
 
 NEGATIVE_VERDICTS = frozenset({"request_changes", "reject"})
+BLIND_V1 = "blind_initial_review_v1"
 
 
 def protocol_components(history: list[dict[str, Any]]) -> dict[str, str]:
@@ -93,25 +95,6 @@ def claim_family(history: list[dict[str, Any]], claim: str) -> list[str]:
     return [id for id, protocol in protocols.items() if roots.get(protocol) == root]
 
 
-def open_negative_opinions(history: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-    """Latest negative review of each (reviewer, claim) not followed by an approval of that claim.
-
-    Every recorded negative review counts, whatever path wrote it, so missing
-    provenance never lifts an objection. Until ADR 0018 step 7, any later
-    approval of the same claim by the same reviewer withdraws it.
-    """
-    opinions: dict[tuple[str, str], dict[str, Any]] = {}
-    for event in history:
-        if event["kind"] != "review":
-            continue
-        key = (event["actor"], event["payload"]["claim"])
-        if event["payload"]["verdict"] in NEGATIVE_VERDICTS:
-            opinions[key] = event
-        elif event["payload"]["verdict"] == "approve":
-            opinions.pop(key, None)
-    return opinions
-
-
 def _response_opinion(store: Store, event: dict[str, Any]) -> dict[str, Any] | None:
     """A completed, unsubmitted delivery whose bytes parse as a negative review response."""
     from .commands import parse_command
@@ -143,10 +126,8 @@ class Admission:
         self.roots = protocol_components(history)
         self.claim_protocol = {event["id"]: event["payload"]["protocol"] for event in history
                                if event["kind"] == "claim"}
-        self.approvals: dict[tuple[str, str], list[int]] = {}
-        for event in history:
-            if event["kind"] == "review" and event["payload"]["verdict"] == "approve":
-                self.approvals.setdefault((event["actor"], event["payload"]["claim"]), []).append(event["seq"])
+        self.position = {event["id"]: index for index, event in enumerate(history)}
+        self._check_reviews()
         self._families: dict[str, tuple[str, ...]] = {}
         self._obligations: list[dict[str, Any]] | None = None
         self._resolutions: list[dict[str, Any]] | None = None
@@ -177,14 +158,71 @@ class Admission:
                 opinion = _response_opinion(self.store, event)
                 if opinion is not None:
                     records.append(opinion)
+        # Only an explicit withdrawal lifts an opinion (§3.5); a later approval does not.
         opinions: dict[tuple[str, str], dict[str, Any]] = {}
         for event in sorted(records, key=lambda record: record["seq"]):
-            key = (event["actor"], event["payload"]["claim"])
             if event["payload"]["verdict"] in NEGATIVE_VERDICTS:
-                opinions[key] = event
-            elif event["payload"]["verdict"] == "approve":
-                opinions.pop(key, None)
+                opinions[(event["actor"], event["payload"]["claim"])] = event
         return opinions
+
+    def _check_reviews(self) -> None:
+        """Fail closed on reviews no kernel path can write (§3.3, audit A-10)."""
+        reviews = [event for event in self.history if event["kind"] == "review"]
+        if not reviews:
+            return
+        reader = Kernel(self.store, Actor("admission-reader", "observer"))
+        for event in reviews:
+            prefix = self.history[:self.position[event["id"]]]
+            _, contributors, _ = reader._review_members(prefix, event["payload"]["claim"])
+            require(event["role"] == "reviewer" and event["actor"] not in contributors,
+                    f"review by a non-reviewer role or an evidence contributor: {event['id']}")
+
+    def approval_defect(self, event: dict[str, Any]) -> str | None:
+        """Why an approval does not count for decisions (§3.1), or None if it does."""
+        submission = self._submitted().get(event["id"])
+        if submission is None:
+            return "approval lacks a verified review.submit chain"
+        actor, claim = event["actor"], event["payload"]["claim"]
+        index = self.position[event["id"]]
+        prefix = self.history[:index]
+        if not canonical_actor(actor):
+            return "approval by a non-canonical historical reviewer ID"
+        reader = Kernel(self.store, Actor("admission-reader", "observer"))
+        if not independent_of(actor, reader._review_members(prefix, claim)[1]):
+            return "approval by a reviewer whose key matches an evidence contributor"
+        assignment = self.history[self.position[submission["payload"]["assignment"]]]
+        manifest = json.loads(self.store.read(assignment["payload"]["bundle"]))
+        if manifest.get("projection", manifest["policy"]) == BLIND_V1:
+            before = self.history[:self.position[assignment["id"]]]
+            roots = protocol_components(before)
+            protocol = {e["id"]: e["payload"]["protocol"] for e in before if e["kind"] == "claim"}[claim]
+            family_runs = {e["id"] for e in before if e["kind"] == "run"
+                           and roots.get(e["payload"]["protocol"]) == roots[protocol]}
+            observed = {row["run"] for row in manifest["context"]["observed_runs"]}
+            if not family_runs <= observed:
+                return "assignment context omits runs of the claim family"
+        from .batch_analysis import KIND, UNVERIFIED_ORIGIN, analysis_provenance
+        if (any(e["kind"] == KIND and e["payload"]["claim"] == claim
+                and analysis_provenance(e) == UNVERIFIED_ORIGIN for e in prefix)
+                and submission["payload"].get("analysis_verification") != "recomputed_match"):
+            return "approval lacks recomputation of the unverified historical analysis"
+        if (submission["payload"]["schema_version"] == 1
+                and Admission(self.store, prefix, replay=False).own_findings(actor, claim)["opinions"]):
+            return "approval did not withdraw the reviewer's own open opinions"
+        return None
+
+    def approvals(self, claim: str, basis: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Admissible and advisory approvals of claim at basis, in event order."""
+        admissible, advisory = [], []
+        for event in self.history:
+            p = event["payload"]
+            if (event["kind"] == "review" and p["verdict"] == "approve"
+                    and p["claim"] == claim and p["basis_hash"] == basis):
+                (advisory if self.approval_defect(event) else admissible).append(event)
+        return admissible, advisory
+
+    def _submitted(self) -> dict[str, dict[str, Any]]:
+        return {event["payload"]["review"]: event for event in self.submissions()}
 
     def family(self, claim: str) -> tuple[str, ...]:
         if claim not in self._families:
@@ -268,13 +306,9 @@ class Admission:
         """Open negative opinions about family members that their owners have not withdrawn for claim."""
         family = set(self.family(claim))
         vetoes = []
-        for (owner, subject), opinion in self.negatives.items():
-            if subject not in family or (opinion["id"], claim) in self.withdrawn:
-                continue
-            if subject != claim and any(seq > opinion["seq"]
-                                        for seq in self.approvals.get((owner, claim), [])):
-                continue
-            vetoes.append(opinion)
+        for (_, subject), opinion in self.negatives.items():
+            if subject in family and (opinion["id"], claim) not in self.withdrawn:
+                vetoes.append(opinion)
         return sorted(vetoes, key=lambda event: event["seq"])
 
     def own_findings(self, reviewer: str, claim: str) -> dict[str, list[dict[str, Any]]]:
