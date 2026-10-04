@@ -66,6 +66,15 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _clone(value: Any) -> Any:
+    """Deep copy of JSON-shaped data. Callers can mutate the copy."""
+    if type(value) is dict:
+        return {key: _clone(item) for key, item in value.items()}
+    if type(value) is list:
+        return [_clone(item) for item in value]
+    return value
+
+
 _CONTEXT_KEYS = {"command_id", "expected_revision", "actor", "role", "study_id",
                  "correlation_id", "causation_id"}
 _REQUEST_KEYS = {"version", "action", "payload"}
@@ -241,6 +250,7 @@ class Store:
         self._command_rollback_only = False
         self._receipt_table_known = False
         # Verified snapshot; lists and dicts are replaced, never mutated in place.
+        # events() and receipts() return copies, so a caller cannot poison this cache.
         self._event_columns: tuple[str, ...] = ()
         self._event_rows: list[tuple[Any, ...]] = []
         self._events: list[dict[str, Any]] = []
@@ -545,9 +555,12 @@ class Store:
         self._events_state = self._receipts_state = None
 
     def events(self) -> list[dict[str, Any]]:
-        """Return the verified chain; callers must not mutate the shared event dicts."""
+        """Return a copy of the verified chain.
+
+        Mutating the copy does not change the next read or the verified cache.
+        """
         self._sync(receipts=False)
-        return list(self._events)
+        return [_clone(event) for event in self._events]
 
     def append(self, *, id: str, kind: str, actor: str, role: str,
                payload: dict[str, Any], expected_revision: int) -> dict[str, Any]:
@@ -626,7 +639,7 @@ class Store:
         """Receipts verified against ``history``; the cache serves only an equal chain."""
         self._sync(receipts=True)
         if history == self._events:
-            return list(self._receipts)
+            return [_clone(receipt) for receipt in self._receipts]
         if not self._receipt_schema():
             return []
         self.verification_counts["receipt_table_reads"] += 1
@@ -634,17 +647,17 @@ class Store:
         for row in self.db.execute("SELECT * FROM command_receipts"):
             receipts.append(_verify_receipt(row, history))
             self.verification_counts["receipt_rows_verified"] += 1
-        return _ordered_receipts(receipts)
+        return _ordered_receipts([_clone(receipt) for receipt in receipts])
 
     def receipts(self) -> list[dict[str, Any]]:
-        """Read verified delivery history; old read-only stores have no receipts.
+        """Read a copy of verified delivery history; old read-only stores have no receipts.
 
         A single read snapshot prevents a newly committed receipt from being
         compared with an earlier event snapshot. This is not scientific approval.
-        Callers must not mutate the shared receipt dicts.
+        Mutating the copy does not change the next read or the verified cache.
         """
         self._sync(receipts=True)
-        return list(self._receipts)
+        return [_clone(receipt) for receipt in self._receipts]
 
     def _insert_receipt(self, receipt: dict[str, Any]) -> None:
         data = canonical(receipt)

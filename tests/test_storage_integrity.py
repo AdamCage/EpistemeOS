@@ -291,5 +291,38 @@ class CanonicalPayloadTests(unittest.TestCase):
                 store.receipts()
 
 
+class ReturnedRecordTests(unittest.TestCase):
+    """ADR 0017 handed out the cached dicts. A caller must not be able to poison them."""
+
+    def test_mutating_a_returned_record_does_not_change_the_next_read(self):
+        temporary = TemporaryDirectory(prefix="episteme-copy-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "state"
+        with Store(root) as writer:
+            note(writer, "original")
+            writer.append(id="listed", kind="fixture_note", actor=ACTOR, role="planner",
+                          payload=dict(note="listed", tags=["kept"]),
+                          expected_revision=len(writer.events()))
+        with Store(root) as store:
+            store.events()
+            store.receipts()
+            verified = (store.verification_counts["event_rows_verified"],
+                        store.verification_counts["receipt_rows_verified"])
+            returned = store.events()
+            returned[0]["payload"]["note"] = "poison"
+            returned[0]["hash"] = "poison"
+            returned[-1]["payload"]["tags"].append("poison")
+            self.assertEqual(store.events()[0]["payload"]["note"], "original")
+            self.assertEqual(store.events()[-1]["payload"]["tags"], ["kept"])
+            self.assertNotEqual(store.events()[0]["hash"], "poison")
+            receipt = store.receipts()[0]
+            receipt["result"] = {"id": "poison"}
+            receipt["context"]["actor"] = "poison"
+            self.assertNotEqual(store.receipts()[0]["result"], {"id": "poison"})
+            self.assertEqual(store.receipts()[0]["context"]["actor"], ACTOR)
+            self.assertEqual((store.verification_counts["event_rows_verified"],
+                              store.verification_counts["receipt_rows_verified"]), verified)
+
+
 if __name__ == "__main__":
     unittest.main()

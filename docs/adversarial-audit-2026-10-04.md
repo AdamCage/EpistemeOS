@@ -904,6 +904,10 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 
 «Перепроверить» значит: ADR 0017 менял код, через который проходит PoC находки, а сам PoC после него не повторялся. Находка считается открытой, пока PoC не повторён.
 
+**Кэш dict после ADR 0017.** На `12a0404` `events()` отдавал тот же dict, что лежит в кэше процесса: правка `payload` была видна следующему чтению и не увеличивала счётчик проверки. Это не отдельный номер аудита. ADR 0023, шаг 4, возвращает копии. Тест — `test_mutating_a_returned_record_does_not_change_the_next_read`. Кэш по-прежнему доверяет памяти своего процесса.
+
+**Кэш dict после ADR 0017.** На `12a0404` `events()` отдавал тот же dict, что лежит в кэше процесса: правка `payload` была видна следующему чтению и не увеличивала счётчик проверки. Это не отдельный номер аудита. ADR 0023, шаг 4, возвращает копии. Тест — `test_mutating_a_returned_record_does_not_change_the_next_read`. Кэш по-прежнему доверяет памяти своего процесса.
+
 **A-17 после ADR 0017.** Проверено на `73281b5` детерминированным чередованием (`.research/adr0018-a17-check/a17_check.py`, вне репозитория): второе соединение записывает команду между `store.events()` и `_verified_receipts(history)` первого. `_verified_receipts` сверяет каждую строку receipts со старым снимком и отказывает (`command receipt corrupt: …: invalid command receipt event range`); так же отказывает построение Graph на этом снимке. Находка воспроизводится. Согласованный префикс даёт `store.receipts()` с фильтром `after_revision <= len(history)`; этим приёмом пользуются все replay-индексы и проекции ADR 0018.
 
 ## Приложение A. Helper `Lab` (`poc_common.py`)
