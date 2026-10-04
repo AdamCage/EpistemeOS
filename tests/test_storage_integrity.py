@@ -214,5 +214,82 @@ class SchemaGuardTests(unittest.TestCase):
         self.assertFalse(destination.exists())
 
 
+class CanonicalPayloadTests(unittest.TestCase):
+    """A-18: the hash does not excuse stored bytes that are not canonical JSON."""
+
+    def test_duplicate_key_payload_is_rejected_even_when_the_hash_matches(self):
+        temporary = TemporaryDirectory(prefix="episteme-canonical-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "state"
+        with Store(root) as store:
+            note(store, "fixture note")
+            text = store.db.execute("SELECT payload, hash FROM events").fetchone()
+            original, event_hash = text["payload"], text["hash"]
+            store.db.execute("DROP TRIGGER events_no_update")
+            # First key wins in SQLite json_extract; Python's last key is the original object.
+            forged = '{"note":"approve",' + original[1:]
+            self.assertEqual(json.loads(forged)["note"], json.loads(original)["note"])
+            self.assertNotEqual(forged, original)
+            store.db.execute("UPDATE events SET payload = ? WHERE seq = 1", (forged,))
+            store.db.commit()
+            sqlite_note = store.db.execute(
+                "SELECT json_extract(payload, '$.note') FROM events").fetchone()[0]
+            self.assertEqual(sqlite_note, "approve")
+            self.assertEqual(store.db.execute("SELECT hash FROM events").fetchone()[0], event_hash)
+        with self.assertRaisesRegex(IntegrityError, "payload is not canonical"):
+            with Store(root) as store:
+                store.events()
+
+    def test_spaced_payload_with_a_recomputed_hash_is_rejected(self):
+        temporary = TemporaryDirectory(prefix="episteme-canonical-space-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "state"
+        with Store(root) as store:
+            note(store, "fixture note")
+            row = store.db.execute("SELECT * FROM events").fetchone()
+            forged = "{ " + row["payload"][1:]
+            payload = json.loads(forged)
+            body = dict(seq=row["seq"], id=row["id"], kind=row["kind"], actor=row["actor"],
+                        role=row["role"], created_at=row["created_at"],
+                        schema_version=row["schema_version"], payload=payload,
+                        previous_hash=row["previous_hash"])
+            store.db.execute("DROP TRIGGER events_no_update")
+            store.db.execute("UPDATE events SET payload = ?, hash = ? WHERE seq = 1",
+                             (forged, digest(canonical(body))))
+            store.db.commit()
+        with self.assertRaisesRegex(IntegrityError, "payload is not canonical"):
+            with Store(root) as store:
+                store.events()
+
+    def test_canonical_payload_bytes_are_left_unchanged(self):
+        temporary = TemporaryDirectory(prefix="episteme-canonical-keep-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "state"
+        with Store(root) as store:
+            note(store, "уже канонично")
+            before = store.db.execute("SELECT payload FROM events").fetchone()[0]
+            self.assertEqual(before, canonical(json.loads(before)).decode())
+            self.assertEqual(store.events()[0]["payload"]["note"], "уже канонично")
+            after = store.db.execute("SELECT payload FROM events").fetchone()[0]
+        self.assertEqual(after, before)
+
+    def test_noncanonical_receipt_text_is_rejected(self):
+        temporary = TemporaryDirectory(prefix="episteme-canonical-receipt-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "state"
+        with Store(root) as store:
+            note(store, "fixture note")
+            text = store.db.execute("SELECT receipt FROM command_receipts").fetchone()[0]
+            forged = "{ " + text[1:]
+            self.assertEqual(json.loads(forged), json.loads(text))
+            store.db.execute("DROP TRIGGER command_receipts_no_update")
+            store.db.execute("UPDATE command_receipts SET receipt = ?", (forged,))
+            store.db.commit()
+        with Store(root) as store:
+            self.assertEqual(len(store.events()), 1)
+            with self.assertRaisesRegex(IntegrityError, "not canonical"):
+                store.receipts()
+
+
 if __name__ == "__main__":
     unittest.main()

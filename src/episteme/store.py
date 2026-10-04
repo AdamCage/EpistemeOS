@@ -40,6 +40,28 @@ def canonical(value: Any) -> bytes:
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
+def _canonical_json(text: str) -> Any:
+    """Parse JSON only when the stored bytes are the canonical encoding."""
+    if type(text) is not str:
+        raise IntegrityError("stored JSON is not canonical")
+    try:
+        parsed = json.loads(text, object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, ValueError, RecursionError, UnicodeError) as exc:
+        raise IntegrityError("stored JSON is not canonical") from exc
+    if text != canonical(parsed).decode():
+        raise IntegrityError("stored JSON is not canonical")
+    return parsed
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -158,7 +180,7 @@ def _validate_causation(context: dict[str, Any], history: list[dict[str, Any]]) 
 
 def _verify_receipt(row: sqlite3.Row, history: list[dict[str, Any]]) -> dict[str, Any]:
     try:
-        receipt = _json_copy(json.loads(row["receipt"]), "stored command receipt")
+        receipt = _json_copy(_canonical_json(row["receipt"]), "stored command receipt")
         if type(receipt) is not dict or set(receipt) != _RECEIPT_KEYS:
             raise IntegrityError("unsupported command receipt fields")
         if (type(receipt["schema_version"]) is not int
@@ -472,7 +494,12 @@ class Store:
         for row in rows[same:]:
             event = dict(zip(columns, row))
             expected_hash = event.pop("hash")
-            event["payload"] = json.loads(event["payload"])
+            sequence = event["seq"]
+            try:
+                event["payload"] = _canonical_json(event["payload"])
+            except IntegrityError as exc:
+                raise IntegrityError(
+                    f"event chain corrupt at sequence {sequence}: payload is not canonical") from exc
             if (event["schema_version"] != 1 or event["seq"] != len(result) + 1
                     or event["previous_hash"] != previous
                     or digest(canonical(event)) != expected_hash):

@@ -895,7 +895,7 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 | A-15 | вне ADR 0018; **воспроизводится** на `12a0404` (команды внешнего digest нет) | ADR 0023 |
 | A-16 | **исправлено** (ADR 0023, шаг 2): на `12a0404` trigger с телом `SELECT 1` переживал reopen. Теперь такое тело и лишний объект отвергаются при открытии, в том числе read-only, и при restore. Недостающий trigger read-only не ставит и сам по себе не считает порчей: writable открытие ставит guard заново. PoC — `test_neutered_triggers_are_rejected_on_open`, `test_restore_rejects_a_snapshot_whose_triggers_were_replaced` | ADR 0023 |
 | A-17 | **не исправлено ADR 0017** (проверено) | см. ниже |
-| A-18 | вне ADR 0018; **воспроизводится** на `12a0404`: неканонический текст payload с повторным ключом проходит `events()` | ADR 0023 |
+| A-18 | **исправлено** (ADR 0023, шаг 3): на `12a0404` текст с повторным ключом проходил `events()`, если hash совпадал с объектом по последнему ключу. Теперь сохранённые байты payload и receipt должны быть каноническим JSON; исторические канонические строки не переписываются. PoC — `test_duplicate_key_payload_is_rejected_even_when_the_hash_matches` | ADR 0023 |
 | A-19 | цепочка в `inspect` **уже закрыта ADR 0017** (на `12a0404` перевёрнутый бит payload даёт exit 2, `event chain corrupt`); квитанции `inspect` не читает и подмена receipt даёт exit 0 — это остаётся открытым | ADR 0017 для цепочки; ADR 0023 для квитанций |
 | A-20 | вне ADR 0018; перепроверить | ADR 0017 менял `Store.read` (memo в read scope); `put` прежний |
 | A-21 | вне ADR 0018 | изменения ADR 0017 в `cli.py` механические (read scope) |
