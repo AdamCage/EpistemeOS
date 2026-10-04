@@ -208,7 +208,7 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 
 ## Ход реализации
 
-Текущий срез охватывает шаги 1–6. Шаги 7–10 вне его; известные проблемы review integrity (снятие veto тем же reviewer в `kernel.py`, legacy `kernel.review` и CLI `review` без assignment) и медленная повторная проверка receipts в `analysis advance` здесь не исправляются. Проблемы review integrity закрыл шаг 7 [ADR 0018](0018-claim-families-and-review-admission.md).
+Шаги 1–6 и шаг 8 реализованы. Шаги 7, 9 и 10 остаются. Проблемы review integrity закрыл шаг 7 [ADR 0018](0018-claim-families-and-review-admission.md). Медленная повторная проверка receipts в `analysis advance` здесь не исправляется.
 
 | Шаг | Состояние |
 |---|---|
@@ -219,15 +219,16 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 | 4. `pack.preregister`, `pack.analyse`, потолок, `CasView`, Graph/recovery/export | Реализован и локально проверен в `89a44c6`: [`domain_packs.py`](../../src/episteme/domain_packs.py), события `pack_binding` и `pack_analysis`, их поддержка в basis, gate, `batch.plan`, review assignment, Graph, export и backup/restore; `advance_pack_analysis` в `analysis_controller.py`; `tests/test_pack_workflow.py` и `tests/test_pack_universality.py`. |
 | 5. CLI по привязке, `pack describe`, `pack verify` | Реализован и локально проверен в `a1ae131`: `episteme analysis advance` берёт пакет или legacy adapter из привязки protocol, `--adapter` стал необязательным утверждением; read-only `episteme pack describe PACK_ID` и `episteme pack verify --root ROOT`; `tests/test_pack_cli.py`. |
 | 6. Фасад `afterlife_seed_v1` | Реализован и локально проверен: пакет [`domains/packs/afterlife_seed_v1`](../../src/episteme/domains/packs/afterlife_seed_v1) зарегистрирован и проходит conformance suite; `episteme pack capture` сохраняет захваченные bytes в CAS без событий; `tests/test_afterlife_pack.py`. На восстановленной копии реального пилота ADR 0015 пакетный путь дал те же девять долей и тот же statement, что legacy claim (validation.md). |
+| 8. `tabular_classification_v1` | Реализован и локально проверен: пакет [`domains/packs/tabular_classification_v1`](../../src/episteme/domains/packs/tabular_classification_v1) в явном allowlist, весь каталог закрепляется `code_manifest`, профиль `trusted_local_python_v1`. Путь `pack.preregister` → batch → `pack.analyse` → `review.assign` на сгенерированной таблице проходит до назначения reviewer. Verdict и paper не создаются. Числа — в validation.md. |
 
-Шаги 1–6 этого среза реализованы. Критерии универсальности выполнены частично:
-- пункты 2 и 7 — для обоих пакетов;
+Критерии универсальности выполнены частично:
+- пункты 2 и 7 — для трёх зарегистрированных пакетов; схемы raw data у них разные;
 - пункт 1 — с явным списком legacy-исключений `agents.py`, `experiment_proposals.py` и `cli.py`;
 - пункт 3 — только до `review.assign`: fixture review и paper scaffold через пакетный путь не проверялись, restart и backup/restore проверены только для synthetic;
-- пункт 4 — полностью для synthetic, для afterlife — только подмены raw data и метрики в conformance suite;
-- пункт 5 — только отрицательная ветвь; положительную confirmatory ветвь проверит третий пакет (шаг 8);
-- пункт 6 — `roster_semantics` и факты replication записываются, а отображение в отчётах — шаг 7.
-| 7–10 | Вне текущего среза. |
+- пункт 4 — полностью для synthetic, для afterlife и tabular — подмены raw data и метрики в conformance suite; tabular дополнительно отвергает confirmatory proposal без interval и с нарушенным допущением;
+- пункт 5 — synthetic и afterlife остаются `exploratory`/`inconclusive`; положительную ветвь потолка проверяет `tabular_classification_v1` на сгенерированной таблице, не на научной выборке;
+- пункт 6 — `roster_semantics` и факты replication записываются, включая `deterministic_single` у третьего пакета; отображение в отчётах — шаг 7.
+Шаги 7, 9 и 10 остаются.
 
 ### Отклонения от предложения и уточнения шага 1
 
@@ -282,6 +283,17 @@ Hooks выполняются вне SQL write transaction на зафиксир�
 - **Уточнение.** Report: `uncertainty` и `multiple_testing` — `not_applicable` по design; `confidence_interval` и `effect_size` — `not_supplied`, как предписано; `assumptions` — `supplied`: независимость шагов внутри траектории `violated`, репрезентативность за пределами run и точность `finish_reason` — `unchecked`. Итог: `inconclusive`/`exploratory`, 8 limitations пакета, 2 строки ядра о `not_supplied` полях и строка потолка.
 - **Уточнение.** Hook называется `capture`, и модуль `capture.py` пакет импортирует под другим именем до определения hook. Иначе импорт подмодуля заменил бы атрибут пакета.
 - **Ограничение.** На смешанной истории копии пилота (124 legacy-событий и 119 новых) пакетный путь медленный: 18 jobs `batch advance` — 582 секунды, первый `analysis advance` — 398, повтор — 195, `pack verify` — 45, `graph` — 188 секунд. Read-only `analysis status` занимает 212 секунд для legacy batch и 208 — для пакетного на той же истории. Значит, время уходит на общую повторную проверку receipts, которую пакетный путь наследует; переписывание этой проверки — отдельная задача ядра.
+
+### Отклонения от предложения и уточнения шага 8
+
+Отдельный ADR не добавлен. Потолок силы claim, обязательные поля `StatisticalReport` и запрет confirmatory при просмотренном holdout уже зафиксированы здесь и в [ADR 0018](0018-claim-families-and-review-admission.md) (managed evidence, `seen_data`, нестрогий digest). Этот шаг их исполняет.
+
+- **Отклонение.** Exploratory-фаза с repeated stratified k-fold не реализована. Пакет регистрирует только confirmatory protocol: один roster unit `deterministic_single`, `sample_size_scope=total`. `validate_protocol` отвергает иной режим.
+- **Уточнение.** Training CSV и holdout CSV — отдельные файлы захвата и отдельные CAS-артефакты. `seen_data` содержит digest training-файла. Confirmatory split — digest holdout-файла, с ролью `confirmatory` и `exposure_policy=holdout`. Профиль v1 передаёт программе один `input.dat`, поэтому `compile_execution` вкладывает тексты обоих CSV в этот JSON и не подгоняет модель по меткам holdout. Разбор меток для оценки делает runner после записи protocol. Это свойство кода хуков, не граница ОС: bytes лежат в `CaptureBundle` в процессе planner во время compile. Тест меняет только метки holdout и проверяет, что текст design, analysis plan, stopping rule, программы и `seen_data` не меняются, а digest holdout и program input меняются.
+- **Уточнение.** Сравнение одно: accuracy фиксированного logistic regression (200 шагов batch gradient descent, learning rate 1, порог 0.5, веса с нуля, стандартизация по training) минус accuracy класса большинства training-меток (ничья → класс 0). Интервал — Wald 95% с фиксированным квантилем `1.959963984540054`. Второе условие — двусторонний exact McNemar по несогласным парам, alpha `0.05`. `supports` только если интервал целиком выше 0 и exact-тест ниже alpha; `refutes` — симметрично ниже 0; иначе `inconclusive`. Семейство multiple testing — одно сравнение, correction `none`.
+- **Уточнение.** Таблицы генерирует [`examples/tabular_classification_v1/generate.py`](../../examples/tabular_classification_v1/generate.py): 48 строк, целочисленные `x1,x2,label`. У `planted` метка равна 1 при `x1 >= 0`. У `null` метка всегда 0. У train и holdout разные формулы `x2`, поэтому файлы не совпадают даже после нормализации пробелов. Это не научный набор данных и не копия публичной таблицы. На `planted` правило даёт `supports` (разность 0.5). На `null` разность 0 и исход `inconclusive`. Текст claim говорит, что это правило на захваченных строках, а не эффект в популяции.
+- **Уточнение.** В `assumptions` три проверки со статусом `holds`: обучение только на training-файле, полный holdout без исключений, фиксированные квантиль и alpha. Допущение «строки — выборка из популяции» не помечается `holds`: оно записано в limitations. `scientific_validity` остаётся `not_assessed`. Потолок принимает полный confirmatory report и по-прежнему отвергает proposal без interval или с допущением `violated`.
+- **Уточнение.** Повторный анализ — вторая программа того же пакета по тем же scored rows. Ядро пишет `single_deterministic_unit`, `same_data_reanalysis`, `context=not_established`. Hooks не получают Store.
 
 ## Ограничения
 

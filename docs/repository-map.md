@@ -76,11 +76,13 @@ EpistemeOS/
 │   ├── domains/registry.py       явный allowlist пакетов, code manifest и загрузка закреплённых bytes
 │   ├── domains/packs/synthetic_causal_v1/  фасад synthetic pack: те же программы, recipe и estimator
 │   ├── domains/packs/afterlife_seed_v1/    фасад afterlife pack: read-only capture, чистая проверка inventory, recount
+│   ├── domains/packs/tabular_classification_v1/  confirmatory holdout comparison на сгенерированной таблице, профиль v1
 │   └── demo.py                   два фиксированных CPU-приложения
 ├── schemas/                      command, statistical design, question/set, claim link, review, experiment proposal, девять DomainPack envelopes и pack code manifest
 ├── examples/model_hypotheses.py  подготовка одного задания; --execute явно вызывает модель
 ├── examples/model_experiment.py  frozen synthetic experiment request; --execute явно вызывает модель
 ├── examples/afterlife_historical_pilot.py  подготовка exploratory batch по проверенному legacy run
+├── examples/tabular_classification_v1/  генератор и две сгенерированные CSV-таблицы mechanism test, не научный набор данных
 └── tests/
     ├── test_kernel.py            инварианты ядра и исторические failure cases
     ├── test_cli.py               реальные CLI/subprocess интеграции
@@ -137,6 +139,7 @@ EpistemeOS/
     ├── test_pack_lineage.py      привязка пакета управляет линией protocol: amendment, follow-up, закреплённые bytes, stray claim
     ├── test_pack_cli.py          CLI по привязке, pack describe и read-only pack verify
     ├── test_afterlife_pack.py    capture/compile против legacy, отказы захвата и CLI путь capture → анализ
+    ├── test_tabular_pack.py     confirmatory потолок, inconclusive при невыполненном правиле, exposure tripwire
     ├── pack_fixtures.py          conformance-входы пакетов и минимальный локальный runner без Store
     ├── review_paths.py           тестовый путь review: assign → fixture provider → review.submit (ADR 0018)
     ├── fixtures/packs/           conformance_fixture_v1 и locked_fixture_v2; оба только для проверки контракта
@@ -177,6 +180,7 @@ EpistemeOS/
 | `domains/registry.py` | Явный allowlist `pack_id → package`; хеширует все файлы каталога пакета, исполняет именно эти bytes под приватным именем модуля, проверяет manifest, hooks и статический import contract. Отдельный явный allowlist `LEGACY_ANALYSIS_ADAPTERS` legacy-адаптеров анализа для пересчёта в `analysis.apply` (ADR 0018). | Пакет остаётся доверенным Python в процессе ядра: digest выявляет drift и чужую версию, но не вредоносный код, подмену интерпретатора или чтение вне контракта. |
 | `domains/packs/afterlife_seed_v1/` | `capture.py` единственным в пакете читает файлы исторического run; `inventory.verify` по bytes повторяет проверки legacy захвата и собирает тот же `input.dat`; программы и recount совпадают с legacy; `validate_protocol` требует объявленной экспозиции. | Уже наблюдённые данные одного model/configuration; report оставляет `inconclusive`/`exploratory`, interval и effect size не вычисляются. Legacy `afterlife_seed*.py` по-прежнему обслуживают ADR 0015 binding. |
 | `domains/packs/synthetic_causal_v1/` | Manifest, catalog, compile и analysis hooks synthetic fixture; программы, recipe и estimator перенесены из legacy-модулей без изменения вычислений, world объявлен скрытым входом. | Fixture с известным генератором; report оставляет `inconclusive`/`exploratory`. Legacy `synthetic_causal.py` и `synthetic_batch_analysis.py` по-прежнему обслуживают модельный путь ADR 0008 и `domain.bind`. |
+| `domains/packs/tabular_classification_v1/` | Confirmatory сравнение logistic regression и majority baseline на отдельных training и holdout CSV; полный `StatisticalReport`; профиль v1. | Сгенерированная таблица, не выборка из популяции. Потолок может быть confirmatory; `scientific_validity` остаётся `not_assessed`. Hooks не получают Store. |
 | `tests/golden_support.py`, `tests/fixtures/golden/` | Три synthetic fixture histories, созданные немодифицированным кодом `483f1bd`, и ожидаемые basis, gates, Graph, export bundle и replay-проекции. | Сравнение механическое: совпадение не означает научной валидности; новые event kinds в этих histories не представлены. |
 | `tests/fixtures/adr0018/`, `tests/test_historical_admission.py` | Три synthetic histories, записанные кодом аудита `da6aa2a` скриптом `generate.py` на снимке `git archive`: legacy approval и paper demo, approval по подложному анализу schema 1, approval неканонического reviewer. | Approvals в них — fixtures, принятые старым кодом; тесты проверяют, что текущие правила их не засчитывают. |
 | `domain_packs.py` | `pack.preregister`: одна receipt `[protocol, pack_binding]` с pin кода, envelopes и plan v1 или v2; для v2 closure хоста сверяется с файлами проекта и требуемыми переменными плана. `pack.analyse`: сверка pin, envelopes, вычисляемых ядром полей, потолка силы claim и повторное исполнение hooks в команде, receipt `[claim, pack_analysis]`; структурный replay без импорта кода пакета; allowlist `CasView`. Review exclusion привязки v2 включает файлы деревьев и проекта. | Пакет — доверенный код в процессе ядра. Потолок механический, `scientific_validity=not_assessed`; повторное исполнение подтверждает воспроизводимость на snapshot, а не правильность статистики. |

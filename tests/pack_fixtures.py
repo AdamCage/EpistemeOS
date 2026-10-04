@@ -59,11 +59,23 @@ def _afterlife_request(workdir: Path) -> api.CompileRequest:
     return api.CompileRequest(parameters={}, host_inputs={}, capture=capture)
 
 
+def _tabular_request(workdir: Path) -> api.CompileRequest:
+    from episteme.domains import registry
+    source = workdir / "source"
+    source.mkdir(parents=True, exist_ok=True)
+    planted = Path(__file__).resolve().parents[1] / "examples" / "tabular_classification_v1" / "planted"
+    for name in ("train.csv", "holdout.csv"):
+        (source / name).write_bytes((planted / name).read_bytes())
+    capture = registry.load_pack("tabular_classification_v1").hook("capture")(source)
+    return api.CompileRequest(parameters={}, host_inputs={}, capture=capture)
+
+
 # pack_id -> (module name for registration, compile-request builder)
 FIXTURES: dict[str, tuple[str, Callable[[Path], api.CompileRequest]]] = {
     FIXTURE_PACK: (FIXTURE_PACK, _fixture_request),
     "synthetic_causal_v1": ("episteme.domains.packs.synthetic_causal_v1", _synthetic_request),
     "afterlife_seed_v1": ("episteme.domains.packs.afterlife_seed_v1", _afterlife_request),
+    "tabular_classification_v1": ("episteme.domains.packs.tabular_classification_v1", _tabular_request),
 }
 
 

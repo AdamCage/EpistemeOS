@@ -34,6 +34,7 @@ from . import api
 PACKS: dict[str, str] = {
     "synthetic_causal_v1": "episteme.domains.packs.synthetic_causal_v1",
     "afterlife_seed_v1": "episteme.domains.packs.afterlife_seed_v1",
+    "tabular_classification_v1": "episteme.domains.packs.tabular_classification_v1",
 }
 
 # adapter_id -> (module, class) of the legacy batch analysis adapters that
