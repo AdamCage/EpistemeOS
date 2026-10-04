@@ -96,6 +96,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation.add_argument("--root", type=Path, required=True)
     execution_locked.add_arguments(execution_ops)
     reproduction.add_arguments(subcommands)
+    package_command = subcommands.add_parser(
+        "package", help="Write a read-only reproduction package for one claim family; not a venue submission")
+    package_command.add_argument("claim", help="Claim whose family is exported")
+    package_command.add_argument("--output", type=Path, required=True,
+                                 help="New directory outside the research store")
+    package_command.add_argument("--root", type=Path, required=True, help="Research state directory")
     cycle = subcommands.add_parser(
         "cycle", help="Report or apply one already-legal mechanical step; stop for a scientific decision")
     cycle_ops = cycle.add_subparsers(dest="operation", required=True)
@@ -165,7 +171,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         operation.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == "followup":
+        if args.command == "package":
+            from .package import write_package
+            if not (args.root / "state.sqlite3").is_file():
+                raise ValueError("existing research state is required")
+            with _opened(args.root, read_only=True) as store:
+                result = write_package(store, args.claim, args.output)
+            status = 0
+        elif args.command == "followup":
             from .followup import followup_state
             if not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")

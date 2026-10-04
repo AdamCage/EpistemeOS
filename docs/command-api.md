@@ -79,6 +79,8 @@ Blob должен быть заранее сохранён через `Store.put
 
 Эти команды не ищут документы, не открывают сеть и не вызывают модель. Поиска, retrieval, извлечения моделью, поиска противоречий и оценки новизны нет. Роль planner не делает запись проверкой библиотекаря. `checker_kind=fixture` в scaffold сопровождается текстом, что fixture-проверка не является проверкой библиотекаря и не является научным review. `scientific_validity` остаётся `not_assessed`. Подробности — [ADR 0021](decisions/0021-literature-records.md).
 
+`episteme package <claim-id> --output <directory> --root <store>` не является action этой схемы и не пишет receipt. Команда открывает store только на чтение и создаёт каталог вне store. README каталога говорит, что это не подача на площадку. Повтор того же store побайтно совпадает. Подробности — [ADR 0022](decisions/0022-reproduction-package.md).
+
 Прямые Python-методы и прежние CLI `review`/`paper` сохраняют optimistic concurrency, но не получают command idempotency автоматически. Новые retryable worker interfaces должны использовать `CommandService`, сохранять request и обрабатывать исторический acknowledgement отдельно от текущего workflow.
 
 ## Локальное исполнение

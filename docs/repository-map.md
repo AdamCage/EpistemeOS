@@ -27,7 +27,7 @@ EpistemeOS/
 ├── src/episteme/
 │   ├── __init__.py
 │   ├── __main__.py               python -m episteme
-│   ├── cli.py                    demo / inspect / agent / execution / batch / analysis / cycle / graph / command / backup / restore
+│   ├── cli.py                    demo / inspect / package / agent / execution / batch / analysis / cycle / graph / command / backup / restore
 │   ├── cycle.py                  один механический шаг цикла; научное решение остаётся человеку (ADR 0020)
 │   ├── store.py                  SQLite events/receipts и content-addressed blobs
 │   ├── recovery.py               согласованный backup и verified restore в новый каталог
@@ -70,6 +70,7 @@ EpistemeOS/
 │   ├── domain_packs.py           pack.preregister/pack.analyse, replay, CasView allowlist и потолок силы claim
 │   ├── search.py                 persistent tournament и bounded tree policy
 │   ├── reporting.py              snapshot export и внутренний paper scaffold; колонка roster по roster_semantics
+│   ├── package.py                episteme package: read-only каталог одного семейства claim (ADR 0022)
 │   ├── literature.py             Source, Locator, LiteratureClaim, Citation и записанная проверка локатора (ADR 0021)
 │   ├── graph.py                  типизированная read-only проекция и queries
 │   ├── domains/afterlife.py      bounded historical inspection/import
@@ -94,6 +95,7 @@ EpistemeOS/
     ├── test_search.py            ballots, tree bounds, reservations и replay
     ├── test_reporting.py         snapshots, review input и paper eligibility
     ├── test_literature.py        строки, непроверенные и противоречивые локаторы, fixture-проверка, replay
+    ├── test_package.py           каталог семейства: failed и unknown, fixture, неeligible paper, манифест, replay
     ├── test_graph.py             typed refs, graph traversal и corruption
     ├── test_afterlife.py         historical import, limits и idempotency
     ├── test_commands_store.py    receipt integrity, atomicity, competing writers и crash
@@ -199,7 +201,8 @@ EpistemeOS/
 | `demo.py` | Генерация синтетических CSV и два способа OLS в реальных subprocess, локальные actors; завершение перед review. | Только фиксированные программы, без LLM и независимого scientific review. Runtime record не восстанавливает произвольную среду. |
 | `literature.py` | Команды Source, Locator, LiteratureClaim, Citation и `literature_check`. Статус локатора: `unverified`, `verified_by_recorded_check`, `contradicted`. Поддержка scaffold только для второго. Проверка называет hash локатора, digest его строки и digest пассажа в CAS. | Нет сети, модели, поиска, retrieval и оценки новизны. Роль planner не делает актора библиотекарем. Fixture-проверка в scaffold так и названа. `scientific_validity` остаётся `not_assessed`. |
 | `reporting.py` | Один snapshot для inspect/export; `PaperBuilder.build` проверяет текущую eligibility и записывает immutable Markdown/JSON+paper event с трассировкой привязанного review-driven follow-up; `materialize` повторно проверяет basis и bytes. Без цитат payload и fingerprint `paper.build` прежние. С цитатами scaffold показывает записанные связи и отказывает строке, непроверенной поддержке и противоречивому локатору. | Внутренний scaffold. Поиск литературы, figures, Methods validation и venue formatting не сделаны. Свободный claim text не сертифицируется. Отсутствие источников не новизна. |
-| `cli.py` | Demo/inspection/gates/export, review JSON, paper scaffold; `agent recipe --input` замораживает host-owned binding, `agent advance` продолжает оба proposal tasks; `analysis status/advance` берёт пакет или legacy adapter из привязки protocol (`--adapter` лишь утверждение); `cycle step` сообщает или применяет один механический шаг ADR 0020; read-only `pack describe`/`pack verify` показывают живой код пакета и повторно исполняют закреплённые hooks. Остальные переходы принимаются через `episteme command`. | Actor ID задаётся доверенным caller; sandbox и независимого scientific review нет. `cycle step` без `--apply` или без `--budget` store не меняет. |
+| `package.py` | `episteme package`: каталог JSON и Markdown одного семейства. Манифест SHA-256, протоколы, code manifest при привязке, closure при профиле v2, инвентарь попыток, scaffold только для `current`. | Не подача на площадку и не событие. Не повышает `scientific_validity`. Не рисует фигуры и не оформляет LaTeX. Роли не доказывают изоляцию. |
+| `cli.py` | Demo/inspection/gates/export, review JSON, paper scaffold; `package` пишет каталог вне store и store не меняет; `agent recipe --input` замораживает host-owned binding, `agent advance` продолжает оба proposal tasks; `analysis status/advance` берёт пакет или legacy adapter из привязки protocol (`--adapter` лишь утверждение); `cycle step` сообщает или применяет один механический шаг ADR 0020; read-only `pack describe`/`pack verify` показывают живой код пакета и повторно исполняют закреплённые hooks. Остальные переходы принимаются через `episteme command`. | Actor ID задаётся доверенным caller; sandbox и независимого scientific review нет. `cycle step` без `--apply` или без `--budget` store не меняет. `package` тоже store не меняет. |
 | `tests/test_kernel.py` | Протокол до run, источники evidence, scope, budgets при конфликте writers, retention failures, stale review, self-review, integrity. | Unit tests не доказывают clean-room, sandbox, научную правильность или публикационное качество. |
 | `tests/test_search.py`, `tests/test_reporting.py`, `tests/test_cli.py` | Поиск и cost reservations, snapshot consistency и paper eligibility, входные review JSON и запускаемые CLI/subprocess сценарии. | Покрытие конкретных failure cases не означает общего доказательства безопасности либо работы независимых научных агентов. |
 | `docs/research/*` | Проверяемые основания решений и заранее предлагаемый evaluation design. | Литературный обзор и локальный code audit не означают независимого запуска внешних систем. |
