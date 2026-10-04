@@ -16,7 +16,7 @@ from typing import Any
 from .agents import _index as agent_index
 from .batch import _index as batch_index
 from .domain_binding import _index as binding_index
-from .kernel import Actor, Kernel, require
+from .kernel import Actor, Kernel, independent_of, require
 from .store import Store, canonical, digest
 
 
@@ -285,7 +285,7 @@ class BatchAnalysis:
         gate = kernel._gate(updated, claim_id)
         require(gate["passed"], "analysis mechanical gate failed: " + "; ".join(gate["failures"]))
         contributors = kernel._review_members(updated, claim_id)[1]
-        require(reviewer_actor not in contributors, "analysis reviewer contributed to evidence")
+        require(independent_of(reviewer_actor, contributors), "analysis reviewer contributed to evidence")
         return dict(analysis=analysis_id, claim=claim_id, basis_hash=gate["basis_hash"],
                     proposal_digest=proposal_digest, task_id=task_id,
                     scientific_validity="not_assessed")

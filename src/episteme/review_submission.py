@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from .kernel import Actor, Kernel, require
+from .kernel import Actor, Kernel, independent_of, require
 from .replanning import _findings, _OBLIGATION_FIELDS
 from .reviewer_controller import MAX_RESPONSE_BYTES, _index as delivery_index
 from .store import Store
@@ -26,10 +26,14 @@ _SUBMISSION_FIELDS = {"schema_version", "assignment", "assignment_hash", "dispat
 
 def _decision(store: Store, history: list[dict[str, Any]], *, assignment: str,
               response: str, expected_basis: str, reviewer_actor: str,
-              study_id: str, receipts: list[dict[str, Any]] | None = None
-              ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any],
-                         list[dict[str, Any]]]:
-    """Recheck the current mechanical basis and exact completed delivery."""
+              study_id: str, receipts: list[dict[str, Any]] | None = None,
+              keyed: bool = False) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any],
+                                            list[dict[str, Any]]]:
+    """Recheck the current mechanical basis and exact completed delivery.
+
+    New submissions compare normalized actor keys (ADR 0018); replay keeps the
+    exact comparison under which a historical submission was admitted.
+    """
     deliveries = delivery_index(store, history, receipts=receipts)
     require(assignment in deliveries, "review submission needs a verified assignment dispatch")
     state = deliveries[assignment]
@@ -68,7 +72,8 @@ def _decision(store: Store, history: list[dict[str, Any]], *, assignment: str,
     require(gate["passed"] and gate["basis_hash"] == basis == expected_basis,
             "review submission needs the assigned current mechanical basis")
     linked, contributors, admissible = kernel._review_members(history, p["claim"])
-    require(reviewer_actor not in contributors, "reviewer contributed to submitted claim context")
+    require(independent_of(reviewer_actor, contributors) if keyed else reviewer_actor not in contributors,
+            "reviewer contributed to submitted claim context")
     findings = decision["findings"]
     if decision["verdict"] == "approve":
         require(findings == [], "approval cannot contain open findings")
@@ -198,7 +203,7 @@ class ReviewSubmission:
         state, decision, claim, findings = _decision(
             self.store, history, assignment=assignment, response=response,
             expected_basis=expected_basis, reviewer_actor=self.actor.id,
-            study_id=self.store._command_context["study_id"])
+            study_id=self.store._command_context["study_id"], keyed=True)
         kernel = Kernel(self.store, self.actor)
         actions = [finding["action"] for finding in findings]
         if decision["link_assessments"] is None:

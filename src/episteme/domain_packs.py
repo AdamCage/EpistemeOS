@@ -22,7 +22,7 @@ import re
 from typing import Any, Mapping
 
 from .domains import api, registry
-from .kernel import Actor, Kernel, require
+from .kernel import Actor, Kernel, independent_of, require
 from .planning import binding_for
 from .protocols import StatisticalDesign
 from .store import Store, canonical, digest
@@ -958,7 +958,7 @@ class PackAnalysis:
         updated = self.store.events()
         gate = kernel._gate(updated, claim_id)
         require(gate["passed"], "pack analysis mechanical gate failed: " + "; ".join(gate["failures"]))
-        require(reviewer_actor not in kernel._review_members(updated, claim_id)[1],
+        require(independent_of(reviewer_actor, kernel._review_members(updated, claim_id)[1]),
                 "analysis reviewer contributed to evidence")
         return dict(analysis=analysis_id, claim=claim_id, basis_hash=gate["basis_hash"],
                     report=admitted["keys"]["report"][0], task_id=admitted["task_id"],

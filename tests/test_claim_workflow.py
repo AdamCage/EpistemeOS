@@ -45,7 +45,7 @@ class ClaimWorkflowTests(unittest.TestCase):
 
     def branch(self, name, *, replicate=True, scope=None):
         scope = self.scope if scope is None else scope
-        authors = {role: f"fixture-{name}-{role}" for role in
+        authors = {role: f"fixture-{name.lower()}-{role}" for role in
                    ("hypothesizer", "planner", "executor", "replicator", "analyst")}
         proposer = self.kernel(authors["hypothesizer"], "planner")
         hypotheses = [proposer.hypothesis(f"{name} {label}", "Fixture prediction",
@@ -277,12 +277,12 @@ class ClaimWorkflowTests(unittest.TestCase):
 
     def test_prior_negative_veto_survives_changed_basis_and_another_reviewer_approval(self):
         a, b = self.branch("A"), self.branch("B")
-        veto = self.review(b, actor="fixture-R1", verdict="request_changes")
+        veto = self.review(b, actor="fixture-r1", verdict="request_changes")
         self.link(a, b)
         self.assertEqual(self.reader.next_action(b)["action"], "replan")
-        self.approved(b, actor="fixture-R2")
+        self.approved(b, actor="fixture-r2")
         self.assertEqual(self.reader.next_action(b)["action"], "replan")
-        self.approved(b, actor="fixture-R1")
+        self.approved(b, actor="fixture-r1")
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
         self.assertEqual(self.event(veto)["payload"]["verdict"], "request_changes")
 
@@ -300,17 +300,17 @@ class ClaimWorkflowTests(unittest.TestCase):
     def test_foreign_negative_requires_acknowledgement_without_closing_its_original_veto(self):
         a, b = self.branch("A"), self.branch("B")
         link = self.link(a, b)
-        self.approved(b, actor="fixture-B-reviewer")
+        self.approved(b, actor="fixture-b-reviewer")
         original_basis = self.bases(b)[b]
-        negative = self.review(a, actor="fixture-A-reviewer", verdict="request_changes")
+        negative = self.review(a, actor="fixture-a-reviewer", verdict="request_changes")
         self.assertNotEqual(self.bases(b)[b], original_basis)
         self.assertEqual(self.reader.next_action(b)["action"], "scientific_review")
         with self.assertRaisesRegex(GateError, "acknowledge every open review"):
-            self.review(b, actor="fixture-B-reviewer")
+            self.review(b, actor="fixture-b-reviewer")
         assessments = self.assessments(b)
         assessments[link]["evidence"].append(negative)
         assessments[link]["rationale"] = "Fixture: acknowledge unresolved upstream concern; bounded target assessed separately"
-        self.approved(b, actor="fixture-B-reviewer", assessments=assessments)
+        self.approved(b, actor="fixture-b-reviewer", assessments=assessments)
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
         self.assertEqual(self.reader.next_action(a)["action"], "replan")
         paper = self.event(self.paper(b))["payload"]
@@ -318,12 +318,12 @@ class ClaimWorkflowTests(unittest.TestCase):
         self.assertIn(negative, manuscript)
         self.assertIn("open related finding", manuscript)
         self.assertIn("Fixture control remains required", manuscript)
-        self.approved(a, actor="fixture-A-reviewer")
+        self.approved(a, actor="fixture-a-reviewer")
         after_closure = self.bases(b)[b]
         self.assertNotEqual(after_closure, original_basis)
         self.assertEqual(self.reader.next_action(b)["action"], "scientific_review")
-        self.approved(b, actor="fixture-B-reviewer")
-        self.review(a, actor="fixture-A-reviewer")  # Repeated positive review must not cause a refresh loop.
+        self.approved(b, actor="fixture-b-reviewer")
+        self.review(a, actor="fixture-a-reviewer")  # Repeated positive review must not cause a refresh loop.
         self.assertEqual(self.bases(b)[b], after_closure)
         self.assertEqual(self.reader.next_action(b)["action"], "paper_candidate")
         graph = ResearchGraph.from_store(self.store)
@@ -333,16 +333,16 @@ class ClaimWorkflowTests(unittest.TestCase):
     def test_symmetric_review_closures_converge_without_mutual_approval_loop(self):
         a, b = self.branch("A"), self.branch("B")
         link = self.link(a, b, "contradicts")
-        self.review(a, actor="fixture-A-reviewer", verdict="request_changes")
-        negative_b = self.review(b, actor="fixture-B-reviewer", verdict="request_changes")
+        self.review(a, actor="fixture-a-reviewer", verdict="request_changes")
+        negative_b = self.review(b, actor="fixture-b-reviewer", verdict="request_changes")
         assessments = self.assessments(a)
         assessments[link]["evidence"].append(negative_b)
-        self.approved(a, actor="fixture-A-reviewer", assessments=assessments)
-        self.approved(b, actor="fixture-B-reviewer")
+        self.approved(a, actor="fixture-a-reviewer", assessments=assessments)
+        self.approved(b, actor="fixture-b-reviewer")
         self.assertEqual(self.reader.next_action(a)["action"], "scientific_review")
-        self.approved(a, actor="fixture-A-reviewer")
+        self.approved(a, actor="fixture-a-reviewer")
         bases = self.bases(a, b)
-        for claim, actor in ((a, "fixture-A-reviewer"), (b, "fixture-B-reviewer")):
+        for claim, actor in ((a, "fixture-a-reviewer"), (b, "fixture-b-reviewer")):
             self.review(claim, actor=actor)
             self.assertEqual(self.reader.next_action(claim)["action"], "paper_candidate")
         self.assertEqual(self.bases(a, b), bases)

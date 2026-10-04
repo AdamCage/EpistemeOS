@@ -14,7 +14,7 @@ import math
 import types
 from typing import Any, Callable, get_args, get_origin, get_type_hints
 
-from .kernel import Actor, Kernel
+from .kernel import Actor, Kernel, require_canonical_actor
 from .planning import Planning
 from .execution import Execution
 from .batch import Batch
@@ -283,6 +283,12 @@ explicit default denote the same request within this API version.
         normalized = dict(version=1, action=action, payload=payload)
 
         def invoke() -> Any:
+            # ADR 0018: checked after the replay fast path, so historical
+            # envelopes with older actor IDs still return their receipts.
+            require_canonical_actor(context.actor, "command actor")
+            for field in ("reviewer_actor", "executor", "replicator"):
+                if field in payload:
+                    require_canonical_actor(payload[field], field)
             _check_study(self.store.events(), action, payload, context.study_id)
             target = target_type(self.store, Actor(context.actor, context.role))
             return handler(target, **payload)

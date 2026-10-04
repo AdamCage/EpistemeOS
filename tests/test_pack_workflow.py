@@ -378,6 +378,30 @@ class PackWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must come from pack.analyse"):
             ResearchGraph.from_store(store)
 
+    def test_noncanonical_reviewer_variants_are_rejected(self):
+        # Audit finding A-22: whitespace, case and homoglyph variants of the analyst ID.
+        for variant in ("pack-analyst ", "PACK-ANALYST", "p\u0430ck-analyst"):
+            store = self.restored("completed")
+            before = snapshot(store)
+            with self.subTest(reviewer=variant), self.assertRaisesRegex(ValueError, "canonical"):
+                advance_pack_analysis(store, self.batch, planner=PLANNER, analyst=ANALYST,
+                                      reviewer_actor=variant)
+            with self.subTest(reviewer=variant, path="command"), self.assertRaisesRegex(ValueError, "canonical"):
+                self.analyse(store, dict(self.honest(store), reviewer_actor=variant))
+            self.assertEqual(snapshot(store), before)
+
+    def test_noncanonical_reviewer_variants_are_rejected(self):
+        # Audit finding A-22: whitespace, case and homoglyph variants of the analyst ID.
+        for variant in ("pack-analyst ", "PACK-ANALYST", "p\u0430ck-analyst"):
+            store = self.restored("completed")
+            before = snapshot(store)
+            with self.subTest(reviewer=variant), self.assertRaisesRegex(ValueError, "canonical"):
+                advance_pack_analysis(store, self.batch, planner=PLANNER, analyst=ANALYST,
+                                      reviewer_actor=variant)
+            with self.subTest(reviewer=variant, path="command"), self.assertRaisesRegex(ValueError, "canonical"):
+                self.analyse(store, dict(self.honest(store), reviewer_actor=variant))
+            self.assertEqual(snapshot(store), before)
+
     def test_swallowed_refused_reads_still_fail_the_hooks(self):
         store = self.restored("completed")
         _, context, cas = domain_packs.analysis_inputs(store, store.events(), self.batch)

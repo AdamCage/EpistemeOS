@@ -226,7 +226,7 @@ class KernelTests(unittest.TestCase):
 
         with patch.object(Kernel, "_history", synchronized_history):
             with ThreadPoolExecutor(max_workers=2) as pool:
-                futures = [pool.submit(worker, actor_id) for actor_id in ["executor-A", "executor-B"]]
+                futures = [pool.submit(worker, actor_id) for actor_id in ["executor-a", "executor-b"]]
                 results = [future.result(timeout=15) for future in futures]
         self.assertEqual(sum(isinstance(result, str) for result in results), 1, results)
         self.assertEqual(sum(isinstance(result, ConflictError) for result in results), 1, results)

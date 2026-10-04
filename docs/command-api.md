@@ -26,7 +26,7 @@ with Store(".research/command-example") as store:
 
 `context.expected_revision` — число событий, прочитанных перед решением; для пустой истории `0`. `command_id` уникален во всём Store. Для повторной доставки после неопределённого ответа сохраняются исходные ID, revision и body. Изменённый запрос под тем же ID получает conflict. Новое решение после перечитывания истории получает новый ID. Пропущенные optional arguments и явно переданные значения по умолчанию нормализуются одинаково в v1.
 
-`study_id` и `correlation_id` — обязательные непустые metadata. `causation_id` — `null` либо ID предшествующего immutable event; это ссылка на происхождение команды, не доказательство научной причинности. Эти поля не создают изоляцию studies или аутентификацию actors. Event envelope v1 не переписывается: metadata находятся в связанной квитанции.
+`context.actor` и поля payload `reviewer_actor`, `executor`, `replicator` новой команды должны быть каноническими: 1–128 символов ASCII в нижнем регистре, цифры и `._@:-`, первый и последний символ — буква или цифра ([ADR 0018](decisions/0018-claim-families-and-review-admission.md)). Проверка стоит после fast path replay, поэтому исторический envelope с прежним ID возвращает свою receipt. Независимость reviewer от авторов evidence на новых записях сравнивается по ключу `NFKC(id).casefold().strip()`. Это не аутентификация: ID по-прежнему заявляет caller. `study_id` и `correlation_id` — обязательные непустые metadata. `causation_id` — `null` либо ID предшествующего immutable event; это ссылка на происхождение команды, не доказательство научной причинности. Эти поля не создают изоляцию studies или аутентификацию actors. Event envelope v1 не переписывается: metadata находятся в связанной квитанции.
 
 ## Действия
 

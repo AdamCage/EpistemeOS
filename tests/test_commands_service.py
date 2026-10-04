@@ -192,6 +192,49 @@ class CommandServiceTests(unittest.TestCase):
         self.assertEqual(receipts[0]["result"], first["result"])
         self.assertEqual(len(self.store.events()), 1)
 
+    def test_noncanonical_actor_ids_are_rejected(self):
+        # Audit finding A-22: space, case and homoglyph variants passed as distinct actors.
+        hypothesis = dict(statement="signal", prediction="mean>0", falsifier="mean<=0", scope=self.scope)
+        for index, actor in enumerate(("Planner", "planner ", " planner", "pl\u0430nner", "planner\u200b")):
+            before = self.store.export(), self.store.export_receipts()
+            with self.subTest(actor=actor), self.assertRaisesRegex(ValueError, "canonical"):
+                self.service.execute(self.envelope("kernel.hypothesis", hypothesis, actor=actor,
+                                                   id=f"noncanonical-{index}"))
+            self.assertEqual((self.store.export(), self.store.export_receipts()), before)
+        with self.assertRaisesRegex(GateError, "canonical"):
+            Kernel(self.store, Actor("Planner", "planner")).hypothesis("signal", "s", "f", self.scope)
+        # An envelope admitted before canonical IDs still returns its original receipt.
+        legacy = self.envelope("kernel.hypothesis", hypothesis, actor="Legacy-Planner", id="legacy-1")
+        recorded = self.store.command(legacy["context"], legacy["request"], lambda: self.store.append(
+            id="hypothesis-legacy-planner", kind="hypothesis", actor="Legacy-Planner", role="planner",
+            payload=hypothesis, expected_revision=len(self.store.events()))["id"])
+        self.assertEqual(self.service.execute(legacy), recorded)
+        # A contributor recorded under a case variant cannot be assigned as the canonical ID.
+        protocol = self.protocol()
+        plan = next(event for event in self.store.events() if event["id"] == protocol)
+        self.store.append(id="run-historical-variant", kind="run", actor="Exec-1", role="executor",
+                          payload=dict(self.run_payload(protocol), protocol_hash=plan["hash"], replicate_of=None),
+                          expected_revision=len(self.store.events()))
+        self.store.append(id="result-historical-variant", kind="result", actor="Exec-1", role="executor",
+                          payload=dict(run="run-historical-variant", status="completed",
+                                       outputs=self.outputs, reason=""),
+                          expected_revision=len(self.store.events()))
+        replicator = Kernel(self.store, Actor("replicator", "replicator"))
+        replica = replicator.start_run(protocol, seed=7, implementation=self.recode,
+            environment=self.environment, command=["fixture"], replicate_of="run-historical-variant")
+        replicator.finish_run(replica, status="completed", outputs=self.outputs)
+        claim = Kernel(self.store, Actor("analyst", "analyst")).claim(protocol=protocol,
+            statement="Fixture mean", scope=self.scope, evidence=["run-historical-variant", replica],
+            limitations=["Fixture"], outcome="inconclusive")
+        basis = Kernel(self.store, Actor("observer", "observer")).gate(claim)["basis_hash"]
+        with self.assertRaisesRegex(ValueError, "contributed"):
+            self.service.execute(self.envelope("review.assign", dict(
+                claim=claim, reviewer_actor="exec-1", expected_basis=basis), id="assign-variant"))
+        for field, value in (("reviewer_actor", "Reviewer-1"), ("reviewer_actor", "reviewer 1")):
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, "canonical"):
+                self.service.execute(self.envelope("review.assign", dict(
+                    claim=claim, reviewer_actor=value, expected_basis=basis), id=f"assign-{value}"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from .kernel import Actor, Kernel, require
+from .kernel import Actor, Kernel, independent_of, require
 from .store import Store, canonical, digest
 
 
@@ -43,7 +43,9 @@ def _safe_design(design: dict[str, Any]) -> dict[str, Any]:
 
 
 def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
-              reviewer_actor: str, expected_basis: str, study_id: str) -> dict[str, Any]:
+              reviewer_actor: str, expected_basis: str, study_id: str,
+              keyed: bool = False) -> dict[str, Any]:
+    """Assignment projection; new assignments compare normalized actor keys (ADR 0018)."""
     if any(event["kind"] == "batch_analysis" for event in history):
         from .batch_analysis import _index as analysis_index
         analysis_index(store, history)
@@ -62,7 +64,7 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
     require(gate["passed"] and gate["basis_hash"] == basis == expected_basis,
             "review assignment needs a current mechanically passed claim basis")
     context, contributors, _ = kernel._review_members(history, claim)
-    require(reviewer_actor not in contributors,
+    require(independent_of(reviewer_actor, contributors) if keyed else reviewer_actor not in contributors,
             "reviewer actor contributed to the claim evidence context")
 
     by_id = {event["id"]: event for event in history}
@@ -232,7 +234,7 @@ class ReviewAssignment:
         study_id = self.store._command_context["study_id"]
         manifest = _manifest(self.store, history, claim=claim,
                              reviewer_actor=reviewer_actor, expected_basis=expected_basis,
-                             study_id=study_id)
+                             study_id=study_id, keyed=True)
         require(not any(event["payload"]["claim"] == claim
                         and event["payload"]["basis_hash"] == expected_basis
                         and event["payload"]["reviewer_actor"] == reviewer_actor

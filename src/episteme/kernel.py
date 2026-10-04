@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import math
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -32,6 +34,32 @@ class Actor:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise GateError(message)
+
+
+# ADR 0018: new records use one ASCII form, and independence compares a
+# normalized key, so case, width or space variants cannot pass as another actor.
+# Historical records keep their exact IDs; replay compares them as admitted.
+_ACTOR_ID = re.compile(r"[a-z0-9](?:[a-z0-9._@:-]{0,126}[a-z0-9])?")
+
+
+def canonical_actor(value: Any) -> bool:
+    return type(value) is str and _ACTOR_ID.fullmatch(value) is not None
+
+
+def require_canonical_actor(value: Any, label: str = "actor id") -> None:
+    require(canonical_actor(value),
+            f"{label} must be canonical: 1-128 lowercase ASCII letters, digits or ._@:- "
+            "that start and end with a letter or digit")
+
+
+def actor_key(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).casefold().strip()
+
+
+def independent_of(actor: str, contributors: set[str]) -> bool:
+    """No contributor shares the actor's normalized key."""
+    key = actor_key(actor)
+    return all(actor_key(other) != key for other in contributors)
 
 
 def finite(value: Any) -> bool:
@@ -152,6 +180,7 @@ class Kernel:
     def _write(self, history: list[dict[str, Any]], kind: str, payload: dict[str, Any],
                roles: set[str]) -> str:
         require(self.actor.role in roles, f"{self.actor.role} cannot create {kind}")
+        require_canonical_actor(self.actor.id)
         id = f"{kind}-{uuid4().hex[:16]}"
         self.store.append(id=id, kind=kind, actor=self.actor.id, role=self.actor.role,
                           payload=payload, expected_revision=len(history))
@@ -616,7 +645,7 @@ class Kernel:
         for owner, id in open_negative_opinions(history):
             for member in claim_family(extended, id):
                 context, contributors, _ = self._review_members(extended, member)
-                require(candidate["id"] not in context.link_ids or owner not in contributors,
+                require(candidate["id"] not in context.link_ids or independent_of(owner, contributors),
                         "claim link would prevent an open review veto owner from independently reviewing its context")
         return self._write(history, "claim_link", link.to_dict(), {"planner", "analyst"})
 
@@ -772,7 +801,7 @@ class Kernel:
         context, contributors, admissible_refs = self._review_members(history, claim)
         require(not context.link_ids or link_assessments is not None,
                 "linked claim context requires review_with_links")
-        require(self.actor.id not in contributors, "reviewer must be independent of contributors")
+        require(independent_of(self.actor.id, contributors), "reviewer must be independent of contributors")
         require(isinstance(verdict, str) and verdict in {"approve", "request_changes", "reject"},
                 "invalid review verdict")
         require(isinstance(rationale, str) and bool(rationale.strip()), "review requires rationale")

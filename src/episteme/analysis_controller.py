@@ -15,7 +15,7 @@ from uuid import uuid4
 from .batch import _index as batch_index
 from .batch_analysis import _index as analysis_index
 from .commands import CommandService
-from .kernel import Actor, GateError, Kernel, require
+from .kernel import Actor, GateError, Kernel, require, require_canonical_actor
 from .review_assignment import _index as assignment_index
 from .review_submission import _index as submission_index
 from .store import ConflictError, Store
@@ -74,8 +74,8 @@ def advance_batch_analysis(store: Store, batch: str, *, planner: Actor, analyst:
     """Make at most two persisted decisions, resuming from either receipt."""
     require(analyst.role == "analyst", "batch analysis controller needs an analyst")
     require(planner.role == "planner", "batch analysis controller needs a planner")
-    require(type(reviewer_actor) is str and bool(reviewer_actor.strip()),
-            "reviewer actor is required")
+    for value, label in ((planner.id, "planner"), (analyst.id, "analyst"), (reviewer_actor, "reviewer actor")):
+        require_canonical_actor(value, label)
     require(type(adapter.adapter_id) is str and type(adapter.adapter_version) is str,
             "analysis adapter identity is required")
     for _ in range(3):
@@ -240,8 +240,8 @@ def advance_pack_analysis(store: Store, batch: str, *, planner: Actor, analyst: 
     from .domain_packs import analysis_inputs, pack_analyses, require_live_pack, run_hooks
     require(analyst.role == "analyst", "batch analysis controller needs an analyst")
     require(planner.role == "planner", "batch analysis controller needs a planner")
-    require(type(reviewer_actor) is str and bool(reviewer_actor.strip()),
-            "reviewer actor is required")
+    for value, label in ((planner.id, "planner"), (analyst.id, "analyst"), (reviewer_actor, "reviewer actor")):
+        require_canonical_actor(value, label)
     for _ in range(3):
         history = store.events()
         states = batch_index(store, history)

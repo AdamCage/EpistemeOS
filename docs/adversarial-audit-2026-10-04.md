@@ -874,7 +874,7 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 
 Раздел обновляется по мере исправлений; разделы 1–8 описывают снимок `da6aa2a` и не меняются. Исправления семантики review, claims и paper ведёт [ADR 0018](decisions/0018-claim-families-and-review-admission.md), принятый 4 октября 2026 года координирующим агентом по делегированию пользователя. «Исправлено» означает: PoC находки стал регрессионным тестом, который падает на коде до исправления и проходит после него; номера прогонов — в [validation.md](validation.md). Шаг ADR указан по его разделу 9.
 
-Последняя проверка: 4 октября 2026, шаг 4 ADR 0018.
+Последняя проверка: 4 октября 2026, шаг 5 ADR 0018.
 
 | ID | Статус | Где исправляется |
 | --- | --- | --- |
@@ -899,7 +899,7 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 | A-19 | вне ADR 0018; **перепроверить** | ADR 0017 переписал проверку receipts в `store.py`; `inspect` и `gate` в `cli.py` он оборачивал только в read scope |
 | A-20 | вне ADR 0018; перепроверить | ADR 0017 менял `Store.read` (memo в read scope); `put` прежний |
 | A-21 | вне ADR 0018 | изменения ADR 0017 в `cli.py` механические (read scope) |
-| A-22 | не исправлено | ADR 0018, шаг 5 |
+| A-22 | **исправлено для новых записей** (шаг 5): канонические ASCII IDs и сравнение независимости по нормализованному ключу; PoC — `test_noncanonical_reviewer_variants_are_rejected`, граница команд — `test_noncanonical_actor_ids_are_rejected`. Допустимость исторических approvals неканонических reviewers — шаг 7. Совпадение analyst с planner или executor по-прежнему допустимо (документированная граница) | ADR 0018, шаги 5 и 7 |
 | A-23 | вне ADR 0018 | будущий ADR профиля исполнения; изменения ADR 0017 в `cli.py` поведение `pack describe`/`pack verify` не меняют |
 
 «Перепроверить» значит: ADR 0017 менял код, через который проходит PoC находки, а сам PoC после него не повторялся. Находка считается открытой, пока PoC не повторён.

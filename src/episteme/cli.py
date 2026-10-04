@@ -22,6 +22,16 @@ from .store import Store
 from .execution import freeze_environment, job_state, reconcile_job, work_job
 
 
+def _actor_id(value: str) -> str:
+    """Caller-declared, unauthenticated actor ID in its canonical form (ADR 0018)."""
+    from .kernel import canonical_actor
+    if not canonical_actor(value):
+        raise argparse.ArgumentTypeError(
+            "actor IDs must be 1-128 lowercase ASCII letters, digits or ._@:- "
+            "that start and end with a letter or digit")
+    return value
+
+
 @contextmanager
 def _opened(root: Path, *, read_only: bool = False) -> Iterator[Store]:
     """One CLI command is one CAS read scope; write transactions reread their artifacts."""
@@ -57,7 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if name == "paper":
             command.add_argument("claims", nargs="+", help="Reviewed claim IDs")
             command.add_argument("--title", required=True)
-            command.add_argument("--actor", required=True, help="Trusted caller's writer ID")
+            command.add_argument("--actor", required=True, type=_actor_id, help="Trusted caller's writer ID")
         if name == "graph":
             command.add_argument("--format", choices=("summary", "json", "dot"), default="summary")
         command.add_argument("--root", type=Path, required=True, help="Research state directory")
@@ -73,7 +83,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                help="Bound total streamed output-hash verification; skipped outputs remain unverified")
         if name == "import":
             operation.add_argument("--root", type=Path, required=True)
-            operation.add_argument("--actor", default="afterlife-importer")
+            operation.add_argument("--actor", default="afterlife-importer", type=_actor_id)
     execution = subcommands.add_parser("execution", help="Explicit trusted local Python execution; no sandbox")
     execution_ops = execution.add_subparsers(dest="operation", required=True)
     for name in ("environment", "status", "work", "reconcile"):
@@ -97,9 +107,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             operation.add_argument("--adapter", default=None,
                                    help="Optional assertion; must equal the pack or adapter the "
                                         "protocol binding fixes")
-            operation.add_argument("--planner", required=True, help="Caller-declared batch planner ID")
-            operation.add_argument("--analyst", required=True, help="Caller-declared analyst ID")
-            operation.add_argument("--reviewer", required=True, help="Caller-declared reviewer ID")
+            operation.add_argument("--planner", required=True, type=_actor_id, help="Caller-declared batch planner ID")
+            operation.add_argument("--analyst", required=True, type=_actor_id, help="Caller-declared analyst ID")
+            operation.add_argument("--reviewer", required=True, type=_actor_id, help="Caller-declared reviewer ID")
     packs = subcommands.add_parser("pack", help="Describe or verify pinned DomainPacks; read-only")
     pack_ops = packs.add_subparsers(dest="operation", required=True)
     pack_describe = pack_ops.add_parser("describe", help="Live registered pack identity and catalog")

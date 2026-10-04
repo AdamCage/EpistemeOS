@@ -11,7 +11,7 @@ from typing import Any
 
 from .batch import _index as batch_index
 from .followup import _index as followup_index
-from .kernel import Actor, Kernel, require
+from .kernel import Actor, Kernel, independent_of, require
 from .replanning import _index as review_index
 from .search import Search
 from .store import Store
@@ -28,10 +28,12 @@ _RESOLUTION_FIELDS = {"schema_version", "obligation", "obligation_hash", "follow
 
 def _review_payload(store: Store, before: list[dict[str, Any]], claim: str, actor: str,
                     basis: str, rationale: str,
-                    link_assessments: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
+                    link_assessments: dict[str, dict[str, Any]] | None,
+                    keyed: bool = False) -> dict[str, Any]:
     kernel = Kernel(store, Actor(actor, "reviewer"))
     context, contributors, admissible = kernel._review_members(before, claim)
-    require(actor not in contributors, "resolution reviewer contributed to child evidence")
+    require(independent_of(actor, contributors) if keyed else actor not in contributors,
+            "resolution reviewer contributed to child evidence")
     require(not context.link_ids or link_assessments is not None,
             "linked child claim requires explicit relation assessments")
     require(type(rationale) is str and bool(rationale.strip()) and len(rationale) <= 4096
@@ -67,7 +69,7 @@ def _review_payload(store: Store, before: list[dict[str, Any]], claim: str, acto
 def _admit(store: Store, before: list[dict[str, Any]], *, obligation: str, claim: str,
            expected_basis: str, review_rationale: str, resolution_rationale: str,
            evidence_refs: list[str], link_assessments: dict[str, dict[str, Any]] | None,
-           actor: str, study_id: str) -> dict[str, Any]:
+           actor: str, study_id: str, keyed: bool = False) -> dict[str, Any]:
     """Check current mechanical/context prerequisites without changing history."""
     kernel = Kernel(store, Actor(actor, "reviewer"))
     obligations = {event["id"]: event for state in review_index(store, before).values()
@@ -145,7 +147,7 @@ def _admit(store: Store, before: list[dict[str, Any]], *, obligation: str, claim
             and set(evidence_refs) == required_refs,
             "resolution citations must cover the child claim and every cited run result")
     review_payload = _review_payload(store, before, child["id"], actor, expected_basis,
-                                     review_rationale, link_assessments)
+                                     review_rationale, link_assessments, keyed)
     by_id = {event["id"]: event for event in before}
     return dict(obligation=source, followup=followup, source_review=source_review,
                 source_claim=source_claim, source_basis=source_basis, child=child,
@@ -267,7 +269,7 @@ class Resolution:
                       expected_basis=expected_basis, review_rationale=review_rationale,
                       resolution_rationale=resolution_rationale, evidence_refs=evidence_refs,
                       link_assessments=link_assessments, actor=self.actor.id,
-                      study_id=context["study_id"])
+                      study_id=context["study_id"], keyed=True)
         kernel = Kernel(self.store, self.actor)
         if link_assessments is None:
             review_id = kernel.review(claim, verdict="approve", rationale=review_rationale,

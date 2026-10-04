@@ -80,7 +80,7 @@ class ClaimFamilyTests(unittest.TestCase):
                 protocol, runs = lab.protocol()
                 claim_a = lab.claim(protocol, runs)
                 if typed:
-                    rejected = lab.cmd("reviewer-R1", "reviewer", "replanning.record_review", claim=claim_a,
+                    rejected = lab.cmd("reviewer-r1", "reviewer", "replanning.record_review", claim=claim_a,
                         verdict="reject", rationale="Confounded design", findings=[dict(
                             kind="discriminating_experiment", action="Rule out confounding",
                             closure_criterion="A discriminating experiment is reviewed",
@@ -88,7 +88,7 @@ class ClaimFamilyTests(unittest.TestCase):
                         expected_basis=current_basis(lab.store, claim_a), link_assessments=None)
                     review, obligations = rejected["review"], rejected["obligations"]
                 else:
-                    review = lab.cmd("reviewer-R1", "reviewer", "kernel.review", claim=claim_a,
+                    review = lab.cmd("reviewer-r1", "reviewer", "kernel.review", claim=claim_a,
                                      verdict="reject", rationale="Confounded design",
                                      actions=["Rule out confounding"],
                                      expected_basis=current_basis(lab.store, claim_a))
@@ -96,7 +96,7 @@ class ClaimFamilyTests(unittest.TestCase):
                 self.assertEqual(lab.next_action(claim_a)["action"], "replan")
                 # Same protocol, evidence and text; a second reviewer approves via the blind path.
                 claim_b = lab.claim(protocol, runs)
-                approved = submit_review(lab.store, claim_b, reviewer="reviewer-R2")
+                approved = submit_review(lab.store, claim_b, reviewer="reviewer-r2")
                 manifest = lab.store.read(approved["bundle"]).decode()
                 self.assertNotIn(claim_a, manifest)
                 decision = lab.next_action(claim_b)
@@ -106,7 +106,7 @@ class ClaimFamilyTests(unittest.TestCase):
                     self.assertEqual(decision["obligations"], obligations)
                 else:
                     self.assertEqual(decision["family_vetoes"],
-                                     [dict(review=review, claim=claim_a, reviewer="reviewer-R1")])
+                                     [dict(review=review, claim=claim_a, reviewer="reviewer-r1")])
                 before = lab.store.events()
                 with self.assertRaisesRegex(ValueError, "not eligible for paper"):
                     lab.paper(claim_b)
@@ -117,21 +117,21 @@ class ClaimFamilyTests(unittest.TestCase):
         lab = FamilyFixture(self)
         first, first_runs = lab.protocol(label="first")
         claim_a = lab.claim(first, first_runs)
-        review = lab.cmd("reviewer-R1", "reviewer", "kernel.review", claim=claim_a, verdict="request_changes",
+        review = lab.cmd("reviewer-r1", "reviewer", "kernel.review", claim=claim_a, verdict="request_changes",
                          rationale="Needs a control", actions=["Add a control"],
                          expected_basis=current_basis(lab.store, claim_a))
         # Re-registration: a new root protocol on the same observed bytes.
         second, second_runs = lab.protocol(label="second")
         claim_b = lab.claim(second, second_runs)
-        approve(lab.store, claim_b, reviewer="reviewer-R2")
+        approve(lab.store, claim_b, reviewer="reviewer-r2")
         decision = lab.next_action(claim_b)
         self.assertEqual(decision["action"], "replan", decision)
         self.assertEqual(decision["family_vetoes"],
-                         [dict(review=review, claim=claim_a, reviewer="reviewer-R1")])
+                         [dict(review=review, claim=claim_a, reviewer="reviewer-r1")])
         # Different bytes and different code form an unrelated family.
         other, other_runs = lab.protocol(data=lab.store.put(b"value\n5\n6\n"), label="other")
         claim_c = lab.claim(other, other_runs)
-        approve(lab.store, claim_c, reviewer="reviewer-R2")
+        approve(lab.store, claim_c, reviewer="reviewer-r2")
         self.assertEqual(lab.next_action(claim_c)["action"], "paper_candidate")
 
 
