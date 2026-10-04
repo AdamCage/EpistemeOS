@@ -27,7 +27,7 @@ from episteme.graph import ResearchGraph
 from episteme.kernel import Actor, Kernel
 from episteme.recovery import backup, restore
 from episteme.reporting import artifact_inventory, export_store
-from episteme.runner_locked import accelerators, parse_nvidia_smi
+from episteme.runner_locked import accelerators, parse_nvidia_smi, payload_launch
 from episteme.store import IntegrityError, Store, canonical, digest
 
 
@@ -154,6 +154,46 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(env["HOME"], "H")
         self.assertTrue(env["PATH"].startswith("B"))
         self.assertTrue(set(env) <= {"EPISTEME_INHERITED", "PYTHONHASHSEED", *rules.CONTROLLED})
+
+    def test_bootstrap_drops_interpreter_inserted_variables(self):
+        """POSIX CPython inserts LC_CTYPE while coercing the C locale.
+
+        The worker's allowlist does not contain that name. Windows does not
+        insert it, so this test plants LC_CTYPE and a canary in the process
+        environment and also overwrites a declared value.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            allowed = {"HOME": "H", "KEEP": "declared", "PATH": "B", "PYTHONHASHSEED": "0",
+                       "PYTHONUTF8": "1", "TMPDIR": "T"}
+            env_file = root / "payload-env.json"
+            env_file.write_bytes(canonical(allowed))
+            script = root / "main.py"
+            script.write_text("import json, os, sys\nfrom pathlib import Path\n"
+                              "Path('view.json').write_text(json.dumps(dict("
+                              "keys=sorted(os.environ), argv0=Path(sys.argv[0]).name, "
+                              "ctype=os.environ.get('LC_CTYPE'), hashseed=os.environ.get('PYTHONHASHSEED'), "
+                              "keep=os.environ.get('KEEP'))))\n", encoding="utf-8")
+            injected = dict(allowed, LC_CTYPE="C.UTF-8", EPISTEME_TEST_CANARY="secret", KEEP="mutated")
+            launch = payload_launch(sys.executable, sys.executable, str(env_file), [str(script)])
+            completed = subprocess.run(launch, cwd=root, env=injected, input=b"GO\n", capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            view = json.loads((root / "view.json").read_text(encoding="utf-8"))
+            self.assertEqual(view["keys"], sorted(allowed))
+            self.assertIsNone(view["ctype"])
+            self.assertEqual((view["keep"], view["hashseed"], view["argv0"]), ("declared", "0", "main.py"))
+            declared = dict(allowed, LC_CTYPE="C")
+            env_file.write_bytes(canonical(declared))
+            completed = subprocess.run(launch, cwd=root, env=injected, input=b"GO\n", capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            view = json.loads((root / "view.json").read_text(encoding="utf-8"))
+            self.assertEqual(view["ctype"], "C")
+            self.assertEqual(set(view["keys"]), set(declared))
+            (root / "view.json").unlink()
+            missing = payload_launch(sys.executable, sys.executable, str(root / "missing.json"), [str(script)])
+            completed = subprocess.run(missing, cwd=root, env=injected, input=b"GO\n", capture_output=True)
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse((root / "view.json").exists())
 
     def test_closure_project_must_be_exactly_pyproject_lock_and_local_wheels(self):
         files = {"pyproject.toml": b"[project]\n", "uv.lock": lock()}

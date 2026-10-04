@@ -3,9 +3,10 @@
 No Store access and no sandbox claim. The worker checks the materialized
 program, input and closure bytes, creates a fresh environment from the frozen
 uv lock without network access and records what was installed. The payload
-gets only allowlisted variables and runs under the v1 process controls. It
-still runs as the controller's OS user: it can read files, reach the network
-and modify anything that user may modify, including this job directory.
+gets only allowlisted variables, restored after interpreter startup, and runs
+under the v1 process controls. It still runs as the controller's OS user: it
+can read files, reach the network and modify anything that user may modify,
+including this job directory.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ except ImportError:  # The controller runs this file as a script, outside the pa
 
 
 CONTROL, RUN, CLOSURE, VENV, TMP, HOME = "control", "run", "closure", "venv", "tmp", "home"
+PAYLOAD_ENV = "payload-env.json"
 SOURCE_DIR, INPUT_DIR = "src", "inputs"
 SETUP_SECONDS = 1800
 ENVIRONMENT_LIMIT = 64 * 1024 * 1024
@@ -48,7 +50,12 @@ ISOLATION = dict(os_identity="same_user_as_controller", filesystem="not_enforced
 _SHIM = ("import subprocess,sys\npermit=sys.stdin.buffer.readline();sys.stdin.close()\n"
          "if permit!=b'GO\\n':sys.exit(125)\n"
          "sys.exit(subprocess.call(sys.argv[1:],stdin=subprocess.DEVNULL))")
-_BOOTSTRAP = ("import os,runpy,sys\nsys.argv=sys.argv[1:]\n"
+# CPython may setenv("LC_CTYPE") while coercing the C locale before -c runs
+# (PEP 538). The first argument is the allowlist JSON; it replaces os.environ.
+_BOOTSTRAP = ("import json,os,runpy,sys\nsys.argv=sys.argv[1:]\n"
+              "path=sys.argv.pop(0)\n"
+              "with open(path,encoding='utf-8') as stream:allowed=json.load(stream)\n"
+              "os.environ.clear();os.environ.update(allowed)\n"
               "if sys.path and sys.path[0]=='':del sys.path[0]\n"
               "sys.path.insert(0,os.path.dirname(os.path.abspath(sys.argv[0])))\n"
               "runpy.run_path(sys.argv[0],run_name='__main__')")
@@ -477,6 +484,12 @@ def _run_payload(control: Path, launch: list[str], cwd: Path, env: dict[str, str
     return stopped
 
 
+def payload_launch(base: str, python: str, environment_file: str, command_tail: list[str]) -> list[str]:
+    """Gate, venv interpreter, allowlist file, then the program arguments."""
+    return [base, "-I", "-S", "-c", _SHIM, python, "-s", "-B", "-c", _BOOTSTRAP,
+            environment_file, *command_tail]
+
+
 def execute(job: Path) -> dict[str, Any]:
     job = job.resolve()
     control, run = job / CONTROL, job / RUN
@@ -530,9 +543,10 @@ def execute(job: Path) -> dict[str, Any]:
         env, missing = rules.payload_environment(declaration, host, bin_dir=str(_bin(job / VENV)),
                                                  tmp=str(job / TMP), home=str(job / HOME))
         record.update(environment_variables=env, inherited_missing=missing)
+        environment_file = control / PAYLOAD_ENV
+        _atomic(environment_file, env)
         base = environment["interpreter"]["base_executable"]
-        launch = [base, "-I", "-S", "-c", _SHIM, str(venv_python(job / VENV)), "-s", "-B", "-c", _BOOTSTRAP,
-                  *spec["command"][3:]]
+        launch = payload_launch(base, str(venv_python(job / VENV)), str(environment_file), spec["command"][3:])
         record["launch_command"] = launch
         stopped = False
         stopped = _run_payload(control, launch, run, env, spec, identity, record)
