@@ -55,6 +55,9 @@ EpistemeOS/
 │   ├── followup_execution.py     winning follow-up node → selected frozen batch
 │   ├── execution_authority.py    локальный marker вне backup/CAS, запрет запуска restored batch
 │   ├── runner_backend.py         trusted local Python process supervisor, bounded logs и completion
+│   ├── environment_closure.py    профиль v2: манифест дерева, правила uv.lock, closure и allowlist переменных
+│   ├── execution_locked.py       профиль v2: freeze, specification, каталог job вне хранилища, completion, CLI
+│   ├── runner_locked.py          профиль v2: offline uv-окружение, запись установленного, gated payload
 │   ├── claims.py                 типизированный immutable ClaimLink
 │   ├── claim_context.py          scope/циклы связей и транзитивный review context
 │   ├── kernel.py                 валидируемые научные команды и gates
@@ -98,6 +101,7 @@ EpistemeOS/
     ├── test_synthetic_batch_analysis.py  пересчёт raw metrics, frozen parameters и oracle boundary
     ├── test_execution_authority.py atomic marker, concurrency, corruption и restore
     ├── test_runner_backend.py    реальные descendants, timeout, capture cap и duplicate delivery
+    ├── test_execution_locked.py  профиль v2: форматы, offline uv, allowlist, каталог вне хранилища, CLI
     ├── test_claims.py            shape и hashes immutable claim links
     ├── test_claim_context.py     scope, direction, cycles и context closure
     ├── test_claim_workflow.py    review propagation, veto, supersession, paper и CLI replay
@@ -161,6 +165,7 @@ EpistemeOS/
 | `planning.py` | ResearchQuestion/ExplanationSet v1, immutable parent refs, heads, hashes/scope, exact exclusion reasons; frozen context с прежними гипотезами. | Constraints и comparison plan декларативны; нет генерации/научной оценки, resource enforcement или actor authentication. |
 | `execution.py` | Atomic run/job и result/finalized, unique dispatch, historical receipts, completion identities/hashes, context и CAS closure. | Нет auto-reclaim/retry, signed attestation, study resource ledger или cross-clone exactly-once. |
 | `runner_backend.py` | Frozen single Python source/input, отдельный cwd, gated process launch, Windows Job Object / POSIX group, bounded capture, durable completion. | Trusted local profile, без filesystem/network sandbox, package environment reconstruction или domain metric recomputation. |
+| `environment_closure.py`, `execution_locked.py`, `runner_locked.py` | Профиль v2 [ADR 0019](decisions/0019-execution-profile-v2.md): многофайловое дерево и uv-closure в CAS, новое offline-окружение на job, allowlist переменных, каталог job вне корня хранилища, запись дистрибутивов, интерпретатора, inventory и GPU. | Тот же OS user, без filesystem/network sandbox; программа достигает хранилища по абсолютному пути. Сеть разрешена только явной `execution prepare --online`, без событий. |
 | `claims.py`, `claim_context.py` | Immutable proposals отношений, validation порядка/scope/циклов; review context из incoming supports/limits и symmetric contradictions/supersession. | Не доказывают научную связь; binding evidence basis и bytes проверяет Kernel/Graph. |
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
 | `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; импорт сам не создаёт runs. Пересчёт stop-событий одного run выполняет отдельный пилот выше. |

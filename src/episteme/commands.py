@@ -130,6 +130,8 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "analysis.apply": (BatchAnalysis, BatchAnalysis.apply, frozenset({"analyst"})),
     "execution.enqueue": (Execution, Execution.enqueue, frozenset({"executor", "replicator"})),
     "execution.dispatch": (Execution, Execution.dispatch, frozenset({"executor", "replicator"})),
+    "execution.dispatch_v2": (Execution, Execution.dispatch_v2, frozenset({"executor", "replicator"})),
+    "execution.dispatch_v2": (Execution, Execution.dispatch_v2, frozenset({"executor", "replicator"})),
     "execution.finalize": (Execution, Execution.finalize, frozenset({"executor", "replicator"})),
     "planning.question": (Planning, Planning.question, frozenset({"planner"})),
     "planning.explanation_set": (Planning, Planning.explanation_set, frozenset({"planner"})),

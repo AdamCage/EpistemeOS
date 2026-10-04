@@ -3,6 +3,8 @@
 The controller owns Store; the worker receives files in a separate directory.
 This is trusted local execution, not an OS/network or actor security boundary.
 An ambiguous dispatch is never retried automatically, even after a restart.
+Specifications with schema_version 2 belong to the locked profile of ADR 0019
+(``execution_locked``); both profiles share these event kinds.
 """
 
 from __future__ import annotations
@@ -91,6 +93,7 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
     events = {event["id"]: event for event in history}
     jobs: dict[str, dict[str, Any]] = {}
     runs: set[str] = set()
+    cache: dict[Any, Any] = {}
     def ref(event: dict[str, Any], id: str, kind: str) -> dict[str, Any]:
         prior = events.get(id)
         require(prior is not None and prior["kind"] == kind and prior["seq"] < event["seq"],
@@ -103,11 +106,11 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
         if kind not in KINDS:
             continue
         require(event["role"] in {"executor", "replicator"}, "execution requires an assigned execution role")
-        require(type(p.get("schema_version")) is int and p["schema_version"] == 1,
+        require(type(p.get("schema_version")) is int and p["schema_version"] in {1, 2},
                 "unsupported execution event version")
         if kind == "execution_job":
-            require(set(p) == {"schema_version", "run", "run_hash", "specification", "mode", "capabilities"},
-                    "invalid execution job fields")
+            require(set(p) == {"schema_version", "run", "run_hash", "specification", "mode", "capabilities"}
+                    and p["schema_version"] == 1, "invalid execution job fields")
             run = ref(event, p["run"], "run")
             require(run["id"] not in runs and run["seq"] + 1 == event["seq"] and p["run_hash"] == run["hash"],
                     "job must immediately bind one new run")
@@ -115,33 +118,49 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
             r = run["payload"]
             plan = Kernel._get(history, r["protocol"], "protocol")["payload"]
             spec = _object(store.read(p["specification"]))
-            _spec(spec)
+            locked = spec.get("schema_version") == 2
+            if not locked:
+                _spec(spec)
             expected_data = plan["data"]
             if r["replicate_of"] is not None:
                 result = Kernel._result([e for e in history if e["seq"] < run["seq"]], r["replicate_of"])
                 require(result is not None and result["payload"]["status"] == "completed",
                         "reanalysis job requires completed original data")
                 expected_data = result["payload"]["outputs"]["raw_data"]
-            require(spec["command"] == r["command"] and spec["command"][-1] == str(r["seed"])
-                    and spec["expected_inputs"] == {"program.py": r["implementation"], "input.dat": expected_data},
-                    "execution specification differs from frozen run inputs")
-            environment = _object(store.read(r["environment"]))
-            require(environment == dict(schema_version=1, backend=BACKEND, fingerprint=spec["environment_fingerprint"]),
-                    "execution environment differs from its frozen declaration")
+            if locked:
+                from .execution_locked import CAPABILITIES as allowed, check_job
+                check_job(store, spec, r, expected_data, cache)
+            else:
+                allowed = CAPABILITIES
+                require(spec["command"] == r["command"] and spec["command"][-1] == str(r["seed"])
+                        and spec["expected_inputs"] == {"program.py": r["implementation"], "input.dat": expected_data},
+                        "execution specification differs from frozen run inputs")
+                environment = _object(store.read(r["environment"]))
+                require(environment == dict(schema_version=1, backend=BACKEND, fingerprint=spec["environment_fingerprint"]),
+                        "execution environment differs from its frozen declaration")
             require(p["mode"] == ("independent_reanalysis" if r["replicate_of"] else "primary")
-                    and type(p["capabilities"]) is list and set(p["capabilities"]) <= CAPABILITIES,
+                    and type(p["capabilities"]) is list and set(p["capabilities"]) <= allowed,
                     "unsupported execution mode/capability")
-            for key in spec["expected_inputs"].values():
-                store.read(key)
+            if not locked:
+                for key in spec["expected_inputs"].values():
+                    store.read(key)
             runs.add(run["id"])
-            jobs[event["id"]] = dict(job=event, run=run, spec=spec, dispatch=None, finalized=None)
+            jobs[event["id"]] = dict(job=event, run=run, spec=spec, dispatch=None, finalized=None,
+                                     metric=plan["metric"])
         else:
             job = ref(event, p.get("job"), "execution_job")
             state = jobs[job["id"]]
             require(p.get("job_hash") == job["hash"], "execution job hash mismatch")
             if kind == "execution_dispatch":
-                require(set(p) == {"schema_version", "job", "job_hash", "workspace_token"}
-                        and type(p["workspace_token"]) is str and re.fullmatch(r"[0-9a-f]{32}", p["workspace_token"]),
+                locked = state["spec"]["schema_version"] == 2
+                fields = {"schema_version", "job", "job_hash", "workspace_token"}
+                # The recorded root was checked against the store at admission; replay
+                # keeps the format OS-independent so restored copies stay readable.
+                require(set(p) == (fields | {"workspace_root"} if locked else fields)
+                        and p["schema_version"] == (2 if locked else 1)
+                        and type(p["workspace_token"]) is str and re.fullmatch(r"[0-9a-f]{32}", p["workspace_token"])
+                        and (not locked or type(p["workspace_root"]) is str
+                             and 0 < len(p["workspace_root"]) <= 1024 and "\x00" not in p["workspace_root"]),
                         "invalid execution dispatch fields")
                 require(state["dispatch"] is None and Kernel._result(
                     [e for e in history if e["seq"] < event["seq"]], state["run"]["id"]) is None,
@@ -149,8 +168,8 @@ def _index(store: Store, history: list[dict[str, Any]]) -> dict[str, dict[str, A
                 _receipt_for(store, [event["id"]])
                 state["dispatch"] = event
             else:
-                require(set(p) == {"schema_version", "job", "job_hash", "dispatch", "manifest", "result"},
-                        "invalid execution finalization fields")
+                require(set(p) == {"schema_version", "job", "job_hash", "dispatch", "manifest", "result"}
+                        and p["schema_version"] == 1, "invalid execution finalization fields")
                 require(state["dispatch"] is not None and state["finalized"] is None
                         and p["dispatch"] == state["dispatch"]["id"], "invalid execution finalization dispatch")
                 result = ref(event, p["result"], "result")
@@ -174,6 +193,10 @@ def _identity(state: dict[str, Any]) -> dict[str, Any]:
 
 def _check_completion(store: Store, state: dict[str, Any], manifest: str,
                       result: dict[str, Any] | None = None) -> tuple[str, dict[str, str], str]:
+    if state["spec"]["schema_version"] == 2:
+        from .execution_locked import check_completion
+        return check_completion(store, state["spec"], _identity(state), state["job"]["payload"]["capabilities"],
+                                state["metric"], manifest, result)
     record = _object(store.read(manifest))
     require(record.get("schema_version") == 1 and record.get("identity") == _identity(state),
             "completion belongs to a different execution")
@@ -240,11 +263,18 @@ def execution_artifacts(store: Store, event: dict[str, Any]) -> set[str]:
     p = event["payload"]
     if event["kind"] == "execution_job":
         spec = _object(store.read(p["specification"]))
+        if spec.get("schema_version") == 2:
+            from .execution_locked import spec_artifacts
+            return {p["specification"], *spec_artifacts(store, spec)}
         return {p["specification"], *spec["expected_inputs"].values()}
     if event["kind"] == "execution_finalized":
         record = _object(store.read(p["manifest"]))
-        return {p["manifest"], record["stdout"]["sha256"], record["stderr"]["sha256"],
+        keys = {p["manifest"], record["stdout"]["sha256"], record["stderr"]["sha256"],
                 *(item["sha256"] for item in record["outputs"].values())}
+        if record.get("schema_version") == 2:
+            from .execution_locked import completion_artifacts
+            keys |= completion_artifacts(record)
+        return keys
     return set()
 
 
@@ -279,12 +309,16 @@ class Execution:
         implementation = plan["implementation"] if implementation is None else implementation
         environment = plan["environment"] if environment is None else environment
         declared = _object(self.store.read(environment))
-        require(set(declared) == {"schema_version", "backend", "fingerprint"}
+        from . import execution_locked as locked_profile
+        locked = locked_profile.is_closure(declared)
+        require(locked or set(declared) == {"schema_version", "backend", "fingerprint"}
                 and type(declared["schema_version"]) is int and declared["schema_version"] == 1 and declared["backend"] == BACKEND,
                 "local runner requires an explicitly frozen local Python environment")
         capabilities = [] if required_capabilities is None else required_capabilities
         available = CAPABILITIES - {"process_group_timeout", "job_object_timeout"}
         available |= {"job_object_timeout"} if os.name == "nt" else {"process_group_timeout"} if os.name == "posix" else set()
+        if locked:
+            available = locked_profile.available_capabilities()
         require(len(set(capabilities)) == len(capabilities) and set(capabilities) <= available,
                 "required execution capability is unsupported")
         data = plan["data"]
@@ -293,12 +327,17 @@ class Execution:
             require(original is not None and original["payload"]["status"] == "completed", "completed original required")
             data = original["payload"]["outputs"]["raw_data"]
         self.store.read(data)
-        command = [sys.executable, "-I", "-S", "program.py", "input.dat", "--seed", str(seed)]
-        spec = dict(schema_version=1, command=command, outputs=outputs,
-                    wall_seconds=wall_seconds, max_output_bytes=max_output_bytes,
-                    expected_inputs={"program.py": implementation, "input.dat": data},
-                    environment_fingerprint=declared["fingerprint"])
-        _spec(spec)
+        if locked:
+            spec = locked_profile.build_spec(self.store, implementation=implementation, environment=environment,
+                data=data, seed=seed, outputs=outputs, wall_seconds=wall_seconds, max_output_bytes=max_output_bytes)
+            command = spec["command"]
+        else:
+            command = [sys.executable, "-I", "-S", "program.py", "input.dat", "--seed", str(seed)]
+            spec = dict(schema_version=1, command=command, outputs=outputs,
+                        wall_seconds=wall_seconds, max_output_bytes=max_output_bytes,
+                        expected_inputs={"program.py": implementation, "input.dat": data},
+                        environment_fingerprint=declared["fingerprint"])
+            _spec(spec)
         key = self.store.put_json(spec)
         run = Kernel(self.store, self.actor)._start_run(protocol, seed=seed, implementation=implementation,
             environment=environment, command=command, replicate_of=replicate_of, batch_slot=batch_slot)
@@ -315,8 +354,24 @@ class Execution:
                 "only assigned execution actor may dispatch")
         require(state["dispatch"] is None, "execution already dispatched; reconcile instead of launching again")
         require(type(workspace_token) is str and re.fullmatch(r"[0-9a-f]{32}", workspace_token), "invalid workspace token")
+        require(state["spec"]["schema_version"] == 1, "profile v2 jobs are dispatched by execution.dispatch_v2")
         return self._write("execution_dispatch", dict(schema_version=1, job=job,
                             job_hash=state["job"]["hash"], workspace_token=workspace_token))
+
+    def dispatch_v2(self, *, job: str, workspace_token: str, workspace_root: str) -> str:
+        """Durable intent for a profile v2 job whose directory lies outside the store root."""
+        from .execution_locked import check_root
+        state = _index(self.store, self._history())[job]
+        from .batch import validate_dispatch
+        validate_dispatch(self.store, self.store.events(), job)
+        require(state["job"]["actor"] == self.actor.id and state["job"]["role"] == self.actor.role,
+                "only assigned execution actor may dispatch")
+        require(state["dispatch"] is None, "execution already dispatched; reconcile instead of launching again")
+        require(type(workspace_token) is str and re.fullmatch(r"[0-9a-f]{32}", workspace_token), "invalid workspace token")
+        require(state["spec"]["schema_version"] == 2, "v1 jobs are dispatched by execution.dispatch")
+        root = check_root(self.store, workspace_root)
+        return self._write("execution_dispatch", dict(schema_version=2, job=job, job_hash=state["job"]["hash"],
+                            workspace_token=workspace_token, workspace_root=str(root)))
 
     def finalize(self, *, job: str, manifest: str) -> str:
         state = _index(self.store, self._history())[job]
@@ -337,9 +392,11 @@ def job_state(store: Store, job: str) -> dict[str, Any]:
     if state["finalized"] is not None:
         result = state["finalized"]["payload"]["result"]
         status = Kernel._get(store.events(), result, "result")["payload"]["status"]
+    from .execution_locked import PROFILE
     return dict(job=job, run=state["run"]["id"], status=status, result=result,
                 dispatch=state["dispatch"]["id"] if state["dispatch"] else None,
-                scientific_validity="not_assessed", isolation=BACKEND,
+                scientific_validity="not_assessed",
+                isolation=PROFILE if state["spec"]["schema_version"] == 2 else BACKEND,
                 unknown_meaning="dispatch exists; no verified terminal evidence; never auto-relaunch")
 
 
@@ -351,6 +408,9 @@ def _envelope(store: Store, state: dict[str, Any], action: str, payload: dict[st
 
 
 def _workspace(store: Store, state: dict[str, Any]) -> Path:
+    if state["spec"]["schema_version"] == 2:
+        from .execution_locked import job_directory
+        return job_directory(store, state["dispatch"])
     parent = store.root / "executions"
     path = parent / state["dispatch"]["payload"]["workspace_token"]
     for directory in (parent, path):
@@ -366,6 +426,16 @@ def work_job(store: Store, job: str) -> dict[str, Any]:
     from .commands import CommandService
     state = _index(store, store.events())[job]
     if state["dispatch"] is not None:
+        return reconcile_job(store, job)
+    if state["spec"]["schema_version"] == 2:
+        from . import execution_locked as locked
+        envelope = _envelope(store, state, "execution.dispatch_v2", dict(
+            job=job, workspace_token=uuid4().hex, workspace_root=str(locked.default_root())))
+        CommandService(store).execute(envelope)
+        state = _index(store, store.events())[job]
+        path = _workspace(store, state)
+        locked.materialize(store, state["spec"], state["job"]["payload"]["specification"], _identity(state), path)
+        locked.spawn(path)
         return reconcile_job(store, job)
     envelope = _envelope(store, state, "execution.dispatch", dict(job=job, workspace_token=uuid4().hex))
     # Each invocation uses a fresh command ID; no replay acknowledgement grants launch authority.
@@ -391,6 +461,15 @@ def reconcile_job(store: Store, job: str) -> dict[str, Any]:
     if state["dispatch"] is None or state["finalized"] is not None:
         return job_state(store, job)
     workspace = _workspace(store, state)
+    if state["spec"]["schema_version"] == 2:
+        from . import execution_locked as locked
+        manifest = locked.import_completion(store, state["spec"], _identity(state), workspace)
+        if manifest is None:
+            return job_state(store, job)
+        _check_completion(store, state, manifest)
+        CommandService(store).execute(_envelope(store, state, "execution.finalize", dict(job=job, manifest=manifest)))
+        locked.cleanup(workspace)
+        return job_state(store, job)
     completion = workspace / "completion.json"
     if not completion.is_file():
         return job_state(store, job)

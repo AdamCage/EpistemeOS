@@ -20,6 +20,9 @@ from .reporting import PaperBuilder, export_store, inspect_store
 from .recovery import backup, restore
 from .store import Store
 from .execution import freeze_environment, job_state, reconcile_job, work_job
+from . import execution_locked
+from .execution_locked import OPERATIONS as LOCKED_OPERATIONS, add_arguments as add_locked_arguments
+from .execution_locked import run_cli as run_locked_cli
 
 
 def _actor_id(value: str) -> str:
@@ -91,6 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if name != "environment":
             operation.add_argument("job", help="Recorded execution_job ID")
         operation.add_argument("--root", type=Path, required=True)
+    execution_locked.add_arguments(execution_ops)
     batches = subcommands.add_parser("batch", help="Resume a frozen local attempt roster; no scientific approval")
     batch_ops = batches.add_subparsers(dest="operation", required=True)
     for name in ("status", "advance"):
@@ -224,6 +228,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             with _opened(args.root, read_only=args.operation == "status") as store:
                 result = (batch_state if args.operation == "status" else advance_batch)(store, args.batch)
             status = 0
+        elif args.command == "execution" and args.operation in execution_locked.OPERATIONS:
+            result, status = execution_locked.run_cli(args)
         elif args.command == "execution":
             if args.operation != "environment" and not (args.root / "state.sqlite3").is_file():
                 raise ValueError("existing research state is required")
