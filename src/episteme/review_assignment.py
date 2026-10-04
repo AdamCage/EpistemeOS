@@ -15,11 +15,15 @@ from .store import Store, canonical, digest
 
 
 POLICY = "blind_initial_review_v1"
+RECONSIDERATION = "veto_reconsideration_v1"
 IDENTITY_ASSURANCE = "caller_declared"
 READ_ISOLATION = "not_enforced"
 _REQUEST_FIELDS = {"claim", "reviewer_actor", "expected_basis"}
 _EVENT_FIELDS = {"schema_version", "claim", "claim_hash", "basis_hash", "reviewer_actor",
                  "study_id", "policy", "bundle", "identity_assurance", "read_isolation"}
+# Schema 2 records which blind projection the policy extends, so replay rebuilds
+# the exact manifest even after newer code projects a newer version.
+_EVENT_FIELDS_V2 = _EVENT_FIELDS | {"projection"}
 _EXCLUSIONS = [
     "original_implementation_source_and_digest",
     "replication_implementation_source_and_digest",
@@ -29,6 +33,10 @@ _EXCLUSIONS = [
     "analysis_proposals_and_adapter_source",
     "prior_review_verdicts_and_rationales",
     "unobserved_protocol_data_and_split_digests",
+]
+_RECONSIDERATION_EXCLUSIONS = [
+    *(item for item in _EXCLUSIONS if item != "prior_review_verdicts_and_rationales"),
+    "other_reviewers_verdicts_and_rationales",
 ]
 
 
@@ -42,9 +50,40 @@ def _safe_design(design: dict[str, Any]) -> dict[str, Any]:
                             for split in design["data_splits"]]}
 
 
+def select_policy(store: Store, history: list[dict[str, Any]], claim: str,
+                  reviewer_actor: str, *, in_replay: bool) -> str:
+    """Reconsideration iff the reviewer's own vetoes or obligations bind the claim (ADR 0018 §3.5)."""
+    from .review_admission import admission
+    own = admission(store, history, replay=not in_replay).own_findings(reviewer_actor, claim)
+    return RECONSIDERATION if own["opinions"] or own["obligations"] else POLICY
+
+
+def _own_findings(store: Store, history: list[dict[str, Any]], claim: str,
+                  reviewer_actor: str, *, in_replay: bool) -> dict[str, Any]:
+    """Only the assigned reviewer's own findings; other reviewers' opinions stay out."""
+    from .review_admission import admission, opinion_summary
+    projection = admission(store, history, replay=not in_replay)
+    own = projection.own_findings(reviewer_actor, claim)
+    followups = {event["payload"]["obligation"]: event["id"] for event in history
+                 if event["kind"] == "replan_followup"}
+    return dict(
+        opinions=[opinion_summary(opinion) for opinion in own["opinions"]],
+        obligations=[dict(id=event["id"], hash=event["hash"], claim=event["payload"]["claim"],
+                          kind=event["payload"]["kind"], action=event["payload"]["action"],
+                          closure_criterion=event["payload"]["closure_criterion"],
+                          evidence_refs=event["payload"]["evidence_refs"],
+                          followup=followups.get(event["id"]),
+                          resolutions=[dict(claim=record["resolution"]["payload"]["claim"],
+                                            resolution=record["resolution"]["id"],
+                                            status=record["status"])
+                                       for record in projection.resolutions()
+                                       if record["resolution"]["payload"]["obligation"] == event["id"]])
+                     for event in own["obligations"]])
+
+
 def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
               reviewer_actor: str, expected_basis: str, study_id: str,
-              keyed: bool = False) -> dict[str, Any]:
+              keyed: bool = False, policy: str = POLICY, in_replay: bool = True) -> dict[str, Any]:
     """Assignment projection; new assignments compare normalized actor keys (ADR 0018)."""
     if any(event["kind"] == "batch_analysis" for event in history):
         from .batch_analysis import _index as analysis_index
@@ -126,7 +165,7 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
     for key in allowed:
         store.read(key)
 
-    return dict(
+    manifest = dict(
         schema_version=1, policy=POLICY, purpose="initial_scientific_review_context",
         identity_assurance=IDENTITY_ASSURANCE, read_isolation=READ_ISOLATION,
         study_id=study_id, reviewer_actor=reviewer_actor,
@@ -168,14 +207,26 @@ def _manifest(store: Store, history: list[dict[str, Any]], *, claim: str,
             unbound_legacy_protocols=[e["id"] for e in protocol_events
                                       if "planning" not in e["payload"]]),
         allowed_artifact_digests=sorted(allowed), exclusions=list(_EXCLUSIONS))
+    if policy == RECONSIDERATION:
+        manifest.update(policy=RECONSIDERATION, projection=POLICY,
+                        purpose="veto_reconsideration_context",
+                        own_findings=_own_findings(store, history, claim, reviewer_actor, in_replay=in_replay),
+                        exclusions=list(_RECONSIDERATION_EXCLUSIONS))
+    else:
+        require(policy == POLICY, "unsupported review assignment policy")
+    return manifest
 
 
-def _payload(manifest: dict[str, Any], bundle: str) -> dict[str, Any]:
+def _payload(manifest: dict[str, Any], bundle: str, *, schema_version: int = 2) -> dict[str, Any]:
     target = manifest["target"]
-    return dict(schema_version=1, claim=target["claim"], claim_hash=target["claim_hash"],
-                basis_hash=target["basis_hash"], reviewer_actor=manifest["reviewer_actor"],
-                study_id=manifest["study_id"], policy=POLICY, bundle=bundle,
-                identity_assurance=IDENTITY_ASSURANCE, read_isolation=READ_ISOLATION)
+    payload = dict(schema_version=schema_version, claim=target["claim"],
+                   claim_hash=target["claim_hash"], basis_hash=target["basis_hash"],
+                   reviewer_actor=manifest["reviewer_actor"], study_id=manifest["study_id"],
+                   policy=manifest["policy"], bundle=bundle,
+                   identity_assurance=IDENTITY_ASSURANCE, read_isolation=READ_ISOLATION)
+    if schema_version == 2:
+        payload["projection"] = POLICY
+    return payload
 
 
 def _index(store: Store, history: list[dict[str, Any]], *,
@@ -188,7 +239,7 @@ def _index(store: Store, history: list[dict[str, Any]], *,
     if not assignments and not receipts:
         return {}
     seen: set[str] = set()
-    keys: set[tuple[str, str, str]] = set()
+    keys: dict[tuple[str, str, str], list[str]] = {}
     for receipt in receipts:
         context, request = receipt["context"], receipt["request"]
         require(context["role"] == "planner" and request["version"] == 1
@@ -202,22 +253,39 @@ def _index(store: Store, history: list[dict[str, Any]], *,
         before = history[:receipt["before_revision"]]
         require(event["actor"] == context["actor"] and event["role"] == "planner",
                 "review assignment actor differs from its command")
-        manifest = _manifest(store, before, study_id=context["study_id"], **request["payload"])
+        version = event["payload"].get("schema_version")
+        require(version in (1, 2), "unsupported review assignment schema")
+        # Schema 1 predates policy selection; replay keeps its original v1 projection.
+        policy = (POLICY if version == 1 else
+                  select_policy(store, before, request["payload"]["claim"],
+                                request["payload"]["reviewer_actor"], in_replay=True))
+        require(version == 1 or event["payload"].get("projection") == POLICY,
+                "unsupported review assignment projection")
+        manifest = _manifest(store, before, study_id=context["study_id"], policy=policy,
+                             **request["payload"])
         bundle = digest(canonical(manifest))
-        require(set(event["payload"]) == _EVENT_FIELDS
-                and event["payload"] == _payload(manifest, bundle),
-                "review assignment differs from its historical basis or bundle")
+        require(set(event["payload"]) == (_EVENT_FIELDS if version == 1 else _EVENT_FIELDS_V2)
+                and event["payload"] == _payload(manifest, bundle, schema_version=version),
+                "review assignment differs from its historical basis, policy or bundle")
         require(store.read(bundle) == canonical(manifest),
                 "review assignment context bundle differs from its historical projection")
         require(receipt["result"] == dict(assignment=event["id"], bundle=bundle),
                 "review assignment receipt result differs from its event")
         key = (manifest["target"]["claim"], manifest["target"]["basis_hash"],
                manifest["reviewer_actor"])
-        require(key not in keys, "duplicate historical reviewer assignment")
-        keys.add(key)
+        require(version == 2 or key not in keys, "duplicate historical reviewer assignment")
+        require(not _submitted(before, keys.get(key, [])),
+                "reviewer already submitted a verdict for this claim basis")
+        keys.setdefault(key, []).append(event["id"])
         seen.add(event["id"])
     require(seen == set(assignments), "review assignment lacks its original command receipt")
     return {id: assignments[id] for id in seen}
+
+
+def _submitted(history: list[dict[str, Any]], assignments: list[str]) -> bool:
+    """Whether any of these assignments has a submission event (verified by its own replay)."""
+    return any(event["kind"] == "review_submission" and event["payload"]["assignment"] in assignments
+               for event in history)
 
 
 class ReviewAssignment:
@@ -232,14 +300,17 @@ class ReviewAssignment:
         history = self.store.events()
         prior = _index(self.store, history)
         study_id = self.store._command_context["study_id"]
+        policy = select_policy(self.store, history, claim, reviewer_actor, in_replay=False)
         manifest = _manifest(self.store, history, claim=claim,
                              reviewer_actor=reviewer_actor, expected_basis=expected_basis,
-                             study_id=study_id, keyed=True)
-        require(not any(event["payload"]["claim"] == claim
-                        and event["payload"]["basis_hash"] == expected_basis
-                        and event["payload"]["reviewer_actor"] == reviewer_actor
-                        for event in prior.values()),
-                "reviewer already assigned to this claim basis")
+                             study_id=study_id, keyed=True, policy=policy, in_replay=False)
+        # ADR 0018 §3.6: a reviewer may be assigned again until one of the
+        # assignments for this claim basis receives a submitted verdict.
+        require(not _submitted(history, [id for id, event in prior.items()
+                                         if event["payload"]["claim"] == claim
+                                         and event["payload"]["basis_hash"] == expected_basis
+                                         and event["payload"]["reviewer_actor"] == reviewer_actor]),
+                "reviewer already submitted a verdict for this claim basis")
         bundle = self.store.put_json(manifest)
         id = f"review_assignment-{uuid4().hex[:16]}"
         self.store.append(id=id, kind="review_assignment", actor=self.actor.id,

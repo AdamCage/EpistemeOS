@@ -16,6 +16,7 @@ from episteme.planning import Planning
 from episteme.recovery import backup, restore
 from episteme.review_assignment import ReviewAssignment, _index
 from episteme.store import ConflictError, IntegrityError, Store, _request_hash
+from review_paths import FIXTURE_RATIONALE, assign, deliver, reconsider, submit_review
 
 
 class ReviewAssignmentTests(unittest.TestCase):
@@ -138,8 +139,11 @@ class ReviewAssignmentTests(unittest.TestCase):
         changed["request"]["payload"]["reviewer_actor"] = "different-reviewer"
         with self.assertRaises(ConflictError):
             self.service.execute(changed)
-        with self.assertRaisesRegex(GateError, "already assigned"):
-            self.service.execute(self.envelope(command_id="duplicate"))
+        # ADR 0018 §3.6: without a submitted verdict the same reviewer may be assigned again.
+        again = self.service.execute(self.envelope(command_id="duplicate"))
+        self.assertNotEqual(again["assignment"], result["assignment"])
+        self.assertEqual(set(_index(self.store, self.store.events())),
+                         {result["assignment"], again["assignment"]})
 
     def test_later_evidence_change_does_not_rewrite_historical_assignment(self):
         envelope = self.envelope()
@@ -292,6 +296,46 @@ class ReviewAssignmentTests(unittest.TestCase):
         gate = cli("gate", self.claim, "--root", str(self.root))
         self.assertEqual(gate.returncode, 0, gate.stderr)
         self.assertTrue(json.loads(gate.stdout)["passed"])
+
+    # ADR 0018 §3.6 (audit A-14); every opinion below is an explicit synthetic fixture.
+    def test_unsubmitted_negative_response_vetoes(self):
+        assigned = assign(self.store, self.claim, reviewer="fixture-reviewer")
+        deliver(self.store, assigned["assignment"], dict(
+            verdict="request_changes", rationale=FIXTURE_RATIONALE, link_assessments=None,
+            findings=[dict(kind="narrow_claim", action="Bound the statement",
+                           closure_criterion="A bounded claim is reviewed",
+                           evidence_refs=[self.claim])]), study="fixture-study")
+        reader = Kernel(self.store, Actor("fixture-reader", "observer"))
+        decision = reader.next_action(self.claim)
+        self.assertEqual(decision["action"], "replan", decision)
+        self.assertIn("Bound the statement", decision["reasons"])
+        # The same reviewer can be assigned again, but only to reconsider that opinion.
+        submitted = reconsider(self.store, self.claim, reviewer="fixture-reviewer")
+        manifest = json.loads(self.store.read(submitted["bundle"]))
+        self.assertEqual(manifest["policy"], "veto_reconsideration_v1")
+        self.assertEqual([row["kind"] for row in manifest["own_findings"]["opinions"]],
+                         ["review_response"])
+        self.assertEqual(reader.next_action(self.claim)["action"], "paper_candidate")
+        ResearchGraph.from_store(self.store)
+
+    def test_reassignment_after_unsubmitted_response(self):
+        first = assign(self.store, self.claim, reviewer="fixture-reviewer")
+        deliver(self.store, first["assignment"], dict(
+            verdict="approve", rationale=FIXTURE_RATIONALE, findings=[], link_assessments=None),
+            study="fixture-study")
+        try:
+            second = submit_review(self.store, self.claim, reviewer="fixture-reviewer")
+        except GateError as exc:
+            self.fail(f"reassignment after an unsubmitted response was refused: {exc}")
+        self.assertNotEqual(second["assignment"], first["assignment"])
+        reader = Kernel(self.store, Actor("fixture-reader", "observer"))
+        self.assertEqual(reader.next_action(self.claim)["action"], "paper_candidate")
+        before = self.store.events()
+        with self.assertRaisesRegex(GateError, "already submitted"):
+            assign(self.store, self.claim, reviewer="fixture-reviewer")
+        self.assertEqual(self.store.events(), before)
+        self.assertEqual(len(_index(self.store, before)), 2)
+        ResearchGraph.from_store(self.store)
 
 
 if __name__ == "__main__":

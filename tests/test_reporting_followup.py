@@ -9,9 +9,10 @@ from pathlib import Path
 import unittest
 
 from episteme.kernel import Actor, GateError, Kernel
-from episteme.reporting import PaperBuilder, _paper_followup_lineage, review_bundle
+from episteme.reporting import PaperBuilder, _paper_followup_lineage
 from episteme.replanning import open_obligations
-from review_paths import approve
+from episteme.resolution import resolution_records
+from review_paths import reconsider
 
 from tests import test_resolution
 
@@ -115,8 +116,10 @@ class PaperFollowupProvenanceTests(unittest.TestCase):
             scope=self.scope, evidence=[primary, replica],
             limitations=["Synthetic fixture; no new-data replication"], outcome="inconclusive")
         basis = Kernel(self.store, self.reviewer).gate(descendant)["basis_hash"]
-        approve(self.store, descendant, reviewer=self.reviewer.id, expected_basis=basis,
-                rationale="Local fixture opinion on the bounded descendant")
+        # The original reviewer reconsiders: the veto is withdrawn for the descendant,
+        # while the obligation still needs a resolution for this claim.
+        reconsider(self.store, descendant, reviewer=self.reviewer.id, expected_basis=basis,
+                   rationale="Local fixture opinion on the bounded descendant")
         decision = Kernel(self.store, self.reviewer).next_action(descendant)
         self.assertEqual(decision["action"], "replan")
         self.assertEqual(decision["obligations"], [self.obligation])
@@ -124,10 +127,7 @@ class PaperFollowupProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not eligible for paper"):
             self.build(descendant, basis)
         self.assertEqual(self.store.events(), before)
-        bundle = review_bundle(self.store, before)
-        resolutions = {event["payload"]["obligation"]: dict(
-            resolution=event, status=bundle["obligation_resolution_status"][event["payload"]["obligation"]])
-            for event in bundle["review_obligation_resolutions"]}
+        resolutions = resolution_records(self.store, before)
         with self.assertRaisesRegex(GateError, "granted for another claim"):
             _paper_followup_lineage(before, descendant, resolutions)
         self.assertEqual(_paper_followup_lineage(before, child, resolutions)[0]["resolution"]["claim"],

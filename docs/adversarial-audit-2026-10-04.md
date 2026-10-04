@@ -874,7 +874,7 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 
 Раздел обновляется по мере исправлений; разделы 1–8 описывают снимок `da6aa2a` и не меняются. Исправления семантики review, claims и paper ведёт [ADR 0018](decisions/0018-claim-families-and-review-admission.md), принятый 4 октября 2026 года координирующим агентом по делегированию пользователя. «Исправлено» означает: PoC находки стал регрессионным тестом, который падает на коде до исправления и проходит после него; номера прогонов — в [validation.md](validation.md). Шаг ADR указан по его разделу 9.
 
-Последняя проверка: 4 октября 2026, шаг 5 ADR 0018.
+Последняя проверка: 4 октября 2026, шаг 6 ADR 0018.
 
 | ID | Статус | Где исправляется |
 | --- | --- | --- |
@@ -891,7 +891,7 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 | A-11 | вне ADR 0018 | будущий ADR профиля исполнения; ADR 0017 код пакетов не менял |
 | A-12 | вне ADR 0018 | будущий ADR профиля исполнения; ADR 0017 код исполнения не менял |
 | A-13 | вне ADR 0018; **перепроверить** | ADR 0017 переписал проверку цепочки в `store.py`; triggers и `INSERT OR REPLACE` он не менял |
-| A-14 | не исправлено | ADR 0018, шаги 6 и 8 |
+| A-14 | **частично исправлено** (шаг 6): повторное назначение того же reviewer на тот же basis разрешено, пока нет submission, а завершённый неотправленный отрицательный ответ считается veto; тесты — `test_reassignment_after_unsubmitted_response`, `test_unsubmitted_negative_response_vetoes`. ID открытых context findings в слепом manifest (проекция v2) — шаг 8 | ADR 0018, шаги 6 и 8 |
 | A-15 | вне ADR 0018 | ADR 0017 `recovery.py` не менял |
 | A-16 | вне ADR 0018; **перепроверить** | ADR 0017 менял `store.py`; открытие Store и triggers, судя по diff, прежние |
 | A-17 | **не исправлено ADR 0017** (проверено) | см. ниже |

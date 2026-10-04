@@ -39,6 +39,34 @@ def analysis_provenance(event: dict[str, Any]) -> str:
     return event["payload"].get("proposal_origin", UNVERIFIED_ORIGIN)
 
 
+def recomputation(store: Store, history: list[dict[str, Any]], event: dict[str, Any]) -> str:
+    """Rerun the registered adapter for one admitted analysis: ``matched`` or why not.
+
+    Confirms only that the recorded proposal is what this code computes on this
+    snapshot; it does not establish that the interpretation is correct.
+    """
+    from .domains.registry import legacy_analysis_adapter
+    p = event["payload"]
+    try:
+        adapter, source = legacy_analysis_adapter(p["adapter_id"])
+    except (ValueError, KeyError) as exc:
+        return f"adapter unavailable: {exc}"
+    if (adapter.adapter_id, adapter.adapter_version) != (p["adapter_id"], p["adapter_version"]):
+        return "registered adapter identity or version differs"
+    if digest(source) != p["adapter_source_digest"]:
+        return "registered adapter source differs from the recorded digest"
+    state = batch_index(store, history).get(p["batch"])
+    if state is None:
+        return "batch is not replay-verified"
+    try:
+        recomputed = _proposal(adapter.propose(store, state))
+    except (ValueError, KeyError, TypeError) as exc:
+        return f"adapter refused: {exc}"
+    if canonical(recomputed) != store.read(p["proposal_digest"]):
+        return "recomputed proposal differs from the recorded proposal"
+    return "matched"
+
+
 def _proposal(value: Any) -> dict[str, Any]:
     require(type(value) is dict and set(value) == _PROPOSAL_FIELDS,
             "invalid analysis proposal fields")

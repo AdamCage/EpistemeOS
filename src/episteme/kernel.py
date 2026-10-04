@@ -640,9 +640,9 @@ class Kernel:
                          payload=link.to_dict(), hash=digest(canonical(link.to_dict())), actor=self.actor.id)
         # The veto binds the owner's whole claim family (ADR 0018), and only the
         # owner can withdraw it for each member it would review.
-        from .review_admission import claim_family, open_negative_opinions
+        from .review_admission import admission, claim_family
         extended = [*history, candidate]
-        for owner, id in open_negative_opinions(history):
+        for owner, id in admission(self.store, history).negatives:
             for member in claim_family(extended, id):
                 context, contributors, _ = self._review_members(extended, member)
                 require(candidate["id"] not in context.link_ids or independent_of(owner, contributors),

@@ -4,15 +4,20 @@ All opinions are explicit synthetic fixtures; nothing here assesses science.
 Scenarios use only command APIs that existed at audit commit da6aa2a.
 """
 
+import json
+from pathlib import Path
 import tempfile
 import unittest
 from uuid import uuid4
 
 from episteme.commands import CommandService
-from episteme.kernel import Actor, Kernel
+from episteme.graph import ResearchGraph
+from episteme.kernel import Actor, GateError, Kernel
+from episteme.recovery import backup, restore
 from episteme.reporting import PaperBuilder
 from episteme.store import Store
-from review_paths import approve, current_basis, submit_review
+from review_paths import (approve, assign, command, current_basis, deliver, reconsider,
+                          study_of, submit_review)
 
 from tests import test_resolution
 
@@ -166,6 +171,121 @@ class ResolutionScopeTests(unittest.TestCase):
                 title="Broad", claims=[broad], expected_bases={broad: reader.gate(broad)["basis_hash"]})
         self.assertEqual(self.store.events(), before)
         self.assertEqual(reader.next_action(child)["action"], "paper_candidate")
+
+    def test_reconsideration_resolves_a_discriminating_finding_for_its_claim(self):
+        child, basis, results = self.complete_child()
+        submitted = reconsider(self.store, child, reviewer=self.reviewer.id, expected_basis=basis,
+            resolutions=[dict(obligation=self.obligation, evidence_refs=[child, *results],
+                              rationale="The new control addresses the recorded confound")])
+        reader = Kernel(self.store, Actor("family-observer", "observer"))
+        self.assertEqual(reader.next_action(child)["action"], "paper_candidate")
+        self.assertEqual(reader.next_action(self.claim)["action"], "replan")
+        paper = PaperBuilder(self.store, Actor("fixture-writer", "writer")).build(
+            title="Bounded fixture", claims=[child], expected_bases={child: basis})
+        bundle = json.loads(self.store.read(
+            Kernel._get(self.store.events(), paper, "paper")["payload"]["bundle"]))
+        step = bundle["selected_context"]["followup_lineage"][child][0]["resolution"]
+        self.assertEqual((step["id"], step["effective_status"]),
+                         (submitted["resolutions"][0], "reviewer_satisfied"))
+
+
+class ReconsiderationTests(unittest.TestCase):
+    """ADR 0018 §3.5: only the owner withdraws a veto, one claim at a time."""
+
+    def test_reconsideration_withdraws_the_veto_only_for_its_claim(self):
+        lab = FamilyFixture(self)
+        protocol, runs = lab.protocol()
+        claim_a = lab.claim(protocol, runs)
+        review = lab.cmd("reviewer-r1", "reviewer", "kernel.review", claim=claim_a, verdict="reject",
+                         rationale="Confounded design", actions=["Rule out confounding"],
+                         expected_basis=current_basis(lab.store, claim_a))
+        other = lab.cmd("reviewer-r3", "reviewer", "kernel.review", claim=claim_a,
+                        verdict="request_changes", rationale="A separate fixture concern",
+                        actions=["Report the variance"], expected_basis=current_basis(lab.store, claim_a))
+        claim_b = lab.claim(protocol, runs, statement="Effect X is bounded")
+        with self.assertRaisesRegex(ValueError, "withdraw exactly"):
+            reconsider(lab.store, claim_b, reviewer="reviewer-r1", withdraw=[])
+        with self.assertRaisesRegex(ValueError, "only a reconsideration approval"):
+            submit_review(lab.store, claim_b, reviewer="reviewer-r1", verdict="request_changes",
+                          findings=[dict(kind="narrow_claim", action="Narrow it",
+                                         closure_criterion="Reviewed", evidence_refs=[claim_b])],
+                          withdrawals=[dict(opinion=review, rationale="Fixture")], resolutions=[])
+        self.assertFalse(any(event["kind"] == "review_submission" for event in lab.store.events()))
+        submitted = reconsider(lab.store, claim_b, reviewer="reviewer-r1")
+        manifest = json.loads(lab.store.read(submitted["bundle"]))
+        self.assertEqual(manifest["policy"], "veto_reconsideration_v1")
+        # The refused negative submission left a completed response: it vetoes too (§3.6).
+        opinions = manifest["own_findings"]["opinions"]
+        self.assertEqual([(row["id"] == review, row["kind"]) for row in opinions],
+                         [(True, "review"), (False, "review_response")])
+        self.assertNotIn("A separate fixture concern", json.dumps(manifest))
+        decision = lab.next_action(claim_b)
+        self.assertEqual(decision["action"], "replan", decision)
+        self.assertEqual(decision["family_vetoes"],
+                         [dict(review=other, claim=claim_a, reviewer="reviewer-r3")])
+        self.assertEqual(lab.next_action(claim_a)["action"], "replan")
+        ResearchGraph.from_store(lab.store)
+
+    def test_reconsideration_refuses_a_v1_response(self):
+        lab = FamilyFixture(self)
+        protocol, runs = lab.protocol()
+        claim_a = lab.claim(protocol, runs)
+        lab.cmd("reviewer-r1", "reviewer", "kernel.review", claim=claim_a, verdict="reject",
+                rationale="Confounded design", actions=["Rule out confounding"],
+                expected_basis=current_basis(lab.store, claim_a))
+        claim_b = lab.claim(protocol, runs, statement="Effect X is bounded")
+        study, basis = study_of(lab.store, claim_b), current_basis(lab.store, claim_b)
+        assigned = assign(lab.store, claim_b, reviewer="reviewer-r1")
+        delivered = deliver(lab.store, assigned["assignment"],
+                            dict(verdict="approve", rationale="Fixture", findings=[],
+                                 link_assessments=None), study=study)
+        with self.assertRaisesRegex(GateError, "v2 fields under reconsideration"):
+            command(lab.store, "reviewer-r1", "reviewer", "review.submit",
+                    dict(assignment=assigned["assignment"], response=delivered["response"],
+                         expected_basis=basis), study)
+        self.assertEqual(lab.next_action(claim_b)["action"], "replan")
+
+    def test_narrow_claim_resolution_is_bound_to_its_claim(self):
+        lab = FamilyFixture(self)
+        protocol, runs = lab.protocol()
+        claim_a = lab.claim(protocol, runs)
+        obligation = lab.cmd("reviewer-r1", "reviewer", "replanning.record_review", claim=claim_a,
+            verdict="request_changes", rationale="Overbroad statement", findings=[dict(
+                kind="narrow_claim", action="Narrow the statement",
+                closure_criterion="A bounded statement is reviewed", evidence_refs=[claim_a])],
+            expected_basis=current_basis(lab.store, claim_a), link_assessments=None)["obligations"][0]
+        claim_b = lab.claim(protocol, runs, statement="Effect X is bounded to this fixture",
+                            outcome="inconclusive")
+        self.assertEqual(lab.next_action(claim_b)["obligations"], [obligation])
+        submitted = reconsider(lab.store, claim_b, reviewer="reviewer-r1", resolutions=[dict(
+            obligation=obligation, evidence_refs=[claim_b],
+            rationale="The bounded statement meets the closure criterion in this fixture")])
+        history = lab.store.events()
+        resolution = Kernel._get(history, submitted["resolutions"][0], "review_obligation_resolution")
+        self.assertEqual({key: resolution["payload"][key] for key in
+                          ("schema_version", "kind", "claim", "followup", "terminal")},
+                         dict(schema_version=2, kind="narrow_claim", claim=claim_b,
+                              followup=None, terminal=None))
+        self.assertEqual(lab.next_action(claim_b)["action"], "paper_candidate")
+        self.assertEqual(lab.next_action(claim_a)["action"], "replan")
+        claim_c = lab.claim(protocol, runs, statement="Effect X exists broadly")
+        decision = lab.next_action(claim_c)
+        self.assertEqual((decision["action"], decision["obligations"]), ("replan", [obligation]))
+        lab.paper(claim_b)
+        # Replay, Graph and backup/restore keep the schema 2 receipts.
+        graph = ResearchGraph.from_store(lab.store)
+        self.assertEqual(graph.node(resolution["id"]).kind.value, "review_obligation_resolution")
+        exported = lab.store.export(), lab.store.export_receipts()
+        spare = tempfile.TemporaryDirectory(prefix="episteme-families-restore-")
+        self.addCleanup(spare.cleanup)
+        snapshot, restored = Path(spare.name) / "snapshot", Path(spare.name) / "restored"
+        backup(lab.store, snapshot)
+        restore(snapshot, restored)
+        with Store(restored) as reopened:
+            self.assertEqual((reopened.export(), reopened.export_receipts()), exported)
+            self.assertEqual(ResearchGraph.from_store(reopened).snapshot_hash, graph.snapshot_hash)
+            reader = Kernel(reopened, Actor("family-observer", "observer"))
+            self.assertEqual(reader.next_action(claim_c)["action"], "replan")
 
 
 if __name__ == "__main__":

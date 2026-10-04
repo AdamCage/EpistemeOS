@@ -10,6 +10,12 @@ validity is decided. Caller-declared actor IDs remain unauthenticated.
 A projection is cached only inside a ``Store.reading()`` scope or a command
 transaction, keyed by the snapshot's length and chain head, so it never
 outlives the verified CAS bytes of that scope.
+
+Decisions and writes use a replaying projection: obligations, submissions and
+resolutions are replay-verified first. Replay of historical receipts uses a
+structural projection of the same prefix instead, because the enclosing replay
+verifies each of those events against its own receipt; replaying again inside
+would repeat the work for every earlier prefix.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from typing import Any
 
 from .claim_context import resolve_context
 from .kernel import protocol_data
-from .store import Store
+from .store import Store, canonical, digest
 
 NEGATIVE_VERDICTS = frozenset({"request_changes", "reject"})
 
@@ -88,7 +94,7 @@ def claim_family(history: list[dict[str, Any]], claim: str) -> list[str]:
 
 
 def open_negative_opinions(history: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-    """Latest negative opinion of each (reviewer, claim) not followed by an approval of that claim.
+    """Latest negative review of each (reviewer, claim) not followed by an approval of that claim.
 
     Every recorded negative review counts, whatever path wrote it, so missing
     provenance never lifts an objection. Until ADR 0018 step 7, any later
@@ -106,22 +112,79 @@ def open_negative_opinions(history: list[dict[str, Any]]) -> dict[tuple[str, str
     return opinions
 
 
+def _response_opinion(store: Store, event: dict[str, Any]) -> dict[str, Any] | None:
+    """A completed, unsubmitted delivery whose bytes parse as a negative review response."""
+    from .commands import parse_command
+    try:
+        decision = parse_command(store.read(event["payload"]["response"]).decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return None
+    if type(decision) is not dict or decision.get("verdict") not in NEGATIVE_VERDICTS:
+        return None
+    findings = decision.get("findings")
+    actions = [finding["action"] for finding in findings
+               if type(finding) is dict and type(finding.get("action")) is str
+               and finding["action"].strip()] if type(findings) is list else []
+    rationale = decision.get("rationale")
+    p = event["payload"]
+    return dict(id=event["id"], seq=event["seq"], hash=event["hash"], kind="review_response",
+                actor=p["reviewer_actor"], role="reviewer",
+                payload=dict(claim=p["claim"], verdict=decision["verdict"],
+                             rationale=rationale if type(rationale) is str else "",
+                             actions=actions or ["Unsubmitted negative review response"],
+                             basis_hash=p["basis_hash"]))
+
+
 class Admission:
     """Review decisions for one event snapshot, shared by every claim decision."""
 
-    def __init__(self, store: Store, history: list[dict[str, Any]]):
-        self.store, self.history = store, history
+    def __init__(self, store: Store, history: list[dict[str, Any]], *, replay: bool = True):
+        self.store, self.history, self.replay = store, history, replay
         self.roots = protocol_components(history)
         self.claim_protocol = {event["id"]: event["payload"]["protocol"] for event in history
                                if event["kind"] == "claim"}
-        self.negatives = open_negative_opinions(history)
         self.approvals: dict[tuple[str, str], list[int]] = {}
         for event in history:
             if event["kind"] == "review" and event["payload"]["verdict"] == "approve":
                 self.approvals.setdefault((event["actor"], event["payload"]["claim"]), []).append(event["seq"])
         self._families: dict[str, tuple[str, ...]] = {}
         self._obligations: list[dict[str, Any]] | None = None
-        self._resolutions: dict[str, dict[str, Any]] | None = None
+        self._resolutions: list[dict[str, Any]] | None = None
+        self._submissions: list[dict[str, Any]] | None = None
+        self.negatives = self._negatives()
+        self.withdrawn = {(row["opinion"], event["payload"]["claim"])
+                          for event in self.submissions()
+                          for row in event["payload"].get("withdrawals", [])}
+
+    def submissions(self) -> list[dict[str, Any]]:
+        """Review submissions of this snapshot, replay-verified unless replaying a prefix."""
+        if self._submissions is None:
+            events = [event for event in self.history if event["kind"] == "review_submission"]
+            if events and self.replay:
+                from .review_submission import _index
+                verified = {state["submission"]["id"] for state in _index(self.store, self.history).values()}
+                events = [event for event in events if event["id"] in verified]
+            self._submissions = events
+        return self._submissions
+
+    def _negatives(self) -> dict[tuple[str, str], dict[str, Any]]:
+        """Open negative opinions, including completed responses never submitted (§3.6)."""
+        submitted = {event["payload"]["assignment"] for event in self.submissions()}
+        records = [event for event in self.history if event["kind"] == "review"]
+        for event in self.history:
+            if (event["kind"] == "review_response" and event["payload"]["status"] == "completed"
+                    and event["payload"]["assignment"] not in submitted):
+                opinion = _response_opinion(self.store, event)
+                if opinion is not None:
+                    records.append(opinion)
+        opinions: dict[tuple[str, str], dict[str, Any]] = {}
+        for event in sorted(records, key=lambda record: record["seq"]):
+            key = (event["actor"], event["payload"]["claim"])
+            if event["payload"]["verdict"] in NEGATIVE_VERDICTS:
+                opinions[key] = event
+            elif event["payload"]["verdict"] == "approve":
+                opinions.pop(key, None)
+        return opinions
 
     def family(self, claim: str) -> tuple[str, ...]:
         if claim not in self._families:
@@ -130,29 +193,59 @@ class Admission:
                                           if self.roots.get(protocol) == root)
         return self._families[claim]
 
+    def lineage(self, claim: str) -> list[str]:
+        """Protocols of K(protocol(claim)), in event order."""
+        root = self.roots[self.claim_protocol[claim]]
+        return [event["id"] for event in self.history
+                if event["kind"] == "protocol" and self.roots.get(event["id"]) == root]
+
+    def family_ledger(self, claim: str) -> list[dict[str, str]]:
+        """Every run of the lineage that has a terminal result, as (run, result) revisions."""
+        protocols = set(self.lineage(claim))
+        runs = {event["id"]: event for event in self.history
+                if event["kind"] == "run" and event["payload"]["protocol"] in protocols}
+        ledger = []
+        for event in self.history:
+            run = runs.get(event["payload"]["run"]) if event["kind"] == "result" else None
+            if run is not None:
+                ledger.append(dict(run=run["id"], run_hash=run["hash"],
+                                   result=event["id"], result_hash=event["hash"]))
+        return ledger
+
+    def family_ledger_digest(self, claim: str) -> str:
+        return digest(canonical(self.family_ledger(claim)))
+
     def obligations(self) -> list[dict[str, Any]]:
-        """Replay-verified obligations, in event order."""
+        """Obligations of this snapshot, in event order; replay-verified for decisions."""
         if self._obligations is None:
-            self._obligations = []
-            if any(event["kind"] == "review_obligation" for event in self.history):
+            events = [event for event in self.history if event["kind"] == "review_obligation"]
+            if events and self.replay:
                 from .replanning import _index
                 verified = {event["id"] for state in _index(self.store, self.history).values()
                             for event in state["obligations"]}
-                self._obligations = [event for event in self.history
-                                     if event["kind"] == "review_obligation" and event["id"] in verified]
+                events = [event for event in events if event["id"] in verified]
+            self._obligations = events
         return self._obligations
 
-    def resolutions(self) -> dict[str, dict[str, Any]]:
+    def resolutions(self) -> list[dict[str, Any]]:
+        """Resolution records with their effective status, v1 and v2."""
         if self._resolutions is None:
-            from .resolution import resolution_states
-            self._resolutions = resolution_states(self.store, self.history) if self.obligations() else {}
+            from .resolution import resolution_records
+            self._resolutions = (resolution_records(self.store, self.history, replay=self.replay)
+                                 if self.obligations() else [])
         return self._resolutions
 
     def resolved_for(self, obligation: str, claim: str) -> bool:
         """An effective resolution exists for exactly this (obligation, claim) pair."""
-        state = self.resolutions().get(obligation)
-        return (state is not None and state["status"] == "reviewer_satisfied"
-                and state["resolution"]["payload"]["claim"] == claim)
+        return any(record["status"] == "reviewer_satisfied"
+                   and record["resolution"]["payload"]["obligation"] == obligation
+                   and record["resolution"]["payload"]["claim"] == claim
+                   for record in self.resolutions())
+
+    def resolved_anywhere(self, obligation: str) -> bool:
+        return any(record["status"] == "reviewer_satisfied"
+                   and record["resolution"]["payload"]["obligation"] == obligation
+                   for record in self.resolutions())
 
     def blocking_obligations(self, claim: str) -> list[dict[str, Any]]:
         """Family obligations without a resolution for this claim, plus linked-context ones.
@@ -167,8 +260,7 @@ class Admission:
             source = event["payload"]["claim"]
             if source in family and not self.resolved_for(event["id"], claim):
                 blocking.append(event)
-            elif source in linked and self.resolutions().get(event["id"], {}).get(
-                    "status") != "reviewer_satisfied":
+            elif source in linked and not self.resolved_anywhere(event["id"]):
                 blocking.append(event)
         return blocking
 
@@ -177,7 +269,7 @@ class Admission:
         family = set(self.family(claim))
         vetoes = []
         for (owner, subject), opinion in self.negatives.items():
-            if subject not in family:
+            if subject not in family or (opinion["id"], claim) in self.withdrawn:
                 continue
             if subject != claim and any(seq > opinion["seq"]
                                         for seq in self.approvals.get((owner, claim), [])):
@@ -185,14 +277,37 @@ class Admission:
             vetoes.append(opinion)
         return sorted(vetoes, key=lambda event: event["seq"])
 
+    def own_findings(self, reviewer: str, claim: str) -> dict[str, list[dict[str, Any]]]:
+        """The reviewer's own vetoes and unresolved obligations that bind claim.
 
-def admission(store: Store, history: list[dict[str, Any]]) -> Admission:
+        Ownership compares exact IDs: a historical variant of an ID is not
+        provably the same actor (ADR 0018, step 5).
+        """
+        family = set(self.family(claim))
+        return dict(
+            opinions=[opinion for opinion in self.vetoes(claim) if opinion["actor"] == reviewer],
+            obligations=[event for event in self.obligations()
+                         if event["actor"] == reviewer and event["payload"]["claim"] in family
+                         and not self.resolved_for(event["id"], claim)])
+
+    def response_opinion(self, id: str) -> dict[str, Any] | None:
+        return next((opinion for opinion in self.negatives.values() if opinion["id"] == id), None)
+
+
+def admission(store: Store, history: list[dict[str, Any]], *, replay: bool = True) -> Admission:
     """Projection for this snapshot; reused within one read scope or command transaction."""
     memo = store._cas_memo
     if memo is None:
-        return Admission(store, history)
+        return Admission(store, history, replay=replay)
     cache = memo.__dict__.setdefault("admission_projections", {})
-    key = (len(history), history[-1]["hash"] if history else None)
+    key = (len(history), history[-1]["hash"] if history else None, replay)
     if key not in cache:
-        cache[key] = Admission(store, history)
+        cache[key] = Admission(store, history, replay=replay)
     return cache[key]
+
+
+def opinion_summary(opinion: dict[str, Any]) -> dict[str, Any]:
+    """Manifest row of one own negative opinion; rationale and actions are the owner's own."""
+    p = opinion["payload"]
+    return dict(id=opinion["id"], hash=opinion["hash"], kind=opinion["kind"], claim=p["claim"],
+                verdict=p["verdict"], rationale=p["rationale"], actions=list(p["actions"]))

@@ -631,6 +631,11 @@ class _Projection:
             for index, key in enumerate(manifest["allowed_artifact_digests"]):
                 self.blob(key, Relation.REVIEW_ASSIGNMENT_ARTIFACT,
                           f"bundle.allowed_artifact_digests[{index}]")
+            for section in ("opinions", "obligations"):
+                for index, row in enumerate(manifest.get("own_findings", {}).get(section, [])):
+                    reference = self.ref(row["id"], None, Relation.REVIEW_ASSIGNMENT_CONTEXT,
+                                         f"bundle.own_findings.{section}[{index}]")
+                    self.hash_ref(reference, row["hash"], f"bundle.own_findings.{section}[{index}].hash")
         elif kind == "review_dispatch":
             assignment = self.ref(p["assignment"], "review_assignment",
                                   Relation.REVIEW_DELIVERY_REFERENCE, "assignment")
@@ -663,6 +668,15 @@ class _Projection:
             self.refs(p["obligations"], "review_obligation",
                       Relation.REVIEW_DELIVERY_REFERENCE, "obligations")
             self.blob(p["response"], Relation.REVIEW_DELIVERY_ARTIFACT, "response")
+            if p.get("schema_version") == 2:
+                self.refs(p["resolutions"], "review_obligation_resolution",
+                          Relation.REVIEW_DELIVERY_REFERENCE, "resolutions")
+                for index, row in enumerate(p["withdrawals"]):
+                    opinion = self.ref(row["opinion"], None, Relation.REVIEW_DELIVERY_REFERENCE,
+                                       f"withdrawals[{index}].opinion")
+                    self.hash_ref(opinion, row["opinion_hash"], f"withdrawals[{index}].opinion_hash")
+                    if opinion["kind"] not in {"review", "review_response"}:
+                        self.fail("withdrawal names an event that is not a review opinion")
         elif kind == "review":
             claim = self.ref(p["claim"], "claim", Relation.REVIEW_TARGET, "claim")
             if self.basis(claim, e["seq"]) != p["basis_hash"]:
@@ -752,10 +766,17 @@ class _Projection:
             fields = {"obligation": "review_obligation", "followup": "replan_followup",
                       "source_review": "review", "source_claim": "claim", "claim": "claim",
                       "review": "review", "terminal": "search_terminal"}
+            if p.get("schema_version") == 2:
+                fields["assignment"] = "review_assignment"
             for field, target_kind in fields.items():
+                if p[field] is None and p.get("schema_version") == 2 and field in {"followup", "terminal"}:
+                    if p["kind"] != "narrow_claim" or p[field + "_hash"] is not None:
+                        self.fail("resolution omits the follow-up its finding kind requires")
+                    continue
                 reference = self.ref(p[field], target_kind, Relation.RESOLUTION_REFERENCE, field)
                 self.hash_ref(reference, p[field + "_hash"], field + "_hash")
-            if (self.events[p["followup"]]["payload"]["obligation"] != p["obligation"]
+            if ((p["followup"] is not None
+                 and self.events[p["followup"]]["payload"]["obligation"] != p["obligation"])
                     or self.events[p["obligation"]]["payload"]["review"] != p["source_review"]
                     or self.events[p["obligation"]]["payload"]["claim"] != p["source_claim"]
                     or self.events[p["review"]]["payload"]["claim"] != p["claim"]

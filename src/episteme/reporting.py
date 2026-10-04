@@ -256,7 +256,7 @@ def _planning_table(records: list[dict[str, Any]]) -> list[str]:
 
 
 def _paper_followup_lineage(history: list[dict[str, Any]], claim: str,
-                           resolutions: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+                           records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Trace reviewer findings through protocol ancestry at the paper snapshot.
 
     Claim links are optional for a follow-up. The frozen protocol parent chain,
@@ -281,7 +281,11 @@ def _paper_followup_lineage(history: list[dict[str, Any]], claim: str,
         op = obligation["payload"]
         source_review = Kernel._get(history, op["review"], "review")
         source_claim = Kernel._get(history, op["claim"], "claim")
-        state = resolutions.get(obligation["id"])
+        candidates = [record for record in records
+                      if record["resolution"]["payload"]["obligation"] == obligation["id"]]
+        state = next((record for record in reversed(candidates)
+                      if record["resolution"]["payload"]["claim"] == claim),
+                     candidates[-1] if candidates else None)
         status = state["status"] if state is not None else "open"
         # PaperBuilder has already checked next_action. Keep this projection
         # fail-closed if its coverage ever diverges from the paper gate.
@@ -455,11 +459,9 @@ class PaperBuilder:
         context_links = {id for context in contexts for id in context.link_ids}
         # review_bundle has replay-checked these decisions and calculated their
         # effective status on precisely the same history snapshot.
-        resolutions = {event["payload"]["obligation"]: dict(
-            resolution=event,
-            status=bundle["obligation_resolution_status"][event["payload"]["obligation"]])
-            for event in bundle["review_obligation_resolutions"]}
-        followup_lineage = {id: _paper_followup_lineage(history, id, resolutions) for id in claims}
+        from .resolution import resolution_records
+        records = resolution_records(self.store, history, replay=False)
+        followup_lineage = {id: _paper_followup_lineage(history, id, records) for id in claims}
         bundle.update(selected_claims=claims, reviewed_bases=expected_bases,
                       selected_context=dict(claims=[e["id"] for e in history if e["id"] in context_claims],
                                             links=[e["id"] for e in history if e["id"] in context_links],
