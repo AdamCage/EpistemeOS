@@ -585,10 +585,13 @@ class Kernel:
         # review. Avoid stranding a prior veto whose owner must explicitly revise it.
         candidate = dict(id="candidate-" + uuid4().hex, seq=len(history) + 1, kind="claim_link",
                          payload=link.to_dict(), hash=digest(canonical(link.to_dict())), actor=self.actor.id)
-        latest = {(e["payload"]["claim"], e["actor"]): e for e in history if e["kind"] == "review"}
-        for (id, owner), review in latest.items():
-            if review["payload"]["verdict"] != "approve":
-                context, contributors, _ = self._review_members([*history, candidate], id)
+        # The veto binds the owner's whole claim family (ADR 0018), and only the
+        # owner can withdraw it for each member it would review.
+        from .review_admission import claim_family, open_negative_opinions
+        extended = [*history, candidate]
+        for owner, id in open_negative_opinions(history):
+            for member in claim_family(extended, id):
+                context, contributors, _ = self._review_members(extended, member)
                 require(candidate["id"] not in context.link_ids or owner not in contributors,
                         "claim link would prevent an open review veto owner from independently reviewing its context")
         return self._write(history, "claim_link", link.to_dict(), {"planner", "analyst"})
@@ -824,35 +827,24 @@ class Kernel:
         gate = self._gate(history, claim)
         if not gate["passed"]:
             return dict(action="repair_evidence", reasons=gate["failures"])
-        if any(event["kind"] == "review_obligation" for event in history):
-            from .replanning import open_obligations
-            context_claims = set(resolve_context(history, claim).claim_ids)
-            protocol = self._get(history, claim, "claim")["payload"]["protocol"]
-            protocol_lineage: set[str] = set()
-            while protocol is not None:
-                require(protocol not in protocol_lineage, "protocol parent cycle in paper eligibility")
-                protocol_lineage.add(protocol)
-                protocol = self._get(history, protocol, "protocol")["payload"]["parent"]
-            followup_source_claims = {
-                self._get(history, event["payload"]["obligation"],
-                          "review_obligation")["payload"]["claim"]
-                for event in history if event["kind"] == "replan_followup"
-                and event["payload"]["protocol"] in protocol_lineage
-            }
-            open_ids = {event["id"] for source in context_claims | followup_source_claims
-                        for event in open_obligations(self.store, history, source)}
-            obligations = [event for event in history
-                           if event["kind"] == "review_obligation" and event["id"] in open_ids]
-            if obligations:
-                return dict(action="replan", obligations=[event["id"] for event in obligations],
-                            reasons=[event["payload"]["action"] for event in obligations])
-        all_reviews = [e for e in history if e["kind"] == "review" and e["payload"]["claim"] == claim]
-        reviews = [e for e in all_reviews if e["payload"]["basis_hash"] == gate["basis_hash"]]
-        # Latest opinion per reviewer; an unresolved negative opinion is a veto.
-        latest = {e["actor"]: e["payload"] for e in all_reviews}
-        negative = [r for r in latest.values() if r["verdict"] != "approve"]
-        if negative:
-            return dict(action="replan", reasons=[a for r in negative for a in r["actions"]])
+        from .review_admission import admission
+        # ADR 0018: obligations and vetoes bind the whole claim family; a
+        # resolution or withdrawal counts only for the claim it names.
+        projection = admission(self.store, history)
+        obligations = projection.blocking_obligations(claim)
+        if obligations:
+            return dict(action="replan", obligations=[event["id"] for event in obligations],
+                        reasons=[event["payload"]["action"] for event in obligations])
+        vetoes = projection.vetoes(claim)
+        if vetoes:
+            decision = dict(action="replan", reasons=[a for r in vetoes for a in r["payload"]["actions"]])
+            inherited = [r for r in vetoes if r["payload"]["claim"] != claim]
+            if inherited:
+                decision["family_vetoes"] = [dict(review=r["id"], claim=r["payload"]["claim"],
+                                                  reviewer=r["actor"]) for r in inherited]
+            return decision
+        reviews = [e for e in history if e["kind"] == "review" and e["payload"]["claim"] == claim
+                   and e["payload"]["basis_hash"] == gate["basis_hash"]]
         if not reviews:
             return dict(action="scientific_review", basis_hash=gate["basis_hash"])
         current = {e["actor"]: e["payload"] for e in reviews}

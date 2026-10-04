@@ -8,9 +8,10 @@ import json
 from pathlib import Path
 import unittest
 
-from episteme.kernel import Actor, Kernel
-from episteme.reporting import PaperBuilder
+from episteme.kernel import Actor, GateError, Kernel
+from episteme.reporting import PaperBuilder, _paper_followup_lineage, review_bundle
 from episteme.replanning import open_obligations
+from review_paths import approve
 
 from tests import test_resolution
 
@@ -89,9 +90,10 @@ class PaperFollowupProvenanceTests(unittest.TestCase):
         self.assertTrue(Path(self.writer.materialize(paper)["manuscript"]).samefile(
             self.root / f"{paper}.md"))
 
-    def test_descendant_protocol_paper_keeps_ancestral_review_lineage(self):
+    def test_descendant_protocol_paper_needs_its_own_resolution(self):
+        # ADR 0018: the child's resolution does not cover a claim deeper in the lineage.
         child, basis, results = self.complete_child()
-        resolution = self.resolve(child, basis, results)
+        self.resolve(child, basis, results)
         child_protocol = Kernel._get(self.store.events(), child, "claim")["payload"]["protocol"]
         protocol = Kernel(self.store, self.planner).preregister_for_set(
             explanation_set=self.explanation_set, parent=child_protocol,
@@ -113,16 +115,23 @@ class PaperFollowupProvenanceTests(unittest.TestCase):
             scope=self.scope, evidence=[primary, replica],
             limitations=["Synthetic fixture; no new-data replication"], outcome="inconclusive")
         basis = Kernel(self.store, self.reviewer).gate(descendant)["basis_hash"]
-        Kernel(self.store, self.reviewer).review(descendant, verdict="approve",
-            rationale="Local fixture opinion on the bounded descendant", actions=[],
-            expected_basis=basis)
-        self.assertEqual(Kernel(self.store, self.reviewer).next_action(descendant)["action"],
-                         "paper_candidate")
-        _, bundle, manuscript = self.build(descendant, basis)
-        self.assertEqual(bundle["selected_context"]["claims"], [descendant])
-        self.assert_lineage(bundle, manuscript, descendant, resolution, results)
-        self.assertNotIn(primary, {ref["id"] for ref in bundle["selected_context"]
-                         ["followup_lineage"][descendant][0]["resolution"]["evidence_refs"]})
+        approve(self.store, descendant, reviewer=self.reviewer.id, expected_basis=basis,
+                rationale="Local fixture opinion on the bounded descendant")
+        decision = Kernel(self.store, self.reviewer).next_action(descendant)
+        self.assertEqual(decision["action"], "replan")
+        self.assertEqual(decision["obligations"], [self.obligation])
+        before = self.store.events()
+        with self.assertRaisesRegex(ValueError, "not eligible for paper"):
+            self.build(descendant, basis)
+        self.assertEqual(self.store.events(), before)
+        bundle = review_bundle(self.store, before)
+        resolutions = {event["payload"]["obligation"]: dict(
+            resolution=event, status=bundle["obligation_resolution_status"][event["payload"]["obligation"]])
+            for event in bundle["review_obligation_resolutions"]}
+        with self.assertRaisesRegex(GateError, "granted for another claim"):
+            _paper_followup_lineage(before, descendant, resolutions)
+        self.assertEqual(_paper_followup_lineage(before, child, resolutions)[0]["resolution"]["claim"],
+                         child)
 
     def test_unresolved_sibling_finding_still_vetoes_paper(self):
         child, basis, results = self.complete_child()

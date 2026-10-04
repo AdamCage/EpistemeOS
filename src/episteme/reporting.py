@@ -292,6 +292,9 @@ def _paper_followup_lineage(history: list[dict[str, Any]], claim: str,
         require(dp["followup"] == followup["id"]
                 and dp["obligation"] == obligation["id"],
                 "paper lineage resolution differs from its frozen follow-up")
+        # ADR 0018: a resolution covers only the claim its reviewer evaluated.
+        require(dp["claim"] == claim,
+                f"paper lineage resolution was granted for another claim: {obligation['id']}")
         citations = []
         for ref in dp["evidence_refs"]:
             event = by_id[ref["id"]]

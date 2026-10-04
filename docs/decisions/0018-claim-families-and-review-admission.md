@@ -72,6 +72,8 @@
 
 Resolution действует только для claim, который оценил resolving reviewer. Одно obligation получает отдельную resolution для каждого claim семейства. Resolution для одного claim не переносится ни на соседний claim, ни на потомка, ни на исходный claim.
 
+**Отклонение (шаг 2).** До этого ADR открытые obligations claims связанного контекста (`resolve_context`: `supports`, `limits`, `contradicts`, `supersedes`) тоже блокировали claim. Определение выше перечисляет только семейство и молча отменило бы это правило; это ослабление, которого ADR не обсуждает. Реализация его сохраняет: obligation связанного claim вне семейства блокирует, пока у obligation нет действующей resolution (прежнее правило, без пары). Связанные claims по-прежнему не образуют семейства и не передают veto.
+
 Порядок `next_action` прежний:
 
 1. собственный gate не прошёл → `repair_evidence`;
@@ -444,8 +446,18 @@ ADR 0017 зафиксирован в `73281b5`, и шаги идут повер�
 | Шаг | Состояние |
 |---|---|
 | 0. Принятие ADR и публикация аудита | Выполнен в `f6ad309`: аудит и этот ADR добавлены в репозиторий и связаны из README, architecture, mvp-plan и repository-map. Код не менялся. |
-| 1. Тестовый путь review | Реализован и локально проверен: `tests/review_paths.py` проводит fixture-мнение через `review.assign` → `ReviewerController` с fixture provider → `review.submit`. Код ядра не менялся. Тесты, которым approval нужен для `paper_candidate`, `superseded` или paper, найдены временной имитацией правила шага 7 (approval засчитывается, только если на него ссылается `review_submission`; в commit не входит) и переведены на этот путь. Тесты, проверяющие отказы legacy-записи, остаются на legacy-пути до шага 7. |
-| 2–10 | Не начаты. |
+| 1. Тестовый путь review | Реализован и локально проверен в `ff4ef0f`: `tests/review_paths.py` проводит fixture-мнение через `review.assign` → `ReviewerController` с fixture provider → `review.submit`. Код ядра не менялся. Тесты, которым approval нужен для `paper_candidate`, `superseded` или paper, найдены временной имитацией правила шага 7 (approval засчитывается, только если на него ссылается `review_submission`; в commit не входит) и переведены на этот путь. Тесты, проверяющие отказы legacy-записи, остаются на legacy-пути до шага 7. |
+| 2. Семейства (A-01, A-02) | Реализован и локально проверен: [`review_admission.py`](../../src/episteme/review_admission.py) вычисляет линию protocols и семейство claim по событиям снимка; `Kernel._next_action`, `PaperBuilder.build` и `materialize` решают по семейству; resolution засчитывается только для пары (obligation, `resolution.claim`); lineage paper отвергает resolution другого claim; guard `link_claims` проверяет все затронутые семейства. Тесты `tests/test_review_families.py` (A-01 в двух вариантах, перерегистрация на тех же bytes, A-02) и обновлённый тест lineage потомка падают на `ff4ef0f` и проходят после шага. |
+| 3–10 | Не начаты. |
+
+### Уточнения шага 2
+
+- **Переходное правило.** До шага 7 veto владельца для claim `c` снимает любое его approval `c`, записанное позже отрицательного мнения; для мнения о самом `c` это прежнее правило «последнее мнение reviewer». Reviewers сравниваются по точной строке ID до шага 5.
+- **Ответ `next_action`.** Если veto пришло через другой claim семейства, ответ получает ключ `family_vetoes` со списком `{review, claim, reviewer}`; `reasons` содержат actions всех действующих veto. В прежних ситуациях форма ответа не изменилась.
+- **Obligations связанного контекста** сохраняют прежнее блокирующее действие (см. «Отклонение (шаг 2)» в §2).
+- **`open_obligations`** в `replanning.py` сохраняет прежний смысл (у obligation нет действующей resolution ни для какого claim); им пользуются только тесты. Решения берут проекцию `review_admission`.
+- **Стоимость.** Проекция `Admission` один раз на снимок проигрывает индексы obligations и resolutions и вычисляет семейства. Внутри `Store.reading()` или транзакции команды она кешируется в memo CAS этого scope по ключу (длина истории, голова цепочки) и исчезает вместе с ним. Вне scope каждый вызов строит её заново, но индексы в одном `_next_action` проигрываются один раз, а не для каждого исходного claim, как раньше. Receipts берутся `_index`-функциями через `store.receipts()` с фильтром по префиксу снимка. Измерение счётчиками ADR 0017 — шаг 8.
+- **Тест lineage потомка** переименован в `test_descendant_protocol_paper_needs_its_own_resolution`: прежнее имя утверждало обратное. Теперь он проверяет `replan`, отказ paper и отказ lineage для resolution ребёнка.
 
 ### Уточнения шага 1
 

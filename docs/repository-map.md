@@ -47,6 +47,7 @@ EpistemeOS/
 │   ├── proposal_execution.py     applied proposal → selected frozen batch в одной receipt
 │   ├── replanning.py             negative review → typed открытые obligations
 │   ├── resolution.py             reviewer opinion → evidence-bound obligation resolution
+│   ├── review_admission.py       семейства claims и общая проекция veto/obligations/resolutions (ADR 0018)
 │   ├── review_assignment.py      frozen контекст назначения без identity/read isolation
 │   ├── reviewer_controller.py    durable projected выдача, raw ответ и unknown/reconcile
 │   ├── review_submission.py      verdict из delivered response → review/obligations/provenance
@@ -112,6 +113,7 @@ EpistemeOS/
     ├── test_review_assignment.py context policy, conflict, replay, Graph и restore
     ├── test_reviewer_controller.py доставка, submission, unknown, replay и CLI
     ├── test_reporting_followup.py paper lineage и stale/sibling veto
+    ├── test_review_families.py  семейства claims: повторный claim, перерегистрация на тех же bytes, scope resolution
     ├── test_followup.py         дочерний protocol/node, stale source, budget и no closure
     ├── test_followup_execution.py atomic selection/batch, stale basis, receipt replay и restore
     ├── test_experiment_graph.py  typed refs, schema export и tamper rejection
@@ -145,6 +147,7 @@ EpistemeOS/
 | `domains/afterlife_seed.py`, `domains/afterlife_seed_batch_analysis.py`, `examples/afterlife_historical_pilot.py` | До CAS проверяют 30 заявленных outputs одного S1 run, hashes, seed grid, схему каждой записи шага и legacy counters; готовят exploratory protocol, `domain.bind` и batch из 9 primary и 9 same-data reanalysis slots; адаптер повторно сверяет bundle, raw bytes и метрики и предлагает только `inconclusive` claim. | Уже наблюдённые данные одного model/configuration; согласие с manifest — предусловие захвата, поэтому конкурирующее объяснение не получает исхода. Нет embeddings для S1 semantic gap, независимого авторства программ, sandbox или verdict. |
 | `proposal_execution.py` | Одной planner receipt связывает текущий winning applied model experiment node с selection и полным frozen batch из первоначальной compilation. | Не выбирает узел вопреки priority, не запускает worker и не оценивает научную состоятельность дизайна. |
 | `replanning.py`, `resolution.py` | Отрицательное мнение reviewer и typed obligations; затем адресное удовлетворение одного `discriminating_experiment` finding новым reviewed claim на неизменённом evidence basis. Historical receipt и текущий effective status проверяются отдельно. | Роль/ID заявлены caller; решение reviewer не доказывает научную истину или независимость, остальные findings остаются открытыми. |
+| `review_admission.py` | Линия protocols (amendment, follow-up, общие наблюдённые bytes, `supersedes`) и семейство claim по событиям снимка; проекция veto, obligations и resolutions для `next_action`, paper и guard связей; кеш только в read scope или транзакции команды. | Решение механическое: семейство по общим bytes может блокировать и независимые вопросы; actor IDs caller-declared, научная правильность мнений не оценивается. |
 | `review_assignment.py` | На текущем mechanically passed basis сохраняет одну receipt, reviewer ID и curated CAS manifest предполагаемого initial context. Historical replay пересчитывает bytes и проверяет contributor conflict. | `caller_declared` identity и `not_enforced` read isolation; legacy review commands не требуют назначения. Manifest не закрывает доступ к Store или утечку смысла через свободный текст. |
 | `reviewer_controller.py`, `review_submission.py` | Durable projected request до внешнего вызова, raw response/status, unknown без повтора; затем reviewer opinion/typed obligations, привязанные к assignment и текущему evidence basis одной receipt. | Provider выполняется в доверенном локальном процессе, может читать Store; `review.finalize` и actor ID не аутентифицированы. Synthetic response не является научной экспертизой. |
 | `followup.py` | Один открытый запрос различающего эксперимента → frozen дочерний protocol/node/binding с проверкой текущего source basis и бюджета. | Planner-authored план, не запуск, научное подтверждение, независимое review или закрытие obligation. |

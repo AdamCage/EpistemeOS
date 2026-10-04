@@ -874,12 +874,12 @@ verify runs compile hooks: True | verify runs analysis hooks (run_hooks): True
 
 Раздел обновляется по мере исправлений; разделы 1–8 описывают снимок `da6aa2a` и не меняются. Исправления семантики review, claims и paper ведёт [ADR 0018](decisions/0018-claim-families-and-review-admission.md), принятый 4 октября 2026 года координирующим агентом по делегированию пользователя. «Исправлено» означает: PoC находки стал регрессионным тестом, который падает на коде до исправления и проходит после него; номера прогонов — в [validation.md](validation.md). Шаг ADR указан по его разделу 9.
 
-Последняя проверка: 4 октября 2026, `73281b5` (ADR 0017) и принятие ADR 0018.
+Последняя проверка: 4 октября 2026, шаг 2 ADR 0018.
 
 | ID | Статус | Где исправляется |
 | --- | --- | --- |
-| A-01 | не исправлено | ADR 0018, шаг 2 |
-| A-02 | не исправлено | ADR 0018, шаг 2 |
+| A-01 | **исправлено** (шаг 2): veto и obligations действуют на семейство claim; PoC — `test_resubmitted_claim_inherits_family_veto_and_obligations` (typed и legacy reject), перерегистрация на тех же bytes — `test_reregistered_protocol_on_same_bytes_joins_the_family` | ADR 0018, шаг 2 |
+| A-02 | **исправлено** (шаг 2): resolution засчитывается только для своего claim; PoC — `test_resolution_applies_only_to_the_claim_it_evaluated`, lineage потомка — `test_descendant_protocol_paper_needs_its_own_resolution` | ADR 0018, шаг 2 |
 | A-03 | не исправлено | ADR 0018, шаг 3, включая путь через `followup.apply` |
 | A-04 | не исправлено | ADR 0018, шаг 4 |
 | A-05 | не исправлено | ADR 0018, шаг 8 |
