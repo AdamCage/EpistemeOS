@@ -127,6 +127,7 @@ EpistemeOS/
     ├── test_synthetic_pack.py    synthetic pack против legacy compiler/adapter на golden histories
     ├── test_pack_workflow.py     pack.preregister → batch → pack.analyse → assignment, tamper suite, restart и restore
     ├── test_pack_universality.py ядро без импортов пакетов и pack ID; command schema равна runtime
+    ├── test_pack_lineage.py      привязка пакета управляет линией protocol: amendment, follow-up, закреплённые bytes, stray claim
     ├── test_pack_cli.py          CLI по привязке, pack describe и read-only pack verify
     ├── test_afterlife_pack.py    capture/compile против legacy, отказы захвата и CLI путь capture → анализ
     ├── pack_fixtures.py          conformance-входы пакетов и минимальный локальный runner без Store

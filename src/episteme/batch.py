@@ -295,8 +295,9 @@ def validate_start(store: Store, history: list[dict[str, Any]], protocol: str,
     require(len(active) <= 1, "protocol has multiple active batches")
     if not active:
         require(batch_slot is None, "batch slot requires its active protocol reservation")
-        require(not any(e["kind"] == "pack_binding" and e["payload"].get("protocol") == protocol
-                        for e in history), "pack-bound protocols run only through their frozen batch")
+        from .domain_packs import pack_lineage
+        require(pack_lineage(history, protocol) is None,
+                "pack-bound protocols run only through their frozen batch")
         return
     plan = active[0]
     require(type(batch_slot) is tuple and len(batch_slot) == 2 and batch_slot[0] == plan["id"],
@@ -402,8 +403,10 @@ class Batch:
                        cost_unit="enqueued_attempt", reserved_cost=2 * len(protocol["payload"]["seeds"]))
         _validate_plan(self.store, history, payload)
         if any(event["kind"] == "pack_binding" for event in history):
-            from .domain_packs import pack_bindings, require_live_pack
+            from .domain_packs import pack_bindings, pack_lineage, require_live_pack
             pack = pack_bindings(self.store, history).get(protocol["id"])
+            require(pack is not None or pack_lineage(history, protocol["id"]) is None,
+                    "a descendant of a pack-bound protocol cannot plan a legacy batch")
             if pack is not None:
                 # Replay checks the pinned recipe; a new plan also needs the pinned code now.
                 require_live_pack(self.store, pack)

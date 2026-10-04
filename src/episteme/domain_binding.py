@@ -149,6 +149,9 @@ class DomainBinding:
                        required_capabilities=required_capabilities)
         payload = _expected(self.store, history, request,
                             self.store._command_context["study_id"])
+        from .domain_packs import pack_lineage
+        require(pack_lineage(history, protocol) is None,
+                "a descendant of a pack-bound protocol cannot take a manual domain binding")
         require(self.store.put_json(recipe) == payload["recipe_digest"],
                 "domain recipe CAS digest mismatch")
         return Kernel(self.store, self.actor)._write(history, KIND, payload, {"planner"})

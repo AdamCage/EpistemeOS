@@ -147,6 +147,44 @@ def binding_artifacts(store: Store, event: dict[str, Any]) -> set[str]:
     return keys
 
 
+def pack_lineage(history: list[dict[str, Any]], protocol: str | None) -> dict[str, Any] | None:
+    """Nearest pack binding on the parent chain of protocol, itself first (ADR 0018).
+
+    Presence is structural: pack_bindings, Graph, export and backup replay each
+    binding. An unverified binding can only add refusals, never admit a claim.
+    """
+    bindings = {event["payload"].get("protocol"): event for event in history if event["kind"] == BINDING}
+    if not bindings:
+        return None
+    parents = {event["id"]: event["payload"].get("parent") for event in history
+               if event["kind"] == "protocol"}
+    seen: set[str] = set()
+    while protocol is not None and protocol not in seen:
+        if protocol in bindings:
+            return bindings[protocol]
+        seen.add(protocol)
+        protocol = parents.get(protocol)
+    return None
+
+
+def pinned_bytes(store: Store, history: list[dict[str, Any]]) -> set[str]:
+    """Programs, code files, input and captured bytes pinned by any recorded pack binding."""
+    pinned: set[str] = set()
+    for event in history:
+        if event["kind"] != BINDING:
+            continue
+        p = event["payload"]
+        code = api.strict_loads(store.read(p["pack_code_digest"]), "pack code manifest")
+        plan = api.strict_loads(store.read(p["execution_plan"]), "execution plan")
+        pinned.update(row["sha256"] for row in code["files"])
+        pinned.update(plan[name]["sha256"] for name in ("primary_program", "reanalysis_program", "input"))
+        if p["capture"] is not None:
+            bundle = api.strict_loads(store.read(p["capture"]), "capture bundle")
+            pinned.add(p["capture"])
+            pinned.update(row["sha256"] for row in bundle["inventory"])
+    return pinned
+
+
 def analysis_artifacts(event: dict[str, Any]) -> set[str]:
     p = event["payload"]
     return {p["report"], p["statistical_report"], p["checks"], p["recomputations"]}
@@ -424,7 +462,8 @@ class PackPreregistration:
         draft, plan = compiled["draft"], compiled["plan"]
         frozen = plan.to_dict()
         kernel = Kernel(self.store, self.actor)
-        protocol_id = kernel.preregister_for_set(
+        protocol_id = kernel._preregister_for_set(
+            pack_path=True,
             explanation_set=explanation_set, design=draft.design, metric=draft.metric,
             analysis_plan=draft.analysis_plan, stopping_rule=draft.stopping_rule,
             seeds=list(draft.roster), run_limit=draft.run_limit,

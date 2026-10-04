@@ -190,6 +190,20 @@ class Kernel:
                             replication_tolerance: float, parent: str | None = None,
                             statistical_design: dict[str, Any] | None = None,
                             amendment_reason: str | None = None, seen_data: list[str] | None = None) -> str:
+        return self._preregister_for_set(
+            pack_path=False, explanation_set=explanation_set, design=design, metric=metric,
+            analysis_plan=analysis_plan, stopping_rule=stopping_rule, seeds=seeds,
+            run_limit=run_limit, implementation=implementation, environment=environment, data=data,
+            replication_tolerance=replication_tolerance, parent=parent,
+            statistical_design=statistical_design, amendment_reason=amendment_reason, seen_data=seen_data)
+
+    def _preregister_for_set(self, *, pack_path: bool, explanation_set: str, design: str,
+                             metric: str, analysis_plan: str, stopping_rule: str, seeds: list[int],
+                             run_limit: int, implementation: str, environment: str, data: str,
+                             replication_tolerance: float, parent: str | None = None,
+                             statistical_design: dict[str, Any] | None = None,
+                             amendment_reason: str | None = None,
+                             seen_data: list[str] | None = None) -> str:
         history = self._history()
         binding = binding_for(history, explanation_set, current=True)
         question = self._get(history, binding["question"], "research_question")["payload"]
@@ -200,7 +214,8 @@ class Kernel:
             stopping_rule=stopping_rule, seeds=seeds, run_limit=run_limit,
             implementation=implementation, environment=environment, data=data,
             replication_tolerance=replication_tolerance, parent=parent,
-            statistical_design=statistical_design, amendment_reason=amendment_reason, seen_data=seen_data)
+            statistical_design=statistical_design, amendment_reason=amendment_reason, seen_data=seen_data,
+            pack_path=pack_path)
 
     def _preregister(self, *, history: list[dict[str, Any]], planning: dict[str, Any] | None,
                      hypotheses: list[str], scope: dict[str, str], design: str,
@@ -208,7 +223,8 @@ class Kernel:
                      run_limit: int, implementation: str, environment: str, data: str,
                      replication_tolerance: float, parent: str | None,
                      statistical_design: dict[str, Any] | None,
-                     amendment_reason: str | None, seen_data: list[str] | None) -> str:
+                     amendment_reason: str | None, seen_data: list[str] | None,
+                     pack_path: bool = False) -> str:
         self._scope(scope)
         require(len(set(hypotheses)) >= 2 and len(set(hypotheses)) == len(hypotheses),
                 "at least two distinct competing hypotheses required")
@@ -229,6 +245,10 @@ class Kernel:
             previous = self._get(history, parent, "protocol")["payload"]
             require("statistical_design" not in previous or statistical_design is not None,
                     "typed protocol amendment requires a statistical design")
+            from .domain_packs import pack_lineage
+            # ADR 0018: an unbound amendment or follow-up would escape the pack's claim ceiling.
+            require(pack_lineage(history, parent) is None,
+                    "a pack-bound protocol lineage cannot be amended outside its pack")
         # Each amendment is a NEW protocol ID. The parent remains immutable.
         payload = dict(hypotheses=hypotheses, scope=scope, design=design, metric=metric,
                        analysis_plan=analysis_plan, stopping_rule=stopping_rule,
@@ -253,6 +273,10 @@ class Kernel:
         else:
             require(amendment_reason is None and seen_data is None,
                     "amendment/exposure declarations require a statistical design")
+        if not pack_path and any(event["kind"] == "pack_binding" for event in history):
+            from .domain_packs import pinned_bytes
+            require(not ({implementation} | protocol_data(payload)) & pinned_bytes(self.store, history),
+                    "a protocol outside its pack cannot reuse programs, input or captured bytes pinned by a pack binding")
         return self._write(history, "protocol", payload, {"planner"})
 
     def _validate_planning_protocol(self, preceding: list[dict[str, Any]], p: dict[str, Any]) -> None:
@@ -451,10 +475,10 @@ class Kernel:
                evidence: list[str], limitations: list[str], outcome: str,
                inference_mode: str | None, pack_admission: bool) -> str:
         history = self._history()
-        # A pack-bound protocol's strength ceiling is enforced only by pack.analyse.
-        require(pack_admission or not any(event["kind"] == "pack_binding"
-                                          and event["payload"].get("protocol") == protocol
-                                          for event in history),
+        # A pack-bound protocol's strength ceiling is enforced only by pack.analyse;
+        # descendants without their own binding inherit the restriction (ADR 0018).
+        from .domain_packs import pack_lineage
+        require(pack_admission or pack_lineage(history, protocol) is None,
                 "claims on a pack-bound protocol are admitted only by pack.analyse")
         plan = self._get(history, protocol, "protocol")["payload"]
         require(scope == plan["scope"], "claim scope exceeds/differs from protocol scope")
@@ -657,6 +681,11 @@ class Kernel:
                     self.store.read(key)
         except (GateError, IntegrityError, KeyError) as exc:
             failures.append(str(exc))
+        from .domain_packs import pack_lineage
+        if pack_lineage(history, c["protocol"]) is not None and not any(
+                event["kind"] == "pack_analysis" and event["payload"].get("claim") == claim
+                for event in evidence):
+            failures.append("claim on a pack-bound protocol lineage lacks pack.analyse admission")
         for key in (p["implementation"], p["environment"], p["data"]):
             try:
                 self.store.read(key)

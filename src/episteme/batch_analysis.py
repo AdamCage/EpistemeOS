@@ -236,6 +236,9 @@ class BatchAnalysis:
         require(not any(e["payload"]["task_id"] == task_id for e in prior.values()),
                 "analysis task already applied")
         protocol = Kernel._get(history, state["plan"]["payload"]["protocol"], "protocol")
+        from .domain_packs import pack_lineage
+        require(pack_lineage(history, protocol["id"]) is None,
+                "a pack-bound protocol lineage admits analyses only through pack.analyse")
         validated = _proposal(proposal)
         require(self.store.put_json(validated) == proposal_digest,
                 "analysis proposal digest mismatch")
