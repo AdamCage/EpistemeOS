@@ -18,7 +18,7 @@ from .graph import ResearchGraph
 from .kernel import Actor, Kernel
 from .reporting import PaperBuilder, export_store, inspect_store
 from .recovery import backup, restore
-from .store import Store
+from .store import IntegrityError, Store
 from .execution import freeze_environment, job_state, reconcile_job, work_job
 from . import execution_locked, reproduction
 from .execution_locked import OPERATIONS as LOCKED_OPERATIONS, add_arguments as add_locked_arguments
@@ -54,6 +54,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             ("command", "Admit or replay a versioned local command JSON"),
                             ("receipts", "Verify and read historical command acknowledgements"),
                             ("backup", "Create a verified SQLite and artifact directory snapshot"),
+                            ("checkpoint", "Print one history digest to copy outside the store"),
                             ("graph", "Verify recorded dependencies and export the research graph")):
         command = subcommands.add_parser(name, help=help_text)
         if name == "demo":
@@ -67,6 +68,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             command.add_argument("--input", type=Path, required=True, help="Versioned command envelope JSON")
         if name == "backup":
             command.add_argument("--output", type=Path, required=True, help="New snapshot directory")
+        if name == "checkpoint":
+            command.add_argument("--expect", help="Digest previously copied outside this store")
         if name == "paper":
             command.add_argument("claims", nargs="+", help="Reviewed claim IDs")
             command.add_argument("--title", required=True)
@@ -310,6 +313,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             with _opened(args.root, read_only=args.command not in {"review", "paper"}) as store:
                 if args.command == "inspect":
                     result, status = inspect_store(store), 0
+                elif args.command == "checkpoint":
+                    value = store.external_checkpoint()
+                    if args.expect is not None and args.expect != value:
+                        raise IntegrityError("external checkpoint does not match this history")
+                    result, status = dict(digest=value, revision=len(store.events()),
+                                          meaning="external_history_digest"), 0
                 elif args.command == "backup":
                     result, status = backup(store, args.output), 0
                 elif args.command == "receipts":

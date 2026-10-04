@@ -9,6 +9,7 @@ from contextlib import closing
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -373,6 +374,72 @@ class InspectVerificationTests(unittest.TestCase):
         status, body = invoke("inspect", "--root", str(root))
         self.assertEqual(status, 2)
         self.assertIn("checksum mismatch", body["error"])
+
+
+class ExternalCheckpointTests(unittest.TestCase):
+    """A-15: a digest kept outside the store detects a later coherent history."""
+
+    def setUp(self):
+        temporary = TemporaryDirectory(prefix="episteme-checkpoint-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "state"
+        with Store(self.root) as store:
+            note(store, "fixture note")
+            self.first = store.external_checkpoint()
+            self.assertEqual(store.external_checkpoint(), self.first)
+
+    def test_appending_to_a_copy_rejects_the_old_digest(self):
+        status, body = invoke("checkpoint", "--root", str(self.root))
+        self.assertEqual(status, 0)
+        self.assertEqual(body["digest"], self.first)
+        self.assertEqual(body["meaning"], "external_history_digest")
+        copy = self.root.parent / "copy"
+        shutil.copytree(self.root, copy)
+        with Store(copy) as store:
+            note(store, "appended after the checkpoint")
+            self.assertNotEqual(store.external_checkpoint(), self.first)
+        status, body = invoke("checkpoint", "--root", str(copy), "--expect", self.first)
+        self.assertEqual(status, 2)
+        self.assertIn("does not match", body["error"])
+        fresh = invoke("checkpoint", "--root", str(copy))[1]["digest"]
+        status, body = invoke("checkpoint", "--root", str(copy), "--expect", fresh)
+        self.assertEqual(status, 0)
+        self.assertEqual(body["digest"], fresh)
+
+    def test_coherent_rewrite_still_reads_but_fails_the_old_digest(self):
+        copy = self.root.parent / "rewritten"
+        shutil.copytree(self.root, copy)
+        with closing(sqlite3.connect(copy / "state.sqlite3")) as database:
+            database.row_factory = sqlite3.Row
+            row = database.execute("SELECT * FROM events").fetchone()
+            payload = json.loads(row["payload"])
+            payload["rewritten"] = True
+            body = dict(seq=row["seq"], id=row["id"], kind=row["kind"], actor=row["actor"],
+                        role=row["role"], created_at=row["created_at"],
+                        schema_version=row["schema_version"], payload=payload,
+                        previous_hash=row["previous_hash"])
+            event_hash = digest(canonical(body))
+            database.execute("DROP TRIGGER events_no_update")
+            database.execute("UPDATE events SET payload = ?, hash = ? WHERE seq = ?",
+                             (canonical(payload).decode(), event_hash, row["seq"]))
+            receipt = json.loads(database.execute("SELECT receipt FROM command_receipts").fetchone()[0])
+            receipt["after_hash"] = event_hash
+            receipt["event_hashes"] = [event_hash]
+            encoded = canonical(receipt)
+            database.execute("DROP TRIGGER command_receipts_no_update")
+            database.execute("UPDATE command_receipts SET receipt = ?, hash = ?",
+                             (encoded.decode(), digest(encoded)))
+            database.commit()
+        with Store(copy) as store:
+            self.assertEqual(store.events()[0]["payload"]["rewritten"], True)
+            self.assertEqual(len(store.receipts()), 1)
+            rewritten = store.external_checkpoint()
+        self.assertNotEqual(rewritten, self.first)
+        status, body = invoke("inspect", "--root", str(copy))
+        self.assertEqual(status, 0, body)
+        status, body = invoke("checkpoint", "--root", str(copy), "--expect", self.first)
+        self.assertEqual(status, 2)
+        self.assertIn("does not match", body["error"])
 
 
 if __name__ == "__main__":

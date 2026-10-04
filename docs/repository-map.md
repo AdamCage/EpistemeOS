@@ -27,7 +27,7 @@ EpistemeOS/
 ├── src/episteme/
 │   ├── __init__.py
 │   ├── __main__.py               python -m episteme
-│   ├── cli.py                    demo / inspect / package / agent / execution / batch / analysis / cycle / graph / command / backup / restore
+│   ├── cli.py                    demo / inspect / checkpoint / package / agent / execution / batch / analysis / cycle / graph / command / backup / restore
 │   ├── cycle.py                  один механический шаг цикла; научное решение остаётся человеку (ADR 0020)
 │   ├── store.py                  SQLite events/receipts и content-addressed blobs
 │   ├── recovery.py               согласованный backup и verified restore в новый каталог
@@ -174,7 +174,7 @@ EpistemeOS/
 | `followup.py` | Один открытый запрос различающего эксперимента → frozen дочерний protocol/node/binding с проверкой текущего source basis и бюджета. | Planner-authored план, не запуск, научное подтверждение, независимое review или закрытие obligation. |
 | `followup_execution.py` | Повторно проверяет source review/basis и planning, связывает текущий winning follow-up node с frozen batch и exact receipt. | Recipe подаёт planner; selection и резерв не запускают worker и не закрывают научное замечание. |
 | `execution_authority.py` | Локальный token и проверка hash перед изменением execution state batch; DB/CAS restore не получает token. | Не аутентификация и не distributed lease; полное копирование marker владельцем файлов может создать исполняемый clone. |
-| `store.py` | Canonical JSON, CAS, verified chain/receipts с инкрементальной перепроверкой по отпечатку базы и read scope для CAS (ADR 0017), atomic command transaction/replay, additive receipt migration и export. `BEFORE INSERT` отвергает upsert существующей строки и разрыв `seq`. При открытии тело trigger сверяется с этой защитой. Payload и receipt принимаются только в канонических байтах, по которым посчитан hash. Чтение отдаёт копии записей ([ADR 0023](decisions/0023-storage-integrity.md)). | Нет аутентификации, внешнего checkpoint, общего schema migration или distributed storage; производные индексы пересчитываются в каждом вызове. Согласованная перепись файла базы triggers не останавливает. Read-only не ставит недостающий trigger. |
+| `store.py` | Canonical JSON, CAS, verified chain/receipts с инкрементальной перепроверкой по отпечатку базы и read scope для CAS (ADR 0017), atomic command transaction/replay, additive receipt migration и export. `BEFORE INSERT` отвергает upsert существующей строки и разрыв `seq`. При открытии тело trigger сверяется с этой защитой. Payload и receipt принимаются только в канонических байтах, по которым посчитан hash. Чтение отдаёт копии записей. `external_checkpoint` — один digest истории, в базу не пишется ([ADR 0023](decisions/0023-storage-integrity.md)). | Нет аутентификации, общего schema migration или distributed storage; производные индексы пересчитываются в каждом вызове. Согласованная перепись файла базы не видна, пока человек не сверил digest вне store. Read-only не ставит недостающий trigger. Sandbox нет. |
 | `recovery.py` | SQLite online backup, полный наблюдаемый CAS, manifest, semantic closure и restore с точной историей/receipts; эксклюзивный новый destination. Restore открывает Store и поэтому отвергает подменённое тело trigger. | Не переносит процессы/внешнюю среду; filesystem доверенный, нет внешней аутентификации или атомарной видимости всего каталога. |
 | `commands.py` | Явный action/role allowlist, strict JSON, аргументы и defaults v1, допуск до handler, historical acknowledgement. | Доверенный local caller; нет внешнего execution или меж-study access boundary. |
 | `protocols.py` | Frozen design dataclasses, units/estimand/metrics/splits, mode и structural statistical validation. | Не проверяет actual data, мощность, реальную независимость или uncertainty computation. |
@@ -316,7 +316,7 @@ Afterlife pack размещает provider/model revisions, protocol/context sem
 ├── paper-<id>.md / .json          внутренний scaffold после review, v0.1
 ├── workers/<attempt-id>/         disposable writable workspace, M2
 ├── exports/<snapshot-id>/        JSONL, review bundle, manuscript, M5
-└── checkpoints/                  ссылки на внешний trusted checkpoint, M2
+└── checkpoints/                  каталог не создаётся: digest печатает episteme checkpoint и в store не пишется
 ```
 
 Hash-addressed blob не хранит право доступа внутри имени: service проверяет assignment и разрешённый список digest. Экспорт снимается с согласованного snapshot, содержит только разрешённый closure и проверяется при чтении. JSONL/Markdown — производные формы; редактирование отчёта не изменяет факт в state. Garbage collection orphan blobs проектируется отдельно от удаления исторического evidence и не запускается до проверки reachability из всех сохранённых snapshots.

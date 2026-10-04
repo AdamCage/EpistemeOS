@@ -12,7 +12,7 @@ uv run episteme command --root .research/command-example --input command.json
 uv run episteme receipts --root .research/command-example
 ```
 
-Оба первых вызова возвращают одинаковый event ID. Повтор после перезапуска либо других событий также возвращает первоначальный результат. `inspect` заново проверяет цепочку и квитанции, затем показывает состояние; это не replay Graph. `gate` считает mechanical gate claim и сам квитанции не перепроверяет. `meaning="historical_command_commit"` не означает актуального approval или успешного исполнения эксперимента.
+Оба первых вызова возвращают одинаковый event ID. Повтор после перезапуска либо других событий также возвращает первоначальный результат. `inspect` заново проверяет цепочку и квитанции, затем показывает состояние; это не replay Graph. `gate` считает mechanical gate claim и сам квитанции не перепроверяет. `episteme checkpoint --root <store>` печатает один digest проверенной истории и ничего не записывает. `--expect <digest>` сверяет текущий store с digest, который человек раньше скопировал вне store: несовпадение даёт код 2. Без `--expect` команда не утверждает, что внешняя копия есть. `meaning="historical_command_commit"` не означает актуального approval или успешного исполнения эксперимента.
 
 В Python:
 

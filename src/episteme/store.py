@@ -2,8 +2,10 @@
 
 This protects against accidental mutation, not a malicious process with filesystem
 access. BEFORE INSERT triggers reject a duplicate key and a sequence gap, so
-INSERT OR REPLACE cannot rewrite a row while those triggers remain. An external
-checkpoint is still necessary to detect a rewritten or truncated history.
+INSERT OR REPLACE cannot rewrite a row while those triggers remain. external_checkpoint
+prints one digest of the verified history. A later check against that digest fails
+if the history was rewritten coherently. Without a digest kept outside the store,
+a rewritten or truncated history is still not detected.
 
 Each Store instance keeps the event chain and receipts it has verified. A read
 reuses them only while a fingerprint of the database (SQLite data_version and
@@ -744,3 +746,18 @@ class Store:
 
     def export(self) -> str:
         return "".join(canonical(event).decode() + "\n" for event in self.events())
+
+    def external_checkpoint(self) -> str:
+        """One digest of the verified history, for a person to keep outside this store.
+
+        The digest is not written into the database. Calling this method does not
+        mean an external copy exists. Comparison is ``digest == expected``.
+        """
+        history = self.events()
+        receipts = self.receipts()
+        material = canonical(dict(
+            format="episteme-external-checkpoint-v1",
+            revision=len(history),
+            head=history[-1]["hash"] if history else _ZERO_HASH,
+            receipt_hashes=[receipt["hash"] for receipt in receipts]))
+        return digest(material)
