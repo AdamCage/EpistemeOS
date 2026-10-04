@@ -17,6 +17,7 @@ EpistemeOS/
 │   ├── repository-map.md         эта карта
 │   ├── command-api.md            versioned local command interface
 │   ├── recovery.md               directory snapshot и восстановление receipts/CAS
+│   ├── adversarial-audit-2026-10-04.md  состязательный аудит da6aa2a и статус исправлений
 │   ├── decisions/                command, workflow и agent proposal ADRs
 │   └── research/
 │       ├── afterlife-audit.md
@@ -173,6 +174,7 @@ EpistemeOS/
 | `tests/test_kernel.py` | Протокол до run, источники evidence, scope, budgets при конфликте writers, retention failures, stale review, self-review, integrity. | Unit tests не доказывают clean-room, sandbox, научную правильность или публикационное качество. |
 | `tests/test_search.py`, `tests/test_reporting.py`, `tests/test_cli.py` | Поиск и cost reservations, snapshot consistency и paper eligibility, входные review JSON и запускаемые CLI/subprocess сценарии. | Покрытие конкретных failure cases не означает общего доказательства безопасности либо работы независимых научных агентов. |
 | `docs/research/*` | Проверяемые основания решений и заранее предлагаемый evaluation design. | Литературный обзор и локальный code audit не означают независимого запуска внешних систем. |
+| `docs/adversarial-audit-2026-10-04.md` | Воспроизведённые находки состязательного аудита `da6aa2a` с PoC; раздел «Статус исправлений» отслеживает исправления по [ADR 0018](decisions/0018-claim-families-and-review-admission.md). | Аудит локального снимка, не научная оценка и не внешний security review; код после `da6aa2a` проверяется только по мере исправлений. |
 
 До выделения новых модулей следует сохранять работающие команды и понятные импорты. Усложнение структуры допускается вместе с реальным переносом ответственности и необходимой проверкой совместимости.
 

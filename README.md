@@ -73,6 +73,9 @@ uv run episteme pack verify --root .research/study
 - [Ручная привязка frozen domain recipe до batch](docs/decisions/0014-manual-domain-binding.md).
 - [Разведочный офлайн-пилот на исторических траекториях Afterlife](docs/decisions/0015-afterlife-historical-pilot.md).
 - [Контракт DomainPack: envelopes, statistical report и потолок силы claim](docs/decisions/0016-domain-pack-contract.md) — принят 4 октября 2026 и реализуется поэтапно; текущий статус шагов указан в самом ADR.
+- [Инкрементальная проверка цепочки событий и receipts](docs/decisions/0017-incremental-verification.md).
+- [Состязательный аудит коммита `da6aa2a`](docs/adversarial-audit-2026-10-04.md) от 4 октября 2026: 23 воспроизведённые находки (6 high, 7 medium, 10 low), PoC и статус исправлений.
+- [Семейства claims и допуск reviews к решениям](docs/decisions/0018-claim-families-and-review-admission.md) — исправления семантических находок аудита; принят 4 октября 2026 и реализуется поэтапно. Пока шаги не выполнены, находки A-01–A-10, A-14 и A-22 остаются открытыми; статус указан в аудите и в самом ADR.
 
 ## Локальный запуск
 
