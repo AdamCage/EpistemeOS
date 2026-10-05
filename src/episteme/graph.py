@@ -585,6 +585,11 @@ class _Projection:
                 self.ref(p["replicate_of"], "run", Relation.DECLARED_REANALYSIS, "replicate_of")
             for field in ("implementation", "environment"):
                 self.blob(p[field], Relation.ARTIFACT_INPUT, field)
+            try:
+                from .role_profile import validate_run_profile
+                validate_run_profile(self.store, p)
+            except ValueError as exc:
+                self.fail(f"invalid run role profile: {exc}")
         elif kind == "result":
             self.ref(p["run"], "run", Relation.RUN_RESULT, "run")
             if p["run"] in self.results:

@@ -434,11 +434,12 @@ class Kernel:
                   environment: str, command: list[str], replicate_of: str | None = None) -> str:
         return self._start_run(protocol, seed=seed, implementation=implementation,
                                environment=environment, command=command, replicate_of=replicate_of,
-                               batch_slot=None)
+                               batch_slot=None, role_profile=None)
 
     def _start_run(self, protocol: str, *, seed: int, implementation: str,
                    environment: str, command: list[str], replicate_of: str | None,
-                   batch_slot: tuple[str, str] | None) -> str:
+                   batch_slot: tuple[str, str] | None,
+                   role_profile: dict[str, Any] | None = None) -> str:
         history = self._history()
         from .batch import validate_start
         validate_start(self.store, history, protocol, batch_slot)
@@ -469,9 +470,14 @@ class Kernel:
             require(implementation == p["implementation"] and environment == p["environment"],
                     "primary implementation/environment differs from frozen protocol")
             roles = {"executor"}
+        role_name = "replicator" if replicate_of else "executor"
+        from .role_profile import check_profile_for_run, local_profile
+        if role_profile is None:
+            role_profile = local_profile(role_name)
+        check_profile_for_run(role_profile, role_name)
         return self._write(history, "run", dict(protocol=protocol, protocol_hash=plan["hash"],
                            seed=seed, implementation=implementation, environment=environment,
-                           command=command, replicate_of=replicate_of), roles)
+                           command=command, replicate_of=replicate_of, role_profile=role_profile), roles)
 
     @staticmethod
     def _result(history: list[dict[str, Any]], run: str) -> dict[str, Any] | None:

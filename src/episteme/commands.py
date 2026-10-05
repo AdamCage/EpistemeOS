@@ -33,6 +33,7 @@ from .followup_execution import FollowupExecution
 from .literature import Literature
 from .reporting import PaperBuilder
 from .reproduction import Reproduction
+from .role_profile import Isolation, preflight_container
 from .search import Search
 from .store import Store, canonical
 
@@ -136,6 +137,7 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "execution.dispatch": (Execution, Execution.dispatch, frozenset({"executor", "replicator"})),
     "execution.dispatch_v2": (Execution, Execution.dispatch_v2, frozenset({"executor", "replicator"})),
     "execution.finalize": (Execution, Execution.finalize, frozenset({"executor", "replicator"})),
+    "isolation.execute": (Isolation, Isolation.execute, frozenset({"executor", "replicator", "planner"})),
     "reproduction.dispatch": (Reproduction, Reproduction.dispatch, frozenset({"executor", "replicator"})),
     "reproduction.finalize": (Reproduction, Reproduction.finalize, frozenset({"executor", "replicator"})),
     "planning.question": (Planning, Planning.question, frozenset({"planner"})),
@@ -338,6 +340,10 @@ explicit default denote the same request within this API version.
         try:
             if snapshot is not None and domain_packs.before_pack_commit is not None:
                 domain_packs.before_pack_commit()
+            if action == "isolation.execute":
+                known = any(row["command_id"] == context.command_id for row in self.store.receipts())
+                if not known:
+                    preflight_container(self.store, payload)
             try:
                 return self.store.command(context.to_dict(), normalized, invoke)
             except TypeError as exc:

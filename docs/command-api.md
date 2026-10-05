@@ -99,6 +99,14 @@ Capabilities: `separate_cwd`, `python_isolated_mode`, `bounded_output_capture`, 
 
 Прямой `kernel.finish_run` запрещён для managed job. Replay dispatch receipt не разрешает новый subprocess. Backup сохраняет завершённую provenance в CAS, но не активные workspaces; restored unknown job остаётся unknown. Подробности и crash windows: [ADR 0005](decisions/0005-local-runner.md). Исполняемый [пример](../examples/local_execution.py) не фабрикует scientific review.
 
+## Профили ролей
+
+[ADR 0025](decisions/0025-isolation-role-profiles.md). Это не профиль исполнения `trusted_local_python_v1` и не `uv_locked_python_v2`.
+
+Новые `kernel.start_run` и `review.dispatch` по-прежнему не принимают backend. На записанном run и на выдаче review появляется `role_profile`: `backend=local_subprocess`, `os_isolation=none`, `host_user=same`, сеть и файловая система `not_enforced`. Отпечаток старых команд не меняется. Историческое событие без поля остаётся действительным и не читается как изоляция. Выдача рецензента на локальном backend не доказывает, что дерево реализации ему было недоступно: `proves_implementation_withheld` ложно, `read_isolation` по-прежнему `not_enforced`.
+
+`isolation.execute` — отдельная команда контейнера. Роли команды: `executor` и `replicator` пишут run, `planner` пишет выдачу рецензента (`role=reviewer` в профиле). Аргументы: `role`, `backend=container`, `image`, `argv`, `mounts` (`host`, `container`, `kind`), `code_digest`, `observation` и поля run или `assignment`/`provider_id`. `backend=local_subprocess` эта команда отвергает. Если демон Docker не отвечает, отказ происходит до события и до blob; отката на `local_subprocess` нет. Mount рецензента не включает `implementation_tree`, `pack_source` и `work_directory` и не лежит в названных деревьях. Репликатор получает один `input_digest` и один `output_digest`, не каталог работы исполнителя. Контейнер запускается до write-транзакции (`--network none`, `--read-only`, `--pull never`). Повтор того же command id контейнер не стартует. `code_relation=same_code`, пока digest кода совпали; `independent_replication` остаётся `false`. `episteme cycle` эту команду не вызывает.
+
 ## Версии планирования
 
 `planning.question` принимает `study_id`, `statement`, `objective`, `scope`, непустые списки `constraints` и `stopping_criteria`; optional `parent` и `revision_reason` по умолчанию null. `planning.explanation_set` принимает `question`, минимум два existing `hypotheses`, `comparison_plan`; optional `parent`, `revision_reason`, `excluded_reasons`. Revision требует причину и актуальную parent head; removed candidates перечисляются в `excluded_reasons` ровно по одному с причиной. Root не содержит revision reason или исключений.

@@ -32,6 +32,7 @@
           "agent.request_pack_experiment",
           "agent.dispatch", "agent.finalize", "agent.apply_hypotheses", "agent.apply_experiment",
           "execution.enqueue", "execution.dispatch", "execution.dispatch_v2", "execution.finalize",
+          "isolation.execute",
           "reproduction.dispatch", "reproduction.finalize",
           "batch.plan", "batch.enqueue_slot", "batch.settle", "analysis.apply", "domain.bind", "proposal.prepare_next",
           "pack.preregister", "pack.analyse",

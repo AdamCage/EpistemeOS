@@ -69,6 +69,7 @@ EpistemeOS/
 │   ├── domain_binding.py         receipt-backed manual frozen domain recipe
 │   ├── domain_packs.py           pack.preregister/pack.analyse, replay, CasView allowlist и потолок силы claim
 │   ├── hook_worker.py            subprocess хуков DomainPack: pinned bytes, без Store и без окружения родителя (ADR 0024)
+│   ├── role_profile.py           профили ролей executor/reviewer/replicator; local_subprocess по умолчанию, container только при Docker (ADR 0025)
 │   ├── codec.py                  канонический JSON и SHA-256, общие для Store и хука
 │   ├── search.py                 persistent tournament и bounded tree policy
 │   ├── reporting.py              snapshot export и внутренний paper scaffold; колонка roster по roster_semantics
@@ -131,6 +132,7 @@ EpistemeOS/
     ├── test_resolution.py       exact review/resolution receipt, stale basis и sibling veto
     ├── test_review_assignment.py context policy, conflict, replay, Graph и restore
     ├── test_reviewer_controller.py доставка, submission, unknown, replay и CLI
+    ├── test_role_profile.py     профиль на run и выдаче; отказ container без Docker; probe контейнера только по флагу CI
     ├── test_reporting_followup.py paper lineage и stale/sibling veto
     ├── test_review_families.py  семейства claims: повторный claim, перерегистрация на тех же bytes, scope resolution
     ├── test_followup.py         дочерний protocol/node, stale source, budget и no closure
@@ -185,6 +187,7 @@ EpistemeOS/
 | `runner_backend.py` | Frozen single Python source/input, отдельный cwd, gated process launch, Windows Job Object / POSIX group, bounded capture, durable completion. | Trusted local profile, без filesystem/network sandbox, package environment reconstruction или domain metric recomputation. |
 | `environment_closure.py`, `execution_locked.py`, `runner_locked.py` | Профиль v2 [ADR 0019](decisions/0019-execution-profile-v2.md): многофайловое дерево и uv-closure в CAS, новое offline-окружение на job, allowlist переменных, каталог job вне корня хранилища, запись дистрибутивов, интерпретатора, inventory и GPU. | Тот же OS user, без filesystem/network sandbox; программа достигает хранилища по абсолютному пути. Сеть разрешена только явной `execution prepare --online`, без событий. |
 | `reproduction.py` | `episteme reproduce`: durable intent, повтор из CAS в новом каталоге, детерминированное сравнение outputs и окружения, replay-проверка, попытки в basis claim. | Тот же код и данные: не independent replication, не run и не evidence; совпадение outputs не доказывает правильность вычисления. |
+| `role_profile.py` | Профиль роли на run и на выдаче review. `local_subprocess` пишет `os_isolation=none`. `isolation.execute` при наличии Docker запускает payload с `--network none`, read-only корнем и allowlist файлов. | Метка роли не изоляция. Без Docker событие не пишется и локальный backend не подставляется. Контейнер — тот же пользователь хоста и не independent replication. `proves_implementation_withheld` остаётся ложью. |
 | `claims.py`, `claim_context.py` | Immutable proposals отношений, validation порядка/scope/циклов; review context из incoming supports/limits и symmetric contradictions/supersession. | Не доказывают научную связь; binding evidence basis и bytes проверяет Kernel/Graph. |
 | `graph.py` | Immutable typed nodes/edges, reference closure, ancestor/descendant queries, exact scope filter, JSON/DOT. | Проекция текущих event types, не scientific adjudication или inferred causal graph. |
 | `domains/afterlife.py` | Bounded read-only scan, frozen metadata/blob snapshot, сохранение legacy status/dirty/superseded, idempotent import. | Исторические данные не становятся accepted claims; импорт сам не создаёт runs. Пересчёт stop-событий одного run выполняет отдельный пилот выше. |

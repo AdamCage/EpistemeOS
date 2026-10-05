@@ -25,10 +25,10 @@ _DISPATCH_REQUEST = {"assignment", "provider_id"}
 _FINALIZE_REQUEST = {"assignment", "response", "status", "usage"}
 _DISPATCH_FIELDS = {"schema_version", "assignment", "assignment_hash", "bundle",
                     "claim", "basis_hash", "reviewer_actor", "provider_id", "request",
-                    "identity_assurance", "read_isolation"}
+                    "identity_assurance", "read_isolation", "role_profile"}
 _RESPONSE_FIELDS = {"schema_version", "assignment", "dispatch", "dispatch_hash",
                     "bundle", "claim", "basis_hash", "reviewer_actor", "response",
-                    "status", "usage", "identity_assurance", "read_isolation"}
+                    "status", "usage", "identity_assurance", "read_isolation", "role_profile"}
 
 
 class ReviewProvider(Protocol):
@@ -82,31 +82,43 @@ def _assignment_request(store: Store, history: list[dict[str, Any]], assignment:
 
 
 def _dispatch_payload(assignment: dict[str, Any], request: dict[str, Any],
-                      request_digest: str) -> dict[str, Any]:
+                      request_digest: str, profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    from .role_profile import local_profile
     return dict(schema_version=1, assignment=assignment["id"],
                 assignment_hash=assignment["hash"], bundle=request["bundle"],
                 claim=request["claim"], basis_hash=request["basis_hash"],
                 reviewer_actor=request["reviewer_actor"],
                 provider_id=request["provider_id"], request=request_digest,
-                identity_assurance="caller_declared", read_isolation="not_enforced")
+                identity_assurance="caller_declared", read_isolation="not_enforced",
+                role_profile=local_profile("reviewer") if profile is None else profile)
 
 
 def _response_payload(dispatch: dict[str, Any], response: str | None,
                       status: str, usage: dict[str, int | float]) -> dict[str, Any]:
     p = dispatch["payload"]
-    return dict(schema_version=1, assignment=p["assignment"], dispatch=dispatch["id"],
+    body = dict(schema_version=1, assignment=p["assignment"], dispatch=dispatch["id"],
                 dispatch_hash=dispatch["hash"], bundle=p["bundle"], claim=p["claim"],
                 basis_hash=p["basis_hash"], reviewer_actor=p["reviewer_actor"],
                 response=response, status=status, usage=usage,
                 identity_assurance="caller_declared", read_isolation="not_enforced")
+    # Historical deliveries have no role profile. Do not invent isolation for them.
+    if "role_profile" in p:
+        body["role_profile"] = p["role_profile"]
+    return body
 
 
 def _index(store: Store, history: list[dict[str, Any]], *,
            receipts: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
     """Replay-check every dispatch/response and its original command receipt."""
     source = store.receipts() if receipts is None else receipts
-    relevant = [r for r in source if r["request"]["action"] in {
-        "review.dispatch", "review.finalize"} and r["after_revision"] <= len(history)]
+    def _delivery_receipt(receipt: dict[str, Any]) -> bool:
+        action = receipt["request"]["action"]
+        if action in {"review.dispatch", "review.finalize"}:
+            return True
+        body = receipt["request"].get("payload")
+        return action == "isolation.execute" and isinstance(body, dict) and body.get("role") == "reviewer"
+
+    relevant = [r for r in source if _delivery_receipt(r) and r["after_revision"] <= len(history)]
     dispatch_events = {e["id"] for e in history if e["kind"] == "review_dispatch"}
     response_events = {e["id"] for e in history if e["kind"] == "review_response"}
     states: dict[str, dict[str, Any]] = {}
@@ -124,9 +136,18 @@ def _index(store: Store, history: list[dict[str, Any]], *,
         event = events[0]
         require(event["actor"] == context["actor"] and event["role"] == "planner",
                 "review delivery event actor differs from its command")
-        if request["action"] == "review.dispatch":
-            require(set(args) == _DISPATCH_REQUEST and event["kind"] == "review_dispatch",
-                    "review dispatch receipt has wrong arguments or event kind")
+        if request["action"] != "review.finalize":
+            if request["action"] == "review.dispatch":
+                require(set(args) == _DISPATCH_REQUEST and event["kind"] == "review_dispatch",
+                        "review dispatch receipt has wrong arguments or event kind")
+                profile = None
+            else:
+                require(request["action"] == "isolation.execute" and args.get("role") == "reviewer"
+                        and event["kind"] == "review_dispatch",
+                        "container reviewer delivery has the wrong command or event kind")
+                from .role_profile import profile_from_observation
+                observed = json.loads(store.read(args["observation"]))
+                profile = profile_from_observation(observed, args["observation"])
             assignment, frozen = _assignment_request(store, before, args["assignment"],
                                                       args["provider_id"], receipts=source)
             require(assignment["payload"]["study_id"] == context["study_id"],
@@ -134,8 +155,11 @@ def _index(store: Store, history: list[dict[str, Any]], *,
             request_digest = digest(canonical(frozen))
             require(store.read(request_digest) == canonical(frozen),
                     "review provider request differs from its frozen projection")
-            require(set(event["payload"]) == _DISPATCH_FIELDS
-                    and event["payload"] == _dispatch_payload(assignment, frozen, request_digest)
+            expected = _dispatch_payload(assignment, frozen, request_digest, profile)
+            # A delivery recorded before role profiles existed has no such field.
+            if "role_profile" not in event["payload"]:
+                expected.pop("role_profile", None)
+            require(set(expected) <= _DISPATCH_FIELDS and event["payload"] == expected
                     and receipt["result"] == dict(dispatch=event["id"], request=request_digest),
                     "review dispatch differs from its frozen context")
             require(assignment["id"] not in states,
@@ -161,9 +185,8 @@ def _index(store: Store, history: list[dict[str, Any]], *,
                 require(len(store.read(args["response"])) <= MAX_RESPONSE_BYTES,
                         "review provider response exceeds byte limit")
             usage = _usage(args["usage"])
-            require(set(event["payload"]) == _RESPONSE_FIELDS
-                    and event["payload"] == _response_payload(dispatch, args["response"],
-                                                               args["status"], usage)
+            expected = _response_payload(dispatch, args["response"], args["status"], usage)
+            require(set(expected) <= _RESPONSE_FIELDS and event["payload"] == expected
                     and receipt["result"] == dict(response_event=event["id"],
                                                   status=args["status"]),
                     "review response differs from its dispatch or raw bytes")
@@ -181,6 +204,12 @@ class ReviewSession:
         self.store, self.actor = store, actor
 
     def dispatch(self, *, assignment: str, provider_id: str) -> dict[str, str]:
+        from .role_profile import local_profile
+        return self._dispatch(assignment=assignment, provider_id=provider_id,
+                              profile=local_profile("reviewer"))
+
+    def _dispatch(self, *, assignment: str, provider_id: str,
+                  profile: dict[str, Any]) -> dict[str, str]:
         require(self.store._command_context is not None and self.actor.role == "planner",
                 "review dispatch requires a planner CommandService transaction")
         history = self.store.events()
@@ -191,7 +220,7 @@ class ReviewSession:
         request_digest = self.store.put_json(request)
         id = f"review_dispatch-{uuid4().hex[:16]}"
         self.store.append(id=id, kind="review_dispatch", actor=self.actor.id, role="planner",
-                          payload=_dispatch_payload(source, request, request_digest),
+                          payload=_dispatch_payload(source, request, request_digest, profile),
                           expected_revision=len(history))
         return dict(dispatch=id, request=request_digest)
 

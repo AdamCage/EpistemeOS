@@ -17,3 +17,10 @@ jobs:
       - run: python -m pip install .
       - run: python -m pip install uv==0.11.28
       - run: python -m unittest discover -s tests -v
+      - name: container role profile
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        env:
+          EPISTEME_CONTAINER_TEST: "1"
+        run: |
+          docker pull busybox:1.36.1
+          python -m unittest tests.test_role_profile.ContainerRoleProfileTests -v
