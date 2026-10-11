@@ -11,12 +11,16 @@ review verdict, search score, or mechanically intact artifact cannot change the
 IDs and implementation digests do not establish independent reasoning or OS
 isolation. Graph traversal does not perform claim promotion or paper eligibility.
 
-Construction verifies one event snapshot and every referenced artifact, each
-hashed once in its read scope, plus typed statistical declarations and recorded
-exposure timing. It is not a lock against later appends or filesystem mutation;
-reconstruct to observe current state. Unknown event kinds fail closed until their
-reference schema is implemented. No database rows, files, or events are written;
-verified bytes stay in memory only for the read scope.
+Construction verifies one snapshot of events and the command receipts that
+bind those events, taken in one read transaction, and every referenced
+artifact, each hashed once in its read scope, plus typed statistical
+declarations and recorded exposure timing. A command committed by another
+connection is either entirely in that pair or entirely absent; it is not
+reported as a corrupt receipt. It is not a lock against later appends or
+filesystem mutation; reconstruct to observe current state. Unknown event
+kinds fail closed until their reference schema is implemented. No database
+rows, files, or events are written; verified bytes stay in memory only for
+the read scope.
 """
 
 from __future__ import annotations
@@ -255,7 +259,8 @@ class ResearchGraph:
     @classmethod
     def from_store(cls, store: Store) -> ResearchGraph:
         with store.reading():
-            return _Projection(store, store.events()).build()
+            history, receipts = store.snapshot()
+            return _Projection(store, history, receipts).build()
 
     @staticmethod
     def artifact_id(sha256: str) -> str:
@@ -321,8 +326,9 @@ class ResearchGraph:
 
 
 class _Projection:
-    def __init__(self, store: Store, history: list[dict[str, Any]]):
-        self.store, self.history = store, history
+    def __init__(self, store: Store, history: list[dict[str, Any]],
+                 receipts: list[dict[str, Any]]):
+        self.store, self.history, self.receipts = store, history, receipts
         self.events = {e["id"]: e for e in history}
         self.nodes: dict[str, GraphNode] = {}
         self.edges: list[GraphEdge] = []
@@ -972,7 +978,7 @@ class _Projection:
         from .domain_binding import _index as binding_index
         from .reviewer_controller import _index as delivery_index
         from .review_submission import _index as submission_index
-        receipts = self.store._verified_receipts(self.history)
+        receipts = self.receipts
         try:
             binding_index(self.store, self.history, receipts=receipts)
         except (ValueError, KeyError, TypeError) as exc:

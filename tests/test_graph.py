@@ -7,6 +7,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
 
+from episteme.commands import CommandService
 from episteme.graph import GraphIntegrityError, NodeKind, Relation, ResearchGraph
 from episteme.kernel import Actor, Kernel
 from episteme.reporting import PaperBuilder
@@ -164,7 +165,7 @@ class GraphTests(unittest.TestCase):
 
     def test_single_snapshot_ignores_concurrent_append_and_requires_explicit_rebuild(self):
         self.protocol()
-        snapshot = self.store.events()
+        frozen = self.store.snapshot()
         original_read = self.store.read
         appended = False
 
@@ -177,13 +178,64 @@ class GraphTests(unittest.TestCase):
                         "Later idea", "Later prediction", "Later falsifier", self.scope)
             return original_read(key)
 
-        with patch.object(self.store, "events", return_value=snapshot) as read_events, \
+        with patch.object(self.store, "snapshot", return_value=frozen) as read_snapshot, \
                 patch.object(self.store, "read", side_effect=read_and_append):
             graph = ResearchGraph.from_store(self.store)
-        read_events.assert_called_once_with()
-        self.assertEqual(graph.revision, len(snapshot))
-        self.assertEqual(graph.snapshot_hash, snapshot[-1]["hash"])
+        read_snapshot.assert_called_once_with()
+        self.assertEqual(graph.revision, len(frozen[0]))
+        self.assertEqual(graph.snapshot_hash, frozen[0][-1]["hash"])
         self.assertEqual(ResearchGraph.from_store(self.store).revision, graph.revision + 1)
+
+    def test_graph_snapshot_reads_events_and_receipts_in_one_transaction(self):
+        """A-17: separate event and receipt reads treated a concurrent command as corruption.
+
+        The range check still rejects a receipt that does not bind the history
+        it is verified against. Graph construction no longer pairs an older
+        event list with receipts read later.
+        """
+        commits: list[int] = []
+        seen: dict[str, object] = {}
+        with Store(self.directory.name) as reader:
+            def trace(statement: str) -> None:
+                if statement.strip().upper() == "COMMIT":
+                    commits.append(1)
+
+            reader.db.set_trace_callback(trace)
+            real_events = Store._reload_events
+            real_receipts = Store._reload_receipts
+
+            def reload_events(store):
+                real_events(store)
+                if store is reader:
+                    seen["events_commits"] = len(commits)
+                    seen["events_tx"] = store.db.in_transaction
+
+            def reload_receipts(store):
+                if store is reader:
+                    seen["receipts_commits"] = len(commits)
+                    seen["receipts_tx"] = store.db.in_transaction
+                real_receipts(store)
+
+            with patch.object(Store, "_reload_events", reload_events), \
+                    patch.object(Store, "_reload_receipts", reload_receipts):
+                ResearchGraph.from_store(reader)
+        self.assertTrue(seen["events_tx"])
+        self.assertTrue(seen["receipts_tx"])
+        self.assertEqual(seen["events_commits"], seen["receipts_commits"])
+        history = self.store.events()
+        with Store(self.directory.name) as writer:
+            CommandService(writer).execute(dict(
+                context=dict(command_id="a17-later-question", expected_revision=len(writer.events()),
+                             actor="planner", role="planner", study_id="a17-study",
+                             correlation_id="a17", causation_id=None),
+                request=dict(version=1, action="planning.question", payload=dict(
+                    study_id="a17-study", statement="Later question", objective="Record one command",
+                    scope={"population": "synthetic"}, constraints=["Fixture only"],
+                    stopping_criteria=["One question"], parent=None, revision_reason=None))))
+        with self.assertRaisesRegex(IntegrityError, "invalid command receipt event range"):
+            self.store._verified_receipts(history)
+        rebuilt = ResearchGraph.from_store(self.store)
+        self.assertGreater(rebuilt.revision, len(history))
 
     def test_artifact_loss_and_corruption_fail_even_for_failed_attempts(self):
         protocol = self.protocol()

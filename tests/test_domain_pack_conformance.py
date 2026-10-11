@@ -96,7 +96,7 @@ class PackConformanceTests(unittest.TestCase):
                 catalog.validate_parameters(api.thaw(request.parameters))
                 loaded.hook("validate_parameters")(request.parameters)
                 self.assertIsInstance(draft, api.ProtocolDraft)
-                self.assertIsInstance(plan, api.ExecutionPlan)
+                self.assertIsInstance(plan, (api.ExecutionPlan, api.ExecutionPlanV2))
                 again = self.compiled(pack_id)
                 self.assertEqual(draft.digest(), again[2].digest())
                 self.assertEqual(plan.digest(), again[3].digest())

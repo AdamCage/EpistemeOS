@@ -1,10 +1,12 @@
-"""Universality acceptance for every registered DomainPack (ADR 0016 step 10).
+"""Universality acceptance for the three packs of ADR 0016 step 10.
 
 The same kernel path preregisters, executes, analyses, assigns review, records
 an explicit synthetic fixture review and builds an internal paper scaffold.
 The fixture approval is not a scientific review: scientific_validity stays
-not_assessed, and the manuscript says so. Backup, restore and tamper checks
-use temporary copies. They never open .research/afterlife-pilot-20261004.
+not_assessed, and the manuscript says so. ``risen_universalis_v1`` is
+registered and is not in this loop: that loop records a fixture approval,
+and the risen smoke must not. Backup, restore and tamper checks use temporary
+copies. They never open .research/afterlife-pilot-20261004.
 """
 
 from __future__ import annotations
@@ -186,8 +188,10 @@ class PackAcceptanceTests(unittest.TestCase):
         return run_command(store, case["study"], case["analyst"], "pack.analyse", payload)
 
     def test_registered_packs_are_exactly_the_acceptance_set(self):
-        self.assertEqual(tuple(registry.PACKS), PACKS)
+        self.assertEqual(tuple(registry.PACKS), (*PACKS, "risen_universalis_v1"))
         self.assertNotIn("locked_fixture_v2", registry.PACKS)
+        risen = registry.load_pack("risen_universalis_v1")
+        self.assertEqual(tuple(risen.manifest.execution_profiles), ("uv_locked_python_v2",))
 
     def test_fixture_review_builds_an_internal_scaffold_without_scientific_approval(self):
         semantics = set()

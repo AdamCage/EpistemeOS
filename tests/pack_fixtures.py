@@ -59,6 +59,12 @@ def _afterlife_request(workdir: Path) -> api.CompileRequest:
     return api.CompileRequest(parameters={}, host_inputs={}, capture=capture)
 
 
+def _risen_request(workdir: Path) -> api.CompileRequest:
+    return api.CompileRequest(
+        parameters={"contrast": "paired_difference"},
+        host_inputs={"fixture_id": "local-smoke-rows-v1"}, capture=None)
+
+
 def _tabular_request(workdir: Path) -> api.CompileRequest:
     from episteme.domains import registry
     source = workdir / "source"
@@ -76,6 +82,7 @@ FIXTURES: dict[str, tuple[str, Callable[[Path], api.CompileRequest]]] = {
     "synthetic_causal_v1": ("episteme.domains.packs.synthetic_causal_v1", _synthetic_request),
     "afterlife_seed_v1": ("episteme.domains.packs.afterlife_seed_v1", _afterlife_request),
     "tabular_classification_v1": ("episteme.domains.packs.tabular_classification_v1", _tabular_request),
+    "risen_universalis_v1": ("episteme.domains.packs.risen_universalis_v1", _risen_request),
 }
 
 
@@ -89,16 +96,41 @@ def _run(program: bytes, data: bytes, unit: int, workdir: Path,
     return {label: (workdir / path).read_bytes() for label, path in outputs.items()}
 
 
-def run_programs(plan: api.ExecutionPlan, roster: Any, workdir: Path
+def _run_tree(tree: api.SourceTree, data: bytes, unit: int, workdir: Path,
+              outputs: dict[str, str]) -> dict[str, bytes]:
+    """Materialize a v2 source tree and run it with the local interpreter.
+
+    This is conformance of the program logic. It does not create a uv
+    environment and it is not the kernel's ``uv_locked_python_v2`` runner.
+    ``-s`` keeps the script directory importable; ``-I`` would hide it.
+    """
+    workdir.mkdir(parents=True)
+    for path, content in tree.files.items():
+        target = workdir.joinpath(*path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    (workdir / tree.input_name).write_bytes(data)
+    subprocess.run([sys.executable, "-s", "-B", tree.entry_point, tree.input_name, "--seed", str(unit)],
+                   cwd=workdir, check=True, capture_output=True, timeout=120)
+    return {label: (workdir / path).read_bytes() for label, path in outputs.items()}
+
+
+def run_programs(plan: api.ExecutionPlan | api.ExecutionPlanV2, roster: Any, workdir: Path
                  ) -> tuple[list[dict[str, Any]], dict[str, bytes]]:
     """Primary then same-data reanalysis for each roster unit, like a batch."""
     outputs = dict(plan.outputs)
     slots: list[dict[str, Any]] = []
     blobs: dict[str, bytes] = {}
     for unit in roster:
-        primary = _run(plan.primary_program, plan.input, unit, workdir / f"primary-{unit}", outputs)
-        repeated = _run(plan.reanalysis_program, primary["raw_data"], unit,
-                        workdir / f"reanalysis-{unit}", outputs)
+        if type(plan) is api.ExecutionPlanV2:
+            primary = _run_tree(plan.primary_program, plan.input, unit,
+                                workdir / f"primary-{unit}", outputs)
+            repeated = _run_tree(plan.reanalysis_program, primary["raw_data"], unit,
+                                 workdir / f"reanalysis-{unit}", outputs)
+        else:
+            primary = _run(plan.primary_program, plan.input, unit, workdir / f"primary-{unit}", outputs)
+            repeated = _run(plan.reanalysis_program, primary["raw_data"], unit,
+                            workdir / f"reanalysis-{unit}", outputs)
         for label, mode, produced in (("primary", "primary", primary),
                                       ("reanalysis", "independent_reanalysis", repeated)):
             keys = {}
@@ -111,7 +143,8 @@ def run_programs(plan: api.ExecutionPlan, roster: Any, workdir: Path
     return slots, blobs
 
 
-def protocol_payload(draft: api.ProtocolDraft, plan: api.ExecutionPlan) -> dict[str, Any]:
+def protocol_payload(draft: api.ProtocolDraft, plan: api.ExecutionPlan | api.ExecutionPlanV2
+                     ) -> dict[str, Any]:
     """A protocol payload as the kernel would record it, without a Store."""
     frozen = plan.to_dict()
     design = api.thaw(draft.statistical_design)
@@ -126,7 +159,7 @@ def protocol_payload(draft: api.ProtocolDraft, plan: api.ExecutionPlan) -> dict[
 
 
 def analysis_inputs(manifest: api.PackManifest, request: api.CompileRequest,
-                    draft: api.ProtocolDraft, plan: api.ExecutionPlan,
+                    draft: api.ProtocolDraft, plan: api.ExecutionPlan | api.ExecutionPlanV2,
                     slots: list[dict[str, Any]], blobs: dict[str, bytes],
                     protocol_hash: str = "f" * 64) -> tuple[api.AnalysisContext, api.CasView]:
     protocol = protocol_payload(draft, plan)

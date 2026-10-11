@@ -2,7 +2,9 @@
 
 Research harness для вычислительных научных исследований: конкурирующие объяснения → выбор эксперимента → воспроизводимое evidence → независимое review → новый план → публикационный пакет.
 
-**Статус: начальная реализация, не готовый автономный AI Scientist.** Исследованы `llm-semantic-afterlife`, AI Scientist, Kosmos, Virtual Lab, Robin и AI Co-Scientist; спроектирована архитектура и реализовано проверяемое локальное ядро. Публикационное качество и превосходство над другими системами пока не оценены.
+**Статус: начальная реализация, не готовый автономный AI Scientist.** Исследованы `llm-semantic-afterlife`, AI Scientist, Kosmos, Virtual Lab, Robin и AI Co-Scientist; спроектирована архитектура и реализовано проверяемое локальное ядро. Публикационное качество и превосходство над другими системами пока не оценены. Полностью автономный учёный не заявляется: контрольные точки и научный review остаются человеческими.
+
+Границы текущего main (ревью было против `7718d8d`; этот срез его продолжает, main до него не уезжал): `local_subprocess` записывает `os_isolation=none`, `sandbox=false`, `network_enforcement=not_enforced`. `uv_locked_python_v2` — гигиена окружения и воспроизводимость, не security sandbox; код исполнителя работает от того же пользователя ОС и теоретически может читать Store. Это по-прежнему блокирует утверждение «исполнитель физически не мог прочитать данные reviewer или Store». Контейнерный backend (`--network none`, `--read-only`, allowlist mount) есть и не является исполнителем всего цикла: `cycle step` запускает локальный runner. `reproduce` — повтор того же кода, не replication. DomainPack не повышает силу claim: потолок считает ядро. Для внешнего API `model_id` — наблюдённое исполнение, не обещание точного воспроизведения. Находки high аудита закрыты; A-17 закрыта согласованным снимком Graph; A-20 и A-21 открыты.
 
 
 Первый агентный task реализован через [Codex CLI adapter](docs/decisions/0007-model-proposals.md): сохранённый вопрос → ответ модели → проверенные по форме hypotheses/ExplanationSet. Второй [task предложения эксперимента](docs/decisions/0008-experiment-proposals.md) принимает frozen ExplanationSet/tree и создаёт exploratory protocol плюс новый tree node из допустимого ответа. Failed, invalid и abstained responses сохраняются; после неизвестного исхода автоматического повторного вызова нет. Это trusted local execution, без файлового/сетевого sandbox, доказанной независимости или научного approval.
@@ -50,7 +52,7 @@ uv run episteme pack verify --root .research/study
 uv run episteme analysis verify --root .research/study
 ```
 
-`analysis verify` так же без записи пересчитывает зарегистрированными адаптерами все `batch_analysis` и сообщает `matched` или причину расхождения. Совпадение подтверждает только, что этот код на этом снимке даёт те же bytes proposal, а не правильность вывода. Пакет — доверенный локальный Python в процессе ядра, а не изолированный plugin.
+`analysis verify` так же без записи пересчитывает зарегистрированными адаптерами все `batch_analysis` и сообщает `matched` или причину расхождения. Совпадение подтверждает только, что этот код на этом снимке даёт те же bytes proposal, а не правильность вывода. Хуки пакета исполняются в subprocess того же пользователя ОС ([ADR 0024](docs/decisions/0024-pack-hook-subprocess.md)): это не процесс ядра и не sandbox. Профиль `uv_locked_python_v2` ([ADR 0019](docs/decisions/0019-execution-profile-v2.md)) закрывает дерево исходников и lock uv; он тоже не sandbox. `trusted_local_python_v1` остаётся у прежних пакетов. `risen_universalis_v1` принимает только v2; дым — механический, не исследование.
 
 Ручной `domain.bind` через `episteme command` фиксирует domain recipe, исходник адаптера и параметры batch до исполнения planning-bound protocol. Его используют synthetic adapter и офлайн-пилот на исторических траекториях Afterlife. Сам historical import по-прежнему не создаёт анализируемые runs или claim. Контракты — [ADR 0014](docs/decisions/0014-manual-domain-binding.md) и [ADR 0015](docs/decisions/0015-afterlife-historical-pilot.md).
 
@@ -76,7 +78,7 @@ uv run episteme analysis verify --root .research/study
 - [Контракт DomainPack: envelopes, statistical report и потолок силы claim](docs/decisions/0016-domain-pack-contract.md) — принят 4 октября 2026 и реализуется поэтапно; текущий статус шагов указан в самом ADR.
 - [Инкрементальная проверка цепочки событий и receipts](docs/decisions/0017-incremental-verification.md).
 - [Состязательный аудит коммита `da6aa2a`](docs/adversarial-audit-2026-10-04.md) от 4 октября 2026: 23 воспроизведённые находки (6 high, 7 medium, 10 low), PoC и статус исправлений.
-- [Семейства claims и допуск reviews к решениям](docs/decisions/0018-claim-families-and-review-admission.md) — исправления семантических находок аудита; принят 4 октября 2026 и реализуется поэтапно. Пока шаги не выполнены, находки A-01–A-10, A-14 и A-22 остаются открытыми; статус указан в аудите и в самом ADR.
+- [Семейства claims и допуск reviews к решениям](docs/decisions/0018-claim-families-and-review-admission.md) — в main. Находки high аудита (A-01–A-06) закрыты. A-17 закрыта согласованным снимком событий и receipts в Graph. A-20 и A-21 остаются открытыми. Статус — в разделе 9 аудита.
 
 ## Локальный запуск
 
@@ -99,7 +101,9 @@ Demo выполняет три реальных CPU-вычисления на с
 
 Флаг `--with-search` добавляет сохраняемый турнир с перестановкой A/B, два варианта эксперимента и best-first выбор под бюджетом. Неисполненная альтернатива остаётся в дереве. Судейские оценки и компоненты приоритета заданы fixture-кодом; рейтинг не является оценкой научной истинности.
 
-`examples/local_execution.py` использует общий runner: создаёт frozen Python jobs, выполняет primary и отдельный повторный анализ, сохраняет manifests и останавливается перед scientific review. Runner поддерживает `execution status`, `execution work` и `execution reconcile`; неизвестный исход после dispatch не запускается повторно. Это trusted local backend без filesystem/network sandbox. У среды фиксируется fingerprint интерпретатора/ОС, а не переносимый полный environment bundle.
+`examples/local_execution.py` использует общий runner: создаёт frozen Python jobs, выполняет primary и отдельный повторный анализ, сохраняет manifests и останавливается перед scientific review. Runner поддерживает `execution status`, `execution work` и `execution reconcile`; неизвестный исход после dispatch не запускается повторно. Это trusted local backend без filesystem/network sandbox. У профиля v1 фиксируется fingerprint интерпретатора/ОС. Профиль v2 отдельно замораживает дерево и uv lock; demo выше остаётся на v1.
+
+`examples/risen_universalis_v1/smoke.py` проводит маленький локальный путь нового пакета только через `uv_locked_python_v2`: вопрос, два объяснения, два замороженных контраста, один выбранный, два primary и их reanalysis, назначение reviewer, механический package. Нужен `uv` на PATH, не нужны сеть, Docker и GPU. Одобрение не создаётся. Контрольные точки пишутся рядом со store, не в него. Процедура — в [risen-universalis-v1.md](docs/research/risen-universalis-v1.md).
 
 `examples/search_execution_batch.py` связывает Search с runner: замораживает primary/reanalysis для всех seeds и резервирует число attempts. `episteme batch advance <batch-id> --root <directory>` продолжает сохранённый набор; unknown удерживает резерв, а failed primary оставляет зависимый переанализ заблокированным. Completed batch останавливается на `awaiting_analysis`, без claim или review. DB/CAS restore сохраняет evidence, но не локальный token разрешения новых запусков batch.
 

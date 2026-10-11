@@ -1,8 +1,12 @@
 # ADR 0019 — профиль исполнения v2: дерево исходников, закрытое окружение uv и воспроизведение
 
-Дата: 4 октября 2026. Статус: **предложено; шаги 1–3 реализованы и проверены локально в ветке `exec-profile-v2`, в main не влиты**. Что проверено, указано в разделе «Ход реализации»; числа проверок — в [validation.md](../validation.md). Принятие решения — при интеграции ветки в main. Основания: [архитектура](../architecture.md) §5, §9, §11; [MVP-план](../mvp-plan.md), M2 (provenance closure, матрица изоляции, чистый offline-запуск); ADR [0005](0005-local-runner.md), [0006](0006-execution-batches.md), [0016](0016-domain-pack-contract.md) (раздел «Место для execution profile и environment closure»); находка A-12 аудита `docs/adversarial-audit-2026-10-04.md` и понятие managed evidence из ADR 0018 `docs/decisions/0018-claim-families-and-review-admission.md`. Оба последних документа на момент написания есть только в рабочей копии main, поэтому здесь они указаны путями, а не ссылками.
+Дата: 4 октября 2026. Статус: **шаги 1–3 влиты в main.** Предложение писалось, когда ветка `exec-profile-v2` ещё не была в main; фраза «в main не влиты» описывала тот момент и больше не описывает текущий main. Ревью этого среза было против `7718d8d`. Что проверено, указано в разделе «Ход реализации»; числа проверок — в [validation.md](../validation.md).
+
+**Текущая граница.** `uv_locked_python_v2` — гигиена окружения и воспроизводимость, не security sandbox. `local_subprocess`: `os_isolation=none`, `sandbox=false`, `network_enforcement=not_enforced`. Исполнитель — тот же пользователь ОС и теоретически может читать Store. Контейнерный backend существует и не является исполнителем `cycle step`. `reproduce` — same-code replay, не replication. Наблюдение CI: run 37248096296 на Ubuntu 3.11 с реальным контейнером прошёл после `7718d8d`. Это факт одного прогона, не универсальная гарантия sandbox. Основания: [архитектура](../architecture.md) §5, §9, §11; [MVP-план](../mvp-plan.md), M2 (provenance closure, матрица изоляции, чистый offline-запуск); ADR [0005](0005-local-runner.md), [0006](0006-execution-batches.md), [0016](0016-domain-pack-contract.md) (раздел «Место для execution profile и environment closure»); находка A-12 аудита `docs/adversarial-audit-2026-10-04.md` и понятие managed evidence из ADR 0018 `docs/decisions/0018-claim-families-and-review-admission.md`. Оба последних документа на момент написания есть только в рабочей копии main, поэтому здесь они указаны путями, а не ссылками.
 
 ## Проблема
+
+Раздел описывает профиль v1 на момент предложения. Многофайловый исходник и uv-closure на текущем main есть; они не стали sandbox. Контейнер позже описан в ADR 0025 и не заменяет локальный runner. См. статус выше.
 
 Профиль [`trusted_local_python_v1`](0005-local-runner.md) исполняет ровно один stdlib-файл: `[sys.executable, "-I", "-S", "program.py", "input.dat", "--seed", N]`, без site-packages. Он записывает fingerprint интерпретатора и ОС (включая SHA-256 исполняемого файла Python), argv и SHA-256 программы и input. У этого профиля три ограничения.
 
@@ -10,7 +14,7 @@
 - **A-12.** Worker наследует всё окружение controller (`execution.py`, `Popen` без `env=`), так что программа читает переменные с секретами. Рабочий каталог `<root>/executions/<token>` лежит внутри корня хранилища, и `../../state.sqlite3` — это живой журнал, который затем оценивает результат этой программы.
 - **Воспроизведение.** Команды `episteme reproduce` нет. Повторный запуск того же кода нельзя ни выполнить из CAS, ни отличить в истории от независимой проверки.
 
-Docker на этом хосте недоступен ([validation](../validation.md), раздел о среде). Контейнеры остаются будущим isolation profile; этот ADR их не требует.
+На хосте, где писалось предложение, Docker был недоступен ([validation](../validation.md), раздел о среде). Этот ADR контейнер не требует. Позже ADR 0025 добавил необязательный контейнерный backend; `cycle step` его не включает. Наблюдаемый проход контейнерного теста в CI — run 37248096296 после `7718d8d`, не гарантия sandbox.
 
 ## Решение
 

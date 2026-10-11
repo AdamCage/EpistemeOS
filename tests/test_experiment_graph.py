@@ -51,7 +51,7 @@ class ExperimentGraphTests(unittest.TestCase):
         self.assertEqual(json.loads(published), PROPOSAL_SCHEMA)
 
     def project(self, history, index):
-        projection = _Projection(None, history)
+        projection = _Projection(None, history, [])
         projection.event = history[index]
         with patch("episteme.agents.agent_artifacts", return_value=set()):
             projection.project()

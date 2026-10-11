@@ -739,14 +739,44 @@ class Store:
     def export(self) -> str:
         return "".join(canonical(event).decode() + "\n" for event in self.events())
 
+    def snapshot(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Copies of events and receipts from one SQLite read transaction.
+
+        A command another connection commits is wholly inside this pair or
+        wholly absent. A receipt from a later commit is not checked against
+        an older event list, so it cannot look like a corrupt range. The
+        range check itself is unchanged: a receipt that does not bind the
+        events in this same snapshot still fails. Copies do not lock out
+        later appends; call again to observe them.
+        """
+        owns = not self.db.in_transaction
+        checkpoint = self._checkpoint() if owns else None
+        try:
+            if owns:
+                self.db.execute("BEGIN")
+            self._sync(receipts=True)
+            history = [_clone(event) for event in self._events]
+            receipts = [_clone(receipt) for receipt in self._receipts]
+            if owns:
+                self.db.commit()
+            return history, receipts
+        except BaseException:
+            if owns and self.db.in_transaction:
+                self.db.rollback()
+                if checkpoint is not None:
+                    self._restore(checkpoint)
+            raise
+
     def external_checkpoint(self) -> str:
         """One digest of the verified history, for a person to keep outside this store.
 
-        The digest is not written into the database. Calling this method does not
-        mean an external copy exists. Comparison is ``digest == expected``.
+        Events and receipts are one snapshot, so a concurrent command cannot
+        mix a new receipt into an older chain. The digest is not written into
+        the database. Calling this method does not mean an external copy
+        exists, and a matching digest is not scientific success. Comparison
+        is ``digest == expected``.
         """
-        history = self.events()
-        receipts = self.receipts()
+        history, receipts = self.snapshot()
         material = canonical(dict(
             format="episteme-external-checkpoint-v1",
             revision=len(history),
