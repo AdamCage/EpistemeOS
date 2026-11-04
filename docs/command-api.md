@@ -1,6 +1,6 @@
 # Локальные команды v1
 
-Статус обновлён 4 октября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/DomainBinding/Replanning/Followup/ReviewAssignment/Literature/PaperBuilder. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса. `episteme cycle step` не является новым action этой схемы: он сам выбирает одну уже существующую команду, [ADR 0020](decisions/0020-research-cycle-controller.md).
+Статус обновлён 4 ноября 2026. `CommandService` и CLI `command` добавляют идемпотентную доставку к локальному Planning/Kernel/Search/Execution/Batch/DomainBinding/Replanning/Followup/ReviewAssignment/Literature/PaperBuilder/Stage. Это запись перехода состояния; исполнение процесса, LLM-вызов и публикация не входят в handler. [ADR 0001](decisions/0001-command-admission.md) описывает транзакционную границу, [transport schema](../schemas/command-v1.schema.json) — оболочку запроса. `episteme cycle step` не является новым action этой схемы: он сам выбирает одну уже существующую команду, [ADR 0020](decisions/0020-research-cycle-controller.md). `episteme stage run` тоже не action: он вызывает уже существующие команды и `stage.close`.
 
 ## Использование
 
@@ -72,6 +72,8 @@ with Store(".research/command-example") as store:
 | `literature.record_check` | planner | ID `literature_check`: исход `verified_by_recorded_check` или `contradicted`, digest байтов локатора и digest пассажа |
 | `literature.cite` | writer | ID `literature_citation`: ссылка на Locator, не на строку |
 | `paper.build` | writer | ID внутреннего draft; без materialization. Необязательные `citations` и `support` |
+| `stage.open` | planner | Frozen контракт на уже сделанный `pack.preregister`; не запуск и не успех |
+| `stage.close` | planner | Disposition после повторного чтения истории; `scientific_validity=not_assessed` |
 
 Blob должен быть заранее сохранён через `Store.put`/`put_json`; command ссылается на digest. Здесь нет универсальной загрузки файлов из произвольных agent paths. `paper.build` сохраняет bounded внутренние artifacts; `PaperBuilder.materialize` вызывается отдельно и заново проверяет актуальность evidence и, если scaffold использовал цитату как поддержку, текущий статус локатора.
 
@@ -182,6 +184,12 @@ Writable opening аддитивно создаёт таблицу квитанц
 Допуск анализа требует caller-declared `--analyst` и `--reviewer`, потому что до записи анализа этих id в истории нет. Назначение берёт reviewer из уже допущенного анализа. Иной `--reviewer` отвергается без записи.
 
 Остановки (`stop` в JSON, код выхода 0): `paper_candidate`, `open_veto`, `open_obligation`, `human_scientific_input`, `budget_exhausted`, `missing_budget`, `blocked`. Если `paper_candidate` держится на synthetic fixture approval, причина это говорит, а `scientific_validity` в отчёте остаётся `not_assessed`. Контроллер не вызывает модель, не отправляет review, не закрывает obligation, не повышает outcome и не собирает paper. Запуск — trusted local runner этого пользователя ОС, без sandbox. Подробности — [ADR 0020](decisions/0020-research-cycle-controller.md).
+
+## Stage-путь
+
+`stage.open` принимает `question`, `explanation_set`, `pack_id`, `preregistration` (id `pack_binding`), `attempt_ceiling`, `criteria` и optional `predecessor`. Protocol берётся из уже сделанного `pack.preregister`. `stage.close` принимает только `stage` и считает disposition на текущей истории: `criteria_met`, `criteria_not_met`, `stopped_budget` или `blocked`. Caller disposition не передаёт. `scientific_validity` остаётся `not_assessed`.
+
+`episteme stage run` не action этой схемы. Он продолжает batch, вызывает `pack.analyse` с `reviewer_actor=stage-unreviewed` без смены payload и без `review.assign`, затем `stage.close`. Метка не входит в contributors и не является approval. Close пишет `review=not_requested`. Изоляция — тот же пользователь ОС, без sandbox. Подробности — [ADR 0026](decisions/0026-stage-control.md).
 
 ## Model proposal commands v1
 

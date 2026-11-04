@@ -105,6 +105,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     package_command.add_argument("--output", type=Path, required=True,
                                  help="New directory outside the research store")
     package_command.add_argument("--root", type=Path, required=True, help="Research state directory")
+    stages = subcommands.add_parser(
+        "stage", help="Open, resume and read one mechanical research stage; not scientific approval")
+    stage_ops = stages.add_subparsers(dest="operation", required=True)
+    stage_open_cmd = stage_ops.add_parser("open", help="Freeze a stage contract on an existing pack.preregister")
+    stage_open_cmd.add_argument("--study", required=True, help="Persisted study id")
+    stage_open_cmd.add_argument("--actor", required=True, type=_actor_id, help="Caller-declared planner id")
+    stage_open_cmd.add_argument("--question", required=True, help="Existing research_question id")
+    stage_open_cmd.add_argument("--explanation-set", required=True, dest="explanation_set",
+                                help="Existing explanation_set id")
+    stage_open_cmd.add_argument("--pack-id", required=True, dest="pack_id")
+    stage_open_cmd.add_argument("--preregistration", required=True,
+                                help="pack_binding id from an already admitted pack.preregister")
+    stage_open_cmd.add_argument("--attempt-ceiling", required=True, type=int, dest="attempt_ceiling",
+                                help="Attempt cap; below roster size closes as stopped_budget without launches")
+    stage_open_cmd.add_argument("--criteria", required=True,
+                                help="JSON list of mechanical criteria; not a scientific rubric")
+    stage_open_cmd.add_argument("--predecessor", default=None, help="Optional closed stage id")
+    stage_open_cmd.add_argument("--root", type=Path, required=True)
+    stage_run_cmd = stage_ops.add_parser(
+        "run", help="Resume the frozen stage from history until close; the caller does not name the next action")
+    stage_run_cmd.add_argument("stage", help="stage_open event id")
+    stage_run_cmd.add_argument("--analyst", required=True, type=_actor_id, help="Caller-declared analyst id")
+    stage_run_cmd.add_argument("--executor", required=True, type=_actor_id, help="Caller-declared executor id")
+    stage_run_cmd.add_argument("--replicator", required=True, type=_actor_id,
+                               help="Caller-declared replicator id")
+    stage_run_cmd.add_argument("--root", type=Path, required=True)
+    stage_status_cmd = stage_ops.add_parser("status", help="Read-only stage progress; not a close")
+    stage_status_cmd.add_argument("stage", help="stage_open event id")
+    stage_status_cmd.add_argument("--root", type=Path, required=True)
     cycle = subcommands.add_parser(
         "cycle", help="Report or apply one already-legal mechanical step; stop for a scientific decision")
     cycle_ops = cycle.add_subparsers(dest="operation", required=True)
@@ -253,6 +282,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 with _opened(args.root, read_only=True) as store:
                     result = verify(store)
                 status = 0 if result["status"] == "matched" else 1
+        elif args.command == "stage":
+            from .stages import stage_open, stage_run, stage_status
+            if not (args.root / "state.sqlite3").is_file():
+                raise ValueError("existing research state is required")
+            with _opened(args.root, read_only=args.operation == "status") as store:
+                if args.operation == "open":
+                    criteria = parse_command(args.criteria)
+                    if type(criteria) is not list:
+                        raise ValueError("stage criteria must be a JSON list")
+                    result = stage_open(store, actor=Actor(args.actor, "planner"), study=args.study,
+                                        question=args.question, explanation_set=args.explanation_set,
+                                        pack_id=args.pack_id, preregistration=args.preregistration,
+                                        attempt_ceiling=args.attempt_ceiling, criteria=criteria,
+                                        predecessor=args.predecessor)
+                elif args.operation == "run":
+                    result = stage_run(store, args.stage, analyst=Actor(args.analyst, "analyst"),
+                                       executor=args.executor, replicator=args.replicator)
+                else:
+                    result = stage_status(store, args.stage)
+            status = 0
         elif args.command == "cycle":
             from .cycle import cycle_step
             if not (args.root / "state.sqlite3").is_file():

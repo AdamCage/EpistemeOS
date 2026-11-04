@@ -56,6 +56,8 @@ class NodeKind(str, Enum):
     DOMAIN_BINDING = "domain_binding"
     PACK_BINDING = "pack_binding"
     PACK_ANALYSIS = "pack_analysis"
+    STAGE_OPEN = "stage_open"
+    STAGE_CLOSE = "stage_close"
     EXECUTION_JOB = "execution_job"
     EXECUTION_DISPATCH = "execution_dispatch"
     EXECUTION_FINALIZED = "execution_finalized"
@@ -111,6 +113,7 @@ class Relation(str, Enum):
     PACK_ANALYSIS_ARTIFACT = "pack_analysis_artifact"
     PACK_ANALYSIS_INPUT = "pack_analysis_allowed_input"
     REVIEW_PACK = "review_pack"
+    STAGE_REFERENCE = "stage_reference"
     REVIEW_BATCH = "review_batch"
     EXECUTION_RUN = "execution_run"
     EXECUTION_JOB = "execution_job"
@@ -460,6 +463,40 @@ class _Projection:
                 self.blob(p[field], Relation.PACK_ANALYSIS_ARTIFACT, field)
             for index, key in enumerate(p["cas_allowlist"]):
                 self.blob(key, Relation.PACK_ANALYSIS_INPUT, f"cas_allowlist[{index}]")
+            return
+        if kind == "stage_open":
+            question = self.ref(p["question"], "research_question", Relation.STAGE_REFERENCE, "question")
+            self.hash_ref(question, p["question_hash"], "question_hash")
+            explanation = self.ref(p["explanation_set"], "explanation_set", Relation.STAGE_REFERENCE,
+                                   "explanation_set")
+            self.hash_ref(explanation, p["explanation_set_hash"], "explanation_set_hash")
+            binding = self.ref(p["preregistration"], "pack_binding", Relation.STAGE_REFERENCE,
+                               "preregistration")
+            self.hash_ref(binding, p["preregistration_hash"], "preregistration_hash")
+            protocol = self.ref(p["protocol"], "protocol", Relation.STAGE_REFERENCE, "protocol")
+            self.hash_ref(protocol, p["protocol_hash"], "protocol_hash")
+            if p["predecessor"] is not None:
+                prior = self.ref(p["predecessor"], "stage_open", Relation.STAGE_REFERENCE, "predecessor")
+                self.hash_ref(prior, p["predecessor_hash"], "predecessor_hash")
+            if p.get("scientific_validity") != "not_assessed":
+                self.fail("stage open assesses scientific validity")
+            return
+        if kind == "stage_close":
+            opened = self.ref(p["stage"], "stage_open", Relation.STAGE_REFERENCE, "stage")
+            self.hash_ref(opened, p["stage_hash"], "stage_hash")
+            protocol = self.ref(p["protocol"], "protocol", Relation.STAGE_REFERENCE, "protocol")
+            self.hash_ref(protocol, p["protocol_hash"], "protocol_hash")
+            for field, target in (("batch", "batch_plan"), ("settlement", "batch_settlement"),
+                                  ("analysis", "pack_analysis"), ("claim", "claim")):
+                if p[field] is not None:
+                    referenced = self.ref(p[field], target, Relation.STAGE_REFERENCE, field)
+                    self.hash_ref(referenced, p[field + "_hash"], field + "_hash")
+            if p.get("review") != "not_requested":
+                self.fail("stage close requested a review")
+            if p.get("scientific_validity") != "not_assessed":
+                self.fail("stage close assesses scientific validity")
+            if p.get("disposition") not in {"criteria_met", "criteria_not_met", "stopped_budget", "blocked"}:
+                self.fail("invalid stage close disposition")
             return
         if kind == "batch_analysis":
             fields = {"batch": "batch_plan", "settlement": "batch_settlement",
@@ -1020,6 +1057,13 @@ class _Projection:
                 followup_index(self.store, self.history)
             except (ValueError, KeyError, TypeError) as exc:
                 self.fail(f"invalid follow-up history: {exc}")
+        if (any(event["kind"] in {"stage_open", "stage_close"} for event in self.history)
+                or any(receipt["request"]["action"] in {"stage.open", "stage.close"} for receipt in receipts)):
+            from .stages import stage_index
+            try:
+                stage_index(self.store, self.history, receipts=receipts)
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid stage history: {exc}")
         if (any(event["kind"].startswith("literature_") for event in self.history)
                 or any(receipt["request"]["action"].startswith("literature.") for receipt in receipts)):
             from .literature import _index as literature_index

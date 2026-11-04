@@ -2,9 +2,9 @@
 
 Research harness для вычислительных научных исследований: конкурирующие объяснения → выбор эксперимента → воспроизводимое evidence → независимое review → новый план → публикационный пакет.
 
-**Статус: начальная реализация, не готовый автономный AI Scientist.** Исследованы `llm-semantic-afterlife`, AI Scientist, Kosmos, Virtual Lab, Robin и AI Co-Scientist; спроектирована архитектура и реализовано проверяемое локальное ядро. Публикационное качество и превосходство над другими системами пока не оценены. Полностью автономный учёный не заявляется: контрольные точки и научный review остаются человеческими.
+**Статус: начальная реализация, не готовый автономный AI Scientist.** Исследованы `llm-semantic-afterlife`, AI Scientist, Kosmos, Virtual Lab, Robin и AI Co-Scientist; спроектирована архитектура и реализовано проверяемое локальное ядро. Публикационное качество и превосходство над другими системами пока не оценены. Полностью автономный учёный не заявляется: научный review остаётся человеческим. Для одного уже замороженного вычислительного stage путь оператора — `episteme stage`, а не замена всего harness.
 
-Границы текущего main (ревью было против `7718d8d`; этот срез его продолжает, main до него не уезжал): `local_subprocess` записывает `os_isolation=none`, `sandbox=false`, `network_enforcement=not_enforced`. `uv_locked_python_v2` — гигиена окружения и воспроизводимость, не security sandbox; код исполнителя работает от того же пользователя ОС и теоретически может читать Store. Это по-прежнему блокирует утверждение «исполнитель физически не мог прочитать данные reviewer или Store». Контейнерный backend (`--network none`, `--read-only`, allowlist mount) есть и не является исполнителем всего цикла: `cycle step` запускает локальный runner. `reproduce` — повтор того же кода, не replication. DomainPack не повышает силу claim: потолок считает ядро. Для внешнего API `model_id` — наблюдённое исполнение, не обещание точного воспроизведения. Находки high аудита закрыты; A-17 закрыта согласованным снимком Graph; A-20 и A-21 открыты.
+Границы текущего main (ревью было против `7718d8d`; этот срез его продолжает, main до него не уезжал): `local_subprocess` записывает `os_isolation=none`, `sandbox=false`, `network_enforcement=not_enforced`. `uv_locked_python_v2` — гигиена окружения и воспроизводимость, не security sandbox; код исполнителя работает от того же пользователя ОС и теоретически может читать Store. Это по-прежнему блокирует утверждение «исполнитель физически не мог прочитать данные reviewer или Store». Контейнерный backend (`--network none`, `--read-only`, allowlist mount) есть и не является исполнителем всего цикла: `cycle step` и `stage run` запускают локальный runner. `reproduce` — повтор того же кода, не replication. DomainPack не повышает силу claim: потолок считает ядро. Для внешнего API `model_id` — наблюдённое исполнение, не обещание точного воспроизведения. Находки high аудита закрыты; A-17 закрыта согласованным снимком Graph; A-20 и A-21 открыты.
 
 
 Первый агентный task реализован через [Codex CLI adapter](docs/decisions/0007-model-proposals.md): сохранённый вопрос → ответ модели → проверенные по форме hypotheses/ExplanationSet. Второй [task предложения эксперимента](docs/decisions/0008-experiment-proposals.md) принимает frozen ExplanationSet/tree и создаёт exploratory protocol плюс новый tree node из допустимого ответа. Failed, invalid и abstained responses сохраняются; после неизвестного исхода автоматического повторного вызова нет. Это trusted local execution, без файлового/сетевого sandbox, доказанной независимости или научного approval.
@@ -41,6 +41,16 @@ uv run episteme batch advance <batch-id> --root .research/study
 uv run episteme analysis status <batch-id> --root .research/study
 uv run episteme analysis advance <batch-id> --root .research/study --planner planner-1 --analyst analyst-1 --reviewer reviewer-1
 ```
+
+Автономный путь одного уже замороженного pack-протокола — [ADR 0026](docs/decisions/0026-stage-control.md). После `pack.preregister` оператор открывает stage и читает закрытие; внутри нет отдельных команд на slot, dispatch, анализ и назначение reviewer:
+
+```powershell
+uv run episteme stage open --root .research/study --study <study-id> --actor planner-1 --question <question-id> --explanation-set <set-id> --pack-id synthetic_causal_v1 --preregistration <pack-binding-id> --attempt-ceiling 2 --criteria "[{\"kind\":\"analysis_recorded\"}]"
+uv run episteme stage run <stage-id> --root .research/study --analyst analyst-1 --executor executor-1 --replicator replicator-1
+uv run episteme stage status <stage-id> --root .research/study
+```
+
+`stage run` продолжает историю и закрывает stage по заранее замороженным механическим критериям. `pack.analyse` по-прежнему требует `reviewer_actor`; runner подставляет `stage-unreviewed` и не вызывает `review.assign`. Close пишет `review=not_requested`. Disposition `criteria_met` не научное одобрение; `criteria_not_met`, `stopped_budget` и `blocked` сохраняются. `scientific_validity` остаётся `not_assessed`. Это не замена review, paper, literature и `cycle step`.
 
 `analysis advance` пересчитывает метрику из наблюдённых raw data, сохраняет bounded exploratory claim и назначает reviewer на текущем evidence basis. Команда `analysis.apply` допускает только proposal, который зарегистрированный адаптер заново вычисляет на том же снимке ([ADR 0018](docs/decisions/0018-claim-families-and-review-admission.md)): подставить собственный вывод под ID адаптера нельзя. Повтор после перезапуска не создаёт второй claim или assignment. Назначение, approval из которого уже не может быть засчитан (исторический контекст v1 без runs семейства claim или устаревший реестр попыток), не считается: статус возвращается к `awaiting_assignment`, и `analysis advance` назначает reviewer заново. Статус `awaiting_review` не означает научное подтверждение; demo и CLI не создают reviewer verdict. Контракт — [ADR 0013](docs/decisions/0013-batch-analysis-admission.md), фактические проверки — в [validation.md](docs/validation.md).
 
@@ -79,6 +89,7 @@ uv run episteme analysis verify --root .research/study
 - [Инкрементальная проверка цепочки событий и receipts](docs/decisions/0017-incremental-verification.md).
 - [Состязательный аудит коммита `da6aa2a`](docs/adversarial-audit-2026-10-04.md) от 4 октября 2026: 23 воспроизведённые находки (6 high, 7 medium, 10 low), PoC и статус исправлений.
 - [Семейства claims и допуск reviews к решениям](docs/decisions/0018-claim-families-and-review-admission.md) — в main. Находки high аудита (A-01–A-06) закрыты. A-17 закрыта согласованным снимком событий и receipts в Graph. A-20 и A-21 остаются открытыми. Статус — в разделе 9 аудита.
+- [Контроль только по stages](docs/decisions/0026-stage-control.md) — `episteme stage` закрывает один вычислительный stage без review; это не научное одобрение.
 
 ## Локальный запуск
 

@@ -32,6 +32,7 @@ from .followup import Followup
 from .followup_execution import FollowupExecution
 from .literature import Literature
 from .reporting import PaperBuilder
+from .stages import Stage
 from .reproduction import Reproduction
 from .role_profile import Isolation, preflight_container
 from .search import Search
@@ -120,6 +121,8 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "domain.bind": (DomainBinding, DomainBinding.bind, frozenset({"planner"})),
     "pack.preregister": (PackPreregistration, PackPreregistration.preregister, frozenset({"planner"})),
     "pack.analyse": (PackAnalysis, PackAnalysis.analyse, frozenset({"analyst"})),
+    "stage.open": (Stage, Stage.open, frozenset({"planner"})),
+    "stage.close": (Stage, Stage.close, frozenset({"planner"})),
     "proposal.prepare_next": (ProposalExecution, ProposalExecution.prepare_next, frozenset({"planner"})),
     "replanning.record_review": (Replanning, Replanning.record_review, frozenset({"reviewer"})),
     "replanning.resolve_obligation": (Replanning, Replanning.resolve_obligation,
@@ -182,7 +185,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
                                     "claim", "source", "target", "locator", "selection", "tree",
                                     "experiment_node", "job", "batch", "request", "budget",
                                     "obligation", "parent_node", "followup", "review", "terminal",
-                                    "assignment")
+                                    "assignment", "preregistration", "predecessor", "stage")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -217,6 +220,9 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
             "pack_binding": ("protocol", "explanation_set"),
             "batch_analysis": ("batch", "settlement", "terminal", "protocol", "claim"),
             "pack_analysis": ("batch", "settlement", "terminal", "protocol", "binding", "claim"),
+            "stage_open": ("question", "explanation_set", "preregistration", "protocol",
+                           "predecessor"),
+            "stage_close": ("stage", "protocol", "batch", "settlement", "analysis", "claim"),
             "agent_request": (("question", "budget", "explanation_set", "tree")
                               if p.get("schema_version") in {2, 3} else ("question", "budget")),
             "agent_dispatch": ("request",), "agent_response": ("request",),
