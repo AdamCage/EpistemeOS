@@ -113,7 +113,9 @@ class CodexProviderTests(unittest.TestCase):
         environment = {"PATH": "safe-path", "HOME": "existing-home", "CODEX_HOME": "existing-auth-root",
                        "OPENAI_API_KEY": "never-inherit", "CODEX_THREAD_ID": "never-inherit",
                        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "never-inherit", "PRIVATE_SECRET": "never-inherit"}
-        with patch.dict(os.environ, environment, clear=True):
+        # Replace the Python view without clearing native variables. On Windows a
+        # clear/restore round-trip can drop an inherited empty GIT_CONFIG_VALUE.
+        with patch.object(os, "environ", environment):
             self.invoke(process)
         command, call = seen[-1]
         self.assertEqual(call["input"], "Предложи два объяснения.".encode())

@@ -1,0 +1,38 @@
+{
+  "scope": {"population": "synthetic causal demonstration"},
+  "budget": {
+    "stages": 2,
+    "attempts": 4,
+    "model_calls": 0,
+    "literature_calls": 0,
+    "wall_seconds": 600,
+    "operation_seconds": 120
+  },
+  "literature": [],
+  "candidates": [
+    {
+      "label": "observational",
+      "pack_id": "synthetic_causal_v1",
+      "phase": "exploratory",
+      "purpose": "Зафиксировать исходное наблюдательное сравнение.",
+      "parameters": {"n_samples": 64, "assignment": "observational", "analysis": "difference_in_means"},
+      "host_inputs": {
+        "world": {"treatment_effect": 0.0, "confounding_strength": 1.4, "noise_std": 0.5},
+        "seeds": [7],
+        "replication_tolerance": 1e-9
+      }
+    },
+    {
+      "label": "randomized-control",
+      "pack_id": "synthetic_causal_v1",
+      "phase": "exploratory",
+      "purpose": "Проверить контраст при рандомизации назначения.",
+      "parameters": {"n_samples": 64, "assignment": "randomized", "analysis": "difference_in_means"},
+      "host_inputs": {
+        "world": {"treatment_effect": 0.0, "confounding_strength": 1.4, "noise_std": 0.5},
+        "seeds": [13],
+        "replication_tolerance": 1e-9
+      }
+    }
+  ]
+}

@@ -144,10 +144,11 @@ def _metric_numbers(statistical: dict[str, Any], name: str) -> list[float] | Non
     return numbers
 
 
-def _batches_for(store: Store, history: list[dict[str, Any]], protocol: str) -> list[str]:
-    from .batch import _index as batch_index
-    return [batch for batch, state in batch_index(store, history).items()
-            if state["plan"]["payload"]["protocol"] == protocol]
+def _batch_for(store: Store, history: list[dict[str, Any]], protocol: str) -> dict[str, Any] | None:
+    from .batch import batch_summaries
+    matches = [state for state in batch_summaries(store, history) if state["protocol"] == protocol]
+    require(len(matches) <= 1, "stage protocol has multiple batches; choose one explicitly")
+    return matches[0] if matches else None
 
 
 def _analysis_for(store: Store, history: list[dict[str, Any]], batch: str | None
@@ -161,12 +162,11 @@ def _analysis_for(store: Store, history: list[dict[str, Any]], batch: str | None
     return rows[0] if rows else None
 
 
-def _ledger(store: Store, history: list[dict[str, Any]], *, ceiling: int, roster_size: int,
-            batch: str | None) -> dict[str, Any]:
+def _ledger(*, ceiling: int, roster_size: int, state: dict[str, Any] | None) -> dict[str, Any]:
+    # Preserve the schema v1 counters when replaying saved closures.
     counts = dict(enqueued=0, completed=0, failed=0, unknown=0, blocked_dependency=0)
-    if batch is not None:
-        from .batch import batch_state
-        for slot in batch_state(store, batch)["slots"]:
+    if state is not None:
+        for slot in state["slots"]:
             if slot["job"] is not None or slot["status"] != "pending":
                 counts["enqueued"] += 1
             key = slot["status"]
@@ -178,18 +178,16 @@ def _ledger(store: Store, history: list[dict[str, Any]], *, ceiling: int, roster
 def _snapshot(store: Store, history: list[dict[str, Any]], opened: dict[str, Any]
               ) -> dict[str, Any]:
     protocol_id = opened["payload"]["protocol"]
-    batches = _batches_for(store, history, protocol_id)
-    require(len(batches) <= 1, "stage protocol has multiple batches; choose one explicitly")
-    batch_id = batches[0] if batches else None
+    state = _batch_for(store, history, protocol_id)
+    batch_id = state["batch"] if state else None
     settlement = analysis = claim = None
     outcome = inference = None
-    unknown = failed = gate_failed = False
-    if batch_id is not None:
-        from .batch import batch_state
-        state = batch_state(store, batch_id)
+    unknown_jobs = []
+    failed = gate_failed = False
+    if state is not None:
         settlement = (Kernel._get(history, state["settlement"], "batch_settlement")
                       if state["settlement"] else None)
-        unknown = any(slot["status"] == "unknown" for slot in state["slots"])
+        unknown_jobs = [slot["job"] for slot in state["slots"] if slot["status"] == "unknown"]
         if settlement is not None:
             failed = settlement["payload"]["status"] != "completed"
         analysis = _analysis_for(store, history, batch_id)
@@ -202,9 +200,10 @@ def _snapshot(store: Store, history: list[dict[str, Any]], opened: dict[str, Any
     protocol = Kernel._get(history, protocol_id, "protocol")
     return dict(protocol=protocol, batch=Kernel._get(history, batch_id, "batch_plan") if batch_id else None,
                 settlement=settlement, analysis=analysis, claim=claim, outcome=outcome,
-                inference_mode=inference, unknown=unknown, failed=failed, gate_failed=gate_failed,
-                ledger=_ledger(store, history, ceiling=opened["payload"]["attempt_ceiling"],
-                               roster_size=opened["payload"]["roster_size"], batch=batch_id))
+                inference_mode=inference, unknown_jobs=unknown_jobs,
+                failed=failed, gate_failed=gate_failed,
+                ledger=_ledger(ceiling=opened["payload"]["attempt_ceiling"],
+                               roster_size=opened["payload"]["roster_size"], state=state))
 
 
 def _evaluate_criterion(kind_spec: dict[str, Any], facts: dict[str, Any],
@@ -245,8 +244,8 @@ def evaluate_close(store: Store, history: list[dict[str, Any]], opened: dict[str
     facts = _snapshot(store, history, opened)
     evaluations = [_evaluate_criterion(item, facts, store) for item in p["criteria"]]
     ledger = facts["ledger"]
-    if facts["unknown"] or facts["failed"] or facts["gate_failed"]:
-        if facts["unknown"]:
+    if facts["unknown_jobs"] or facts["failed"] or facts["gate_failed"]:
+        if facts["unknown_jobs"]:
             reason = "an unknown attempt has no verified completion and is not rerun"
         elif facts["failed"]:
             reason = "the batch failed technically; the failed attempt is not rerun"
@@ -420,10 +419,10 @@ def _origin(store: Store, stage: str) -> dict[str, Any]:
 
 
 def _execute(store: Store, origin: dict[str, Any], *, actor: str, role: str, action: str,
-             payload: dict[str, Any], causation: str) -> Any:
+             payload: dict[str, Any], causation: str, revision: int) -> Any:
     from .commands import CommandService
     context = dict(command_id=f"stage-{action}-{uuid4().hex}",
-                   expected_revision=len(store.events()), actor=actor, role=role,
+                   expected_revision=revision, actor=actor, role=role,
                    study_id=origin["study_id"], correlation_id=origin["correlation_id"],
                    causation_id=causation)
     return CommandService(store).execute(dict(context=context,
@@ -450,12 +449,11 @@ def stage_open(store: Store, *, actor: Actor, study: str, question: str, explana
 
 
 def stage_status(store: Store, stage: str) -> dict[str, Any]:
-    """Read-only progress. Closing is a separate persisted command."""
+    """Read live progress for an open stage or the frozen decision for a closed one."""
     history = store.events()
     opened = Kernel._get(history, stage, "stage_open")
     closed = _closes(history).get(stage)
-    facts = _snapshot(store, history, opened)
-    report = dict(stage=stage, status="closed" if closed else "open",
+    report = dict(stage=stage,
                   study=opened["payload"]["study_id"],
                   protocol=opened["payload"]["protocol"],
                   pack_id=opened["payload"]["pack_id"],
@@ -463,54 +461,71 @@ def stage_status(store: Store, stage: str) -> dict[str, Any]:
                   attempt_ceiling=opened["payload"]["attempt_ceiling"],
                   roster_size=opened["payload"]["roster_size"],
                   criteria=opened["payload"]["criteria"],
-                  batch=facts["batch"]["id"] if facts["batch"] else None,
-                  settlement=facts["settlement"]["id"] if facts["settlement"] else None,
-                  analysis=facts["analysis"]["id"] if facts["analysis"] else None,
-                  claim=facts["claim"]["id"] if facts["claim"] else None,
-                  outcome=facts["outcome"], inference_mode=facts["inference_mode"],
-                  review=REVIEW, attempt_ledger=facts["ledger"],
                   isolation=ISOLATION_NOTE, scientific_validity="not_assessed")
-    if closed is None:
-        return report
-    p = closed["payload"]
-    report.update(disposition=p["disposition"], close=closed["id"],
-                  criteria_evaluations=p["criteria_evaluations"],
-                  review=p["review"])
+    references = ("batch", "settlement", "analysis", "claim")
+    if closed:
+        payload = closed["payload"]
+        frozen = (*references, "outcome", "inference_mode", "review", "attempt_ledger",
+                  "disposition", "criteria_evaluations")
+        report.update(status="closed", close=closed["id"], **{key: payload[key] for key in frozen})
+    else:
+        facts = _snapshot(store, history, opened)
+        report.update(status="open", outcome=facts["outcome"], inference_mode=facts["inference_mode"],
+                      review=REVIEW, attempt_ledger=facts["ledger"],
+                      **{key: facts[key]["id"] if facts[key] else None for key in references})
     return report
 
 
 def _ensure_batch(store: Store, opened: dict[str, Any], origin: dict[str, Any],
                   *, executor: str, replicator: str) -> str:
+    """Resume preparation from the stage-causal command receipts."""
     from .domain_packs import execution_fields
-    history = store.events()
-    existing = _batches_for(store, history, opened["payload"]["protocol"])
-    if existing:
-        require(len(existing) == 1, "stage protocol has multiple batches; choose one explicitly")
-        return existing[0]
+    stage = opened["id"]
     protocol = opened["payload"]["protocol"]
     roster = opened["payload"]["roster_size"]
-    tree = _execute(store, origin, actor=origin["actor"], role="planner",
-                    action="search.register_tree", payload=dict(
-                        weights={key: 1 for key in COMPONENTS}, cost_weight=0, budget=roster,
-                        cost_unit="enqueued_attempt", max_nodes=1, max_depth=0, max_width=1,
-                        max_selections=1, max_retries=0), causation=opened["id"])
-    _execute(store, origin, actor=origin["actor"], role="planner", action="search.add_node",
-             payload=dict(tree=tree, protocol=protocol, action="discriminate",
-                          estimated_cost=roster,
-                          components=dict(discrimination=1, uncertainty=1, coverage=1,
-                                          invalidity_risk=0),
-                          rationale="Stage executes the already frozen pack protocol; "
-                                    "this node is a mechanical roster, not a tournament judgment"),
-             causation=opened["id"])
-    selection = _execute(store, origin, actor=origin["actor"], role="planner",
-                         action="search.select_next", payload=dict(tree=tree),
-                         causation=opened["id"])
-    require(selection.get("node") is not None, "stage search did not select the frozen protocol")
-    binding = Kernel._get(store.events(), opened["payload"]["preregistration"], "pack_binding")
-    return _execute(store, origin, actor=origin["actor"], role="planner", action="batch.plan",
-                    payload=dict(selection=selection["id"], executor=executor,
-                                 replicator=replicator, **execution_fields(store, binding)),
-                    causation=opened["id"])
+    while True:
+        history, receipts = store.snapshot()
+        if stage in _closes(history):
+            raise ConflictError("stage closed during batch preparation")
+        batch = _batch_for(store, history, protocol)
+        if batch is not None:
+            return batch["batch"]
+        prepared = [row for row in reversed(receipts) if row["context"]["causation_id"] == stage
+                    and all(row["context"][key] == origin[key]
+                            for key in ("actor", "role", "study_id", "correlation_id"))]
+
+        def result(action: str, **refs: str) -> Any:
+            return next((row["result"] for row in prepared if row["request"]["action"] == action
+                         and all(row["request"]["payload"].get(key) == value
+                                 for key, value in refs.items())), None)
+
+        def execute(command_action: str, **payload: Any) -> Any:
+            return _execute(store, origin, actor=origin["actor"], role="planner", action=command_action,
+                            payload=payload, causation=stage, revision=len(history))
+
+        tree = result("search.register_tree")
+        if tree is None:
+            execute("search.register_tree", weights={key: 1 for key in COMPONENTS}, cost_weight=0,
+                    budget=roster, cost_unit="enqueued_attempt", max_nodes=1, max_depth=0,
+                    max_width=1, max_selections=1, max_retries=0)
+            continue
+        node = result("search.add_node", tree=tree, protocol=protocol)
+        if node is None:
+            execute("search.add_node", tree=tree, protocol=protocol, action="discriminate",
+                    estimated_cost=roster,
+                    components=dict(discrimination=1, uncertainty=1, coverage=1, invalidity_risk=0),
+                    rationale="Stage executes the already frozen pack protocol; "
+                              "this node is a mechanical roster, not a tournament judgment")
+            continue
+        selection = result("search.select_next", tree=tree)
+        if selection is None:
+            execute("search.select_next", tree=tree)
+            continue
+        require(selection.get("node") == node and selection.get("protocol") == protocol,
+                "stage search did not select the frozen protocol")
+        binding = Kernel._get(history, opened["payload"]["preregistration"], "pack_binding")
+        return execute("batch.plan", selection=selection["id"], executor=executor,
+                       replicator=replicator, **execution_fields(store, binding))
 
 
 def _admit_analysis(store: Store, batch: str, *, analyst: Actor, origin: dict[str, Any],
@@ -529,21 +544,19 @@ def _admit_analysis(store: Store, batch: str, *, analyst: Actor, origin: dict[st
             require(analysis["payload"]["reviewer_actor"] == UNREVIEWED,
                     "persisted analysis reviewer differs from stage-unreviewed")
             return analysis
-        from .batch import batch_state
-        settlement = Kernel._get(history, batch_state(store, batch)["settlement"], "batch_settlement")
         facts, context, cas = analysis_inputs(store, history, batch)
         loaded = require_live_pack(store, facts["binding"])
         hooks = run_hooks(loaded, context, cas)
         pin = facts["binding"]["payload"]
         try:
             _execute(store, origin, actor=analyst.id, role="analyst", action="pack.analyse",
-                     payload=dict(batch=batch, expected_settlement=settlement["id"],
+                     payload=dict(batch=batch, expected_settlement=facts["state"]["settlement"]["id"],
                                   pack_id=pin["pack_id"], pack_version=pin["pack_version"],
                                   pack_code_digest=pin["pack_code_digest"], checks=hooks["checks"],
                                   recomputations=hooks["recomputations"], report=hooks["report"],
                                   statistical_report=hooks["statistical_report"],
                                   reviewer_actor=UNREVIEWED),
-                     causation=causation)
+                     causation=causation, revision=len(history))
         except ConflictError:
             continue
     raise ConflictError("stage analysis lost concurrent admissions; retry from persisted state")
@@ -554,15 +567,10 @@ def _close_now(store: Store, stage: str, origin: dict[str, Any]) -> dict[str, An
     opened = Kernel._get(history, stage, "stage_open")
     if stage in _closes(history):
         return stage_status(store, stage)
-    head = _history_head(history)
     evaluate_close(store, history, opened)
-    if _history_head(store.events()) != head:
-        raise GateError("persisted state changed before the stage close")
-    result = _execute(store, origin, actor=origin["actor"], role="planner",
-                      action="stage.close", payload=dict(stage=stage), causation=stage)
-    report = stage_status(store, stage)
-    report.update(close=result["close"], disposition=result["disposition"])
-    return report
+    _execute(store, origin, actor=origin["actor"], role="planner", action="stage.close",
+             payload=dict(stage=stage), causation=stage, revision=len(history))
+    return stage_status(store, stage)
 
 
 def stage_run(store: Store, stage: str, *, analyst: Actor, executor: str,
@@ -570,10 +578,11 @@ def stage_run(store: Store, stage: str, *, analyst: Actor, executor: str,
     """Resume mechanical steps until the stage is terminal, then close.
 
     The caller does not name the next action. A failed or unknown attempt is
-    not relaunched. Close re-reads the chain head and does not write a stale
-    disposition.
+    not relaunched. A saved completion can settle an unknown dispatch.
+    Close re-reads the chain head and checks the deciding revision.
     """
     from .batch_controller import advance_batch
+    from .execution import reconcile_job
     require(analyst.role == "analyst", "stage run needs an analyst")
     for value, label in ((analyst.id, "analyst"), (executor, "executor"),
                          (replicator, "replicator")):
@@ -594,7 +603,17 @@ def stage_run(store: Store, stage: str, *, analyst: Actor, executor: str,
                 return _close_now(store, stage, origin)
             except ConflictError:
                 continue
-        if facts["unknown"] or facts["failed"] or facts["gate_failed"]:
+        if facts["unknown_jobs"]:
+            try:
+                for job in facts["unknown_jobs"]:
+                    reconcile_job(store, job)
+            except ConflictError:
+                continue
+            history = store.events()
+            if stage in _closes(history):
+                return stage_status(store, stage)
+            facts = _snapshot(store, history, opened)
+        if facts["unknown_jobs"] or facts["failed"] or facts["gate_failed"]:
             try:
                 return _close_now(store, stage, origin)
             except ConflictError:

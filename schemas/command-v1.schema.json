@@ -37,6 +37,7 @@
           "batch.plan", "batch.enqueue_slot", "batch.settle", "analysis.apply", "domain.bind", "proposal.prepare_next",
           "pack.preregister", "pack.analyse",
           "stage.open", "stage.close",
+          "research.begin", "research.record",
           "replanning.record_review", "replanning.resolve_obligation",
           "review.assign", "review.dispatch", "review.finalize", "review.submit",
           "followup.apply", "followup.prepare_next",

@@ -72,6 +72,8 @@ with Store(".research/command-example") as store:
 | `literature.record_check` | planner | ID `literature_check`: исход `verified_by_recorded_check` или `contradicted`, digest байтов локатора и digest пассажа |
 | `literature.cite` | writer | ID `literature_citation`: ссылка на Locator, не на строку |
 | `paper.build` | writer | ID внутреннего draft; без materialization. Необязательные `citations` и `support` |
+| `research.begin` | author | Сессия с гипотезой и неизменяемым CAS-контрактом |
+| `research.record` | author, planner | Ответ автора, принятие текущей ревизии, действия с литературой, связанные с основанием задачи ролей, результат политики или закрытие исследования |
 | `stage.open` | planner | Frozen контракт на уже сделанный `pack.preregister`; не запуск и не успех |
 | `stage.close` | planner | Disposition после повторного чтения истории; `scientific_validity=not_assessed` |
 

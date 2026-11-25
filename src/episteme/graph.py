@@ -58,6 +58,8 @@ class NodeKind(str, Enum):
     PACK_ANALYSIS = "pack_analysis"
     STAGE_OPEN = "stage_open"
     STAGE_CLOSE = "stage_close"
+    RESEARCH_SESSION = "research_session"
+    RESEARCH_STEP = "research_step"
     EXECUTION_JOB = "execution_job"
     EXECUTION_DISPATCH = "execution_dispatch"
     EXECUTION_FINALIZED = "execution_finalized"
@@ -114,6 +116,8 @@ class Relation(str, Enum):
     PACK_ANALYSIS_INPUT = "pack_analysis_allowed_input"
     REVIEW_PACK = "review_pack"
     STAGE_REFERENCE = "stage_reference"
+    RESEARCH_REFERENCE = "research_reference"
+    RESEARCH_ARTIFACT = "research_artifact"
     REVIEW_BATCH = "review_batch"
     EXECUTION_RUN = "execution_run"
     EXECUTION_JOB = "execution_job"
@@ -383,6 +387,16 @@ class _Projection:
     def project(self) -> None:
         e, p = self.event, self.event["payload"]
         kind = e["kind"]
+        if kind in {"research_session", "research_step"}:
+            from .research import event_artifacts, event_references
+
+            for reference in event_references(self.store, e):
+                linked = self.ref(reference["id"], None, Relation.RESEARCH_REFERENCE, "research_reference")
+                if reference["hash"] is not None:
+                    self.hash_ref(linked, reference["hash"], "research_reference.hash")
+            for key in sorted(event_artifacts(self.store, e)):
+                self.blob(key, Relation.RESEARCH_ARTIFACT, "research_artifact")
+            return
         if kind.startswith("agent_"):
             from .agents import agent_artifacts
             fields = {
@@ -1064,6 +1078,14 @@ class _Projection:
                 stage_index(self.store, self.history, receipts=receipts)
             except (ValueError, KeyError, TypeError) as exc:
                 self.fail(f"invalid stage history: {exc}")
+        if (any(event["kind"] in {"research_session", "research_step"} for event in self.history)
+                or any(row["request"]["action"].startswith("research.") for row in receipts)):
+            from .research import research_index
+
+            try:
+                research_index(self.store, self.history, receipts)
+            except (ValueError, KeyError, TypeError) as exc:
+                self.fail(f"invalid research session history: {exc}")
         if (any(event["kind"].startswith("literature_") for event in self.history)
                 or any(receipt["request"]["action"].startswith("literature.") for receipt in receipts)):
             from .literature import _index as literature_index

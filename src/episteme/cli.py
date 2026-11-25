@@ -23,6 +23,7 @@ from .execution import freeze_environment, job_state, reconcile_job, work_job
 from . import execution_locked, reproduction
 from .execution_locked import OPERATIONS as LOCKED_OPERATIONS, add_arguments as add_locked_arguments
 from .execution_locked import run_cli as run_locked_cli
+from .research_cli import add_evolution_command, add_research_command, run_evolution_cli, run_research_cli
 
 
 def _actor_id(value: str) -> str:
@@ -201,6 +202,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             operation.add_argument("request", help="Recorded agent_request ID")
         operation.add_argument("--root", type=Path, required=True)
+    add_research_command(subcommands)
+    add_evolution_command(subcommands)
     args = parser.parse_args(argv)
     try:
         if args.command == "package":
@@ -210,6 +213,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             with _opened(args.root, read_only=True) as store:
                 result = write_package(store, args.claim, args.output)
             status = 0
+        elif args.command == "research":
+            result, status = run_research_cli(args)
+        elif args.command == "evolution":
+            result, status = run_evolution_cli(args)
         elif args.command == "followup":
             from .followup import followup_state
             if not (args.root / "state.sqlite3").is_file():

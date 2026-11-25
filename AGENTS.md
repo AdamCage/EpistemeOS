@@ -13,6 +13,16 @@ The user's working language is Russian. Code and API identifiers are English; de
 - Put domain-specific metrics and scientific assumptions in adapters, not the universal kernel.
 - No expensive experiments, external messages or publication is implied by unit tests or local demos.
 
+For changes to research automation, start with the [repository map](docs/repository-map.md)
+and the [stage contract](docs/decisions/0026-stage-control.md). Load the
+[analyst](.agents/skills/research-analyst/SKILL.md),
+[critic](.agents/skills/research-critic/SKILL.md),
+[developer](.agents/skills/research-developer/SKILL.md),
+[reviewer](.agents/skills/research-reviewer/SKILL.md),
+[tester](.agents/skills/research-tester/SKILL.md), or
+[orchestrator](.agents/skills/research-orchestrator/SKILL.md) skill when carrying out that role.
+Skills guide contributors. Runtime permissions and evidence transitions are enforced by the code.
+
 Verification for semantic changes: `python -m unittest discover -s tests -v` after installing the package
 or setting `PYTHONPATH=src`. Run relevant CLI integration checks when changing storage or interfaces.
 Keep docs honest about what is implemented, tested locally, planned, or externally unverified.

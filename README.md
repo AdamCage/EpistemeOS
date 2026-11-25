@@ -2,7 +2,25 @@
 
 Research harness для вычислительных научных исследований: конкурирующие объяснения → выбор эксперимента → воспроизводимое evidence → независимое review → новый план → публикационный пакет.
 
-**Статус: начальная реализация, не готовый автономный AI Scientist.** Исследованы `llm-semantic-afterlife`, AI Scientist, Kosmos, Virtual Lab, Robin и AI Co-Scientist; спроектирована архитектура и реализовано проверяемое локальное ядро. Публикационное качество и превосходство над другими системами пока не оценены. Полностью автономный учёный не заявляется: научный review остаётся человеческим. Для одного уже замороженного вычислительного stage путь оператора — `episteme stage`, а не замена всего harness.
+`episteme research` ведёт ограниченный вычислительный цикл от обсуждения гипотезы до внутренней рукописи и досье. Машинный ревьюер может выбрать следующий контроль. Автоматическая проверка и локальные выпуски описаны в [ADR 0027](docs/decisions/0027-autonomous-research-sdlc.md). Внешнее научное рецензирование и сравнительная результативность требуют отдельной проверки.
+
+## Запустить исследование
+
+Офлайн-пример использует два синтетических рецепта и детерминированные роли. Запускайте из корня проекта в PowerShell.
+
+```powershell
+$state = '.research/sdlc-demo'
+$example = 'examples/research_sdlc'
+$draft = uv run python -X utf8 -m episteme research start --root $state --hypothesis "$example/hypothesis.md" --config "$example/config.json" | ConvertFrom-Json
+$draft = uv run python -X utf8 -m episteme research discuss $draft.session --root $state --reply "$example/reply.md" | ConvertFrom-Json
+uv run episteme research run $draft.session --root $state --accept $draft.draft_revision
+uv run episteme research status $draft.session --root $state
+uv run episteme research export $draft.session --root $state --out '.research/sdlc-bundle'
+```
+
+После прерывания повторите `research run <session> --root <root>`. `research worker --root <root>` продолжает принятые исследования под локальным супервизором. Для живого Codex используйте явный `model` и лимит `model_calls`. Пример с открытыми данными приведён в [инструкции Banknote](examples/banknote_authentication/README.md).
+
+Для локального выпуска установите `uv sync --extra evolution`. Канал `episteme evolution` хранится отдельно от исследования. `evolution configure` закрепляет конфигурацию проверки, `evolution worker` обрабатывает подходящие кандидаты, а `research start --release-root <root>` закрепляет активную версию в новом исследовании. [Настройка Docker и проверок](examples/evolution/README.md)
 
 Границы текущего main (ревью было против `7718d8d`; этот срез его продолжает, main до него не уезжал): `local_subprocess` записывает `os_isolation=none`, `sandbox=false`, `network_enforcement=not_enforced`. `uv_locked_python_v2` — гигиена окружения и воспроизводимость, не security sandbox; код исполнителя работает от того же пользователя ОС и теоретически может читать Store. Это по-прежнему блокирует утверждение «исполнитель физически не мог прочитать данные reviewer или Store». Контейнерный backend (`--network none`, `--read-only`, allowlist mount) есть и не является исполнителем всего цикла: `cycle step` и `stage run` запускают локальный runner. `reproduce` — повтор того же кода, не replication. DomainPack не повышает силу claim: потолок считает ядро. Для внешнего API `model_id` — наблюдённое исполнение, не обещание точного воспроизведения. Находки high аудита закрыты; A-17 закрыта согласованным снимком Graph; A-20 и A-21 открыты.
 

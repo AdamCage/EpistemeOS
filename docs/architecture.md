@@ -1,6 +1,6 @@
 # EpistemeOS: архитектура исследовательского harness
 
-Статус: **архитектура v0.1 и локальный прототип; полный автономный цикл ещё не реализован**. Архитектура подготовлена 6 сентября, статус кода обновлён 4 ноября 2026. Основания: [сохранённый контекст](../objective.md), задача «Агентские научные исследования», [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
+Статус: **архитектура v0.1 с ограниченным автономным вычислительным контуром**. Архитектура подготовлена 6 сентября, статус контура обновлён 25 ноября 2026. Основания: [сохранённый контекст](../objective.md), [аудит afterlife](research/afterlife-audit.md), [AI Scientist / Co-Scientist](research/ai-scientist-coscientist.md), [Kosmos / Virtual Lab / Robin](research/kosmos-virtual-lab-robin.md).
 
 ## 1. Решение
 
@@ -9,6 +9,8 @@
 Целевой результат исследования — reviewable research package: постановка вопроса, альтернативные объяснения, история поиска, frozen protocols, код/среда/данные, успешные и неуспешные runs, bounded claims, независимые проверки и manuscript с трассируемыми утверждениями. Принятие TMLR/ICLR остаётся внешним результатом, который нужно измерять, а не системным статусом.
 
 В первой реализации используем Python 3.11+, SQLite, content-addressed files и JSONL export. Нет необходимости сразу вводить graph database, распределённый workflow engine, веб-интерфейс или зависимость от конкретного LLM orchestration SDK. Граница интерфейсов позволит добавить их после проверки ядра.
+
+[ADR 0027](decisions/0027-autonomous-research-sdlc.md) добавляет исследовательский контроллер поверх `CommandService`, `Search` и `stage`. После утверждения контракта он повторяет разрешённые stages, перепроверяет основание машинной рецензии и формирует досье. Отдельный локальный канал допускает проверенные версии политики. Доказательство научной независимости и результативности следует из условий конкретного исследования и [плана оценки](research/evaluation-plan.md).
 
 ## 2. Что меняется относительно сохранённого контекста
 
@@ -161,7 +163,7 @@ Backend M2: локальный изолированный worker/container; M4: 
 
 Writer строит paper из versioned claim ledger. Каждая эмпирическая цифра и figure имеет путь `paper anchor → claim/observation → artifact → run → protocol/code/data`. Проверяется соответствие Methods фактическому коду, citation locator и первичному источнику, наличие uncertainty/limitations и всех выбранных/отвергнутых analyses. Discussion может содержать ещё не проверенные гипотезы с явной маркировкой.
 
-[ADR 0021](decisions/0021-literature-records.md) — первый срез этих ссылок, без поиска и без чтения статьи. Ядро хранит Source, Locator, LiteratureClaim, Citation и записанную проверку локатора. Scaffold может сослаться только на Citation, чей Locator уже в store. Поддержка допустима только при статусе `verified_by_recorded_check`. Это записанное заявление, которое называет байты локатора и digest пассажа, а не запрос к библиотеке и не научный review. Отсутствие источников не новизна и не поддержка claim. Поиска, retrieval, извлечения моделью, поиска противоречий и оценки новизны нет.
+[ADR 0021](decisions/0021-literature-records.md) добавил Source, Locator, LiteratureClaim, Citation и записанную проверку локатора. Scaffold может сослаться только на Citation из store. Поддержку можно указать при статусе `verified_by_recorded_check`, который фиксирует байты локатора и digest пассажа. Контроллер [ADR 0027](decisions/0027-autonomous-research-sdlc.md) получает метаданные Crossref и ограниченные открытые тексты, сохраняет снимки и передаёт материал аналитику и критику. Результат этого поиска документирует изученный охват. Проверка новизны и допуска цитаты как поддержки требуют дополнительных свидетельств.
 
 [ADR 0022](decisions/0022-reproduction-package.md) добавляет read-only `episteme package`: каталог JSON и Markdown одного семейства claim. Событий нет, и это не подача на площадку. В каталоге есть манифест SHA-256, hashes протоколов, code manifest при привязке пакета, профиль и environment closure при профиле v2, digests raw outputs и отчётов анализа, инвентарь попыток вместе с failed и unknown. Scaffold пишется только для paper со статусом `current`. `scientific_validity` копируется как хранится. Непроверенные и противоречивые локаторы не попадают в поддержку. Число в таблице результатов называется вместе с digest источника. Фигур, LaTeX и шаблонов площадки нет.
 

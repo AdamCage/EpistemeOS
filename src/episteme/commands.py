@@ -33,6 +33,7 @@ from .followup_execution import FollowupExecution
 from .literature import Literature
 from .reporting import PaperBuilder
 from .stages import Stage
+from .research import Research
 from .reproduction import Reproduction
 from .role_profile import Isolation, preflight_container
 from .search import Search
@@ -168,6 +169,8 @@ _ACTIONS: dict[str, tuple[type, Callable[..., Any], frozenset[str]]] = {
     "literature.record_check": (Literature, Literature.record_check, frozenset({"planner"})),
     "literature.cite": (Literature, Literature.cite, frozenset({"writer"})),
     "paper.build": (PaperBuilder, PaperBuilder.build, frozenset({"writer"})),
+    "research.begin": (Research, Research.begin, frozenset({"author"})),
+    "research.record": (Research, Research.record, frozenset({"author", "planner"})),
 }
 
 
@@ -185,7 +188,7 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
                                     "claim", "source", "target", "locator", "selection", "tree",
                                     "experiment_node", "job", "batch", "request", "budget",
                                     "obligation", "parent_node", "followup", "review", "terminal",
-                                    "assignment", "preregistration", "predecessor", "stage")
+                                    "assignment", "preregistration", "predecessor", "stage", "session")
             if isinstance(payload.get(key), str)]
     if action == "paper.build":
         refs.extend(payload["claims"])
@@ -201,7 +204,8 @@ def _check_study(history: list[dict[str, Any]], action: str, payload: dict[str, 
         p, kind = event["payload"], event["kind"]
         assigned = (p.get("study_id") if kind in {
                         "research_question", "explanation_set", "agent_budget", "literature_source",
-                        "literature_locator", "literature_claim", "literature_citation", "literature_check"}
+                        "literature_locator", "literature_claim", "literature_citation", "literature_check",
+                        "research_session", "research_step"}
                     else p.get("planning", {}).get("study_id") if kind == "protocol" else None)
         if assigned is not None and assigned != study:
             raise ValueError("command study_id differs from its planning-bound references")

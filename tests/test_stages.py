@@ -16,9 +16,11 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from episteme import stages
 from episteme.batch_controller import advance_batch
 from episteme.cli import main
 from episteme.commands import CommandService
+from episteme.execution import job_state, reconcile_job
 from episteme.graph import NodeKind, ResearchGraph
 from episteme.kernel import Actor, Kernel
 from episteme.stages import UNREVIEWED, stage_open, stage_run, stage_status
@@ -155,6 +157,59 @@ class StageControlTests(unittest.TestCase):
         self.assertFalse(any(event["kind"] == "review_assignment" for event in store.events()))
         ResearchGraph.from_store(store)
 
+    def test_batch_preparation_resumes_after_each_committed_command(self):
+        store = self.copy("origin")
+        stage = _open(store, self.explanation, self.binding)["stage"]
+        real_execute = CommandService.execute
+        actions = ("search.register_tree", "search.add_node", "search.select_next", "batch.plan")
+
+        def preparations():
+            return tuple(row["request"]["action"] for row in store.receipts()
+                         if row["context"]["causation_id"] == stage
+                         and row["request"]["action"] in actions)
+
+        for index, action in enumerate(actions):
+            def interrupt_after_commit(service, envelope):
+                result = real_execute(service, envelope)
+                if envelope["request"]["action"] == action:
+                    raise RuntimeError("controller interrupted after commit")
+                return result
+
+            with self.subTest(action=action), patch.object(
+                    CommandService, "execute", autospec=True, side_effect=interrupt_after_commit):
+                with self.assertRaisesRegex(RuntimeError, "controller interrupted"):
+                    _run(store, stage)
+                self.assertEqual(preparations(), actions[:index + 1])
+
+        self.assertFalse(any(event["kind"] == "execution_dispatch" for event in store.events()))
+        self.assertEqual(_run(store, stage)["disposition"], "criteria_met")
+        self.assertEqual(preparations(), actions)
+        ResearchGraph.from_store(store)
+
+    def test_concurrent_preparation_uses_the_winning_tree(self):
+        store = self.copy("origin")
+        stage = _open(store, self.explanation, self.binding)["stage"]
+        execute = stages._execute
+        competing_tree = None
+
+        def advance_other_controller(target, origin, **kwargs):
+            nonlocal competing_tree
+            if kwargs["action"] == "search.register_tree" and competing_tree is None:
+                with Store(store.root) as other:
+                    competing_tree = execute(other, origin, **kwargs)
+            return execute(target, origin, **kwargs)
+
+        with patch.object(stages, "_execute", side_effect=advance_other_controller):
+            result = _run(store, stage)
+
+        self.assertEqual(result["disposition"], "criteria_met")
+        history = store.events()
+        self.assertEqual([event["id"] for event in history if event["kind"] == "search_tree"],
+                         [competing_tree])
+        self.assertEqual(Kernel._get(history, result["batch"], "batch_plan")["payload"]["tree"],
+                         competing_tree)
+        ResearchGraph.from_store(store)
+
     def test_budget_below_roster_starts_no_attempts(self):
         store = self.copy("origin")
         opened = _open(store, self.explanation, self.binding, ceiling=1)
@@ -202,6 +257,45 @@ class StageControlTests(unittest.TestCase):
         self.assertEqual(again["close"], first["close"])
         self.assertEqual(failed.export(), frozen)
         self.assertEqual(len([event for event in failed.events() if event["kind"] == "run"]), 1)
+
+    def test_late_reconciliation_keeps_the_historical_close(self):
+        store = self.copy("planned")
+        stage = _open(store, self.explanation, self.binding)["stage"]
+        with patch("episteme.execution.reconcile_job", side_effect=job_state):
+            blocked = _run(store, stage)
+        self.assertEqual(blocked["disposition"], "blocked")
+        history = store.events()
+        job = next(event["id"] for event in history if event["kind"] == "execution_job")
+
+        self.assertEqual(reconcile_job(store, job)["status"], "completed")
+        self.assertEqual(advance_batch(store, self.batch)["status"], "completed")
+        self.assertEqual(stage_status(store, stage), blocked)
+        self.assertEqual(_run(store, stage), blocked)
+        graph = ResearchGraph.from_store(store)
+        self.assertEqual(graph.node(blocked["close"]).kind, NodeKind.STAGE_CLOSE)
+
+    def test_open_stage_recovers_saved_completion_after_interruption(self):
+        store = self.copy("planned")
+        stage = _open(store, self.explanation, self.binding)["stage"]
+        with patch("episteme.execution.reconcile_job", side_effect=RuntimeError("before completion admission")):
+            with self.assertRaisesRegex(RuntimeError, "before completion admission"):
+                _run(store, stage)
+        snapshot = stage_status(store, stage)
+        self.assertEqual(snapshot["status"], "open")
+        self.assertEqual(snapshot["attempt_ledger"]["unknown"], 1)
+        before = store.events()
+        dispatch = next(event for event in before if event["kind"] == "execution_dispatch")
+        token = dispatch["payload"]["workspace_token"]
+
+        with patch("episteme.execution.subprocess.Popen", wraps=_REAL_POPEN) as spawn:
+            resumed = _run(store, stage)
+        self.assertEqual(resumed["disposition"], "criteria_met")
+        self.assertEqual(resumed["attempt_ledger"]["completed"], 2)
+        self.assertFalse(any(call.args and Path(call.args[0][-1]).name == token for call in spawn.call_args_list))
+        launches = [event for event in store.events() if event["kind"] == "execution_dispatch"]
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(launches[0], dispatch)
+        ResearchGraph.from_store(store)
 
     def test_close_envelope_replay_does_not_write_a_second_close(self):
         store = self.copy("completed")
